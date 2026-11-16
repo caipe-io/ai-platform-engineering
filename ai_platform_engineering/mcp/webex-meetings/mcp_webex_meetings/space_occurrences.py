@@ -10,6 +10,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, AsyncIterator, Literal, Sequence
 from urllib.parse import parse_qsl, urljoin, urlsplit
 
@@ -25,6 +26,7 @@ MAX_ACTIVITY_PAGES = 40
 ACTIVITY_PAGE_SIZE = 100
 ACTIVITY_WORKERS = 8
 CONVERSATION_QUEUE_SIZE = 2 * ACTIVITY_WORKERS
+MAX_REQUEST_ATTEMPTS = 3
 MAX_CONTINUATION_LENGTH = 512 * 1024
 CONTINUATION_TTL = 24 * 60 * 60
 MAX_BOUNDARY_IDS = 2 * ACTIVITY_PAGE_SIZE
@@ -43,7 +45,7 @@ _SDK_QUERY = {
 }
 _CATALOG_QUERY_KEYS = frozenset({
     *_SDK_QUERY, "paginate", "membershipsType", "conversationsLimit", "maxDate",
-    "cursor", "ackFilter", "participantAckFilter", "globalId", "includeParticipants",
+    "cursor", "ackFilter", "participantAckFilter", "globalId", "includeParticipants", "sinceDate",
 })
 
 
@@ -105,6 +107,20 @@ def _epoch_ms(value: datetime) -> int:
     return int(value.timestamp() * 1000)
 
 
+def _retry_after_seconds(value: str | None) -> float:
+    value = value.strip() if value else None
+    if value and len(value) <= 128:
+        if value.isascii() and value.isdecimal():
+            return float(value)
+        try:
+            date = parsedate_to_datetime(value)
+            if date.tzinfo is not None:
+                return max(0.0, (date - datetime.now(timezone.utc)).total_seconds())
+        except (ValueError, TypeError, OverflowError):
+            pass
+    return 1.0
+
+
 def _last_activity(value: Any) -> datetime | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         if value <= 0:
@@ -143,6 +159,8 @@ class _Discovery:
     seen_conversations: set[str] = field(default_factory=set)
     series_lookup_pending: bool = False
     semaphore: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(ACTIVITY_WORKERS))
+    retry_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    retry_until: float = 0.0
     requests: int = 0
     stopped: bool = False
 
@@ -160,24 +178,14 @@ class _Discovery:
         except ValueError:
             self.warn(f"{stage}: rejected an untrusted discovery URL.")
             return None
-        async with self.semaphore:
-            if self.stopped:
+        for attempt in range(MAX_REQUEST_ATTEMPTS):
+            response = await self._request_attempt(url, stage, params=params, body=body)
+            if response is None:
+                if attempt:
+                    self.warn(f"{stage}: Webex returned HTTP 429; results are incomplete.")
                 return None
-            if self.requests >= MAX_REQUESTS:
-                self.stopped = True
-                # Unstarted and in-flight work is retained in the continuation.
-                # Yield a healthy bounded page, just like the catalog/result caps.
-                return None
-            self.requests += 1
-            try:
-                response = await self.client.request(
-                    "POST" if body is not None else "GET", url,
-                    headers={"Authorization": self.bearer, "Accept": "application/json"},
-                    params=params, json=body, timeout=REQUEST_TIMEOUT, follow_redirects=False,
-                )
-            except httpx.HTTPError:
-                self.warn(f"{stage}: Webex request failed; results are incomplete.")
-                return None
+            if response.status_code != 429:
+                break
         if response.status_code != 200:
             self.warn(f"{stage}: Webex returned HTTP {response.status_code}; results are incomplete.")
             return None
@@ -190,6 +198,58 @@ class _Discovery:
             self.warn(f"{stage}: Webex returned an invalid response; results are incomplete.")
             return None
         return payload, response
+
+    async def _request_attempt(
+        self, url: str, stage: str, *, params: dict[str, Any] | None,
+        body: dict[str, Any] | None,
+    ) -> httpx.Response | None:
+        async with self.semaphore:
+            if self.stopped:
+                return None
+            if self.requests >= MAX_REQUESTS:
+                self.stopped = True
+                return None
+            while self.retry_until:
+                # Only one recovery probe may pass the shared rate-limit gate.
+                # Already in-flight successes must not clear another request's 429.
+                async with self.retry_lock:
+                    if not self.retry_until:
+                        continue
+                    while (delay := self.retry_until - time.monotonic()) > 0:
+                        await asyncio.sleep(delay)
+                    deadline = self.retry_until
+                    response = await self._send(url, stage, params=params, body=body)
+                    if response is not None and response.status_code != 429 and self.retry_until == deadline:
+                        self.retry_until = 0.0
+                    return response
+            return await self._send(url, stage, params=params, body=body)
+
+    async def _send(
+        self, url: str, stage: str, *, params: dict[str, Any] | None,
+        body: dict[str, Any] | None,
+    ) -> httpx.Response | None:
+        if self.stopped:
+            return None
+        if self.requests >= MAX_REQUESTS:
+            self.stopped = True
+            # Unstarted and in-flight work is retained in the continuation.
+            # Yield a healthy bounded page, just like the catalog/result caps.
+            return None
+        self.requests += 1
+        try:
+            response = await self.client.request(
+                "POST" if body is not None else "GET", url,
+                headers={"Authorization": self.bearer, "Accept": "application/json"},
+                params=params, json=body, timeout=REQUEST_TIMEOUT, follow_redirects=False,
+            )
+        except httpx.HTTPError:
+            self.warn(f"{stage}: Webex request failed; results are incomplete.")
+            return None
+        if response.status_code == 429:
+            self.retry_until = max(
+                self.retry_until, time.monotonic() + _retry_after_seconds(response.headers.get("Retry-After")),
+            )
+        return response
 
     def add_activity(self, activity: dict[str, Any]) -> bool:
         obj = activity.get("object")
@@ -354,7 +414,10 @@ async def _catalog(discovery: _Discovery, page_limit: int) -> AsyncIterator[str]
         visited.add(url)
         result = await discovery.request(
             url, "catalog", "Conversation catalog",
-            params=None if urlsplit(url).query else {**_SDK_QUERY, "paginate": "true", "membershipsType": "memberships"},
+            params=None if urlsplit(url).query else {
+                **_SDK_QUERY, "paginate": "true", "membershipsType": "memberships",
+                "conversationsLimit": 100, "sinceDate": _epoch_ms(discovery.lower),
+            },
         )
         if result is None:
             return

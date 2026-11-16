@@ -5,7 +5,8 @@ import asyncio
 import base64
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from typing import Any, Callable
 
 import httpx
@@ -117,6 +118,125 @@ async def test_failed_series_metadata_remains_retryable(status: int) -> None:
     assert result["has_more"] is True
 
 
+@pytest.mark.parametrize(("header", "expected"), [
+    ("0", 0), (" 2 ", 2), (None, 1), ("invalid", 1), ("-1", 1),
+    ("inf", 1), ("1.5", 1), ("9" * 129, 1), ("١", 1),
+])
+def test_rate_limit_delay_parsing(header: str | None, expected: float) -> None:
+    assert spaces._retry_after_seconds(header) == expected
+
+
+def test_rate_limit_delay_accepts_http_dates_and_past_dates() -> None:
+    now = datetime.now(timezone.utc)
+    assert 28 <= spaces._retry_after_seconds(format_datetime(now + timedelta(seconds=30), usegmt=True)) <= 30
+    assert spaces._retry_after_seconds(format_datetime(now - timedelta(seconds=30), usegmt=True)) == 0
+
+
+@pytest.mark.asyncio
+async def test_catalog_retries_rate_limit_without_marking_recovered_results_incomplete() -> None:
+    catalog_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal catalog_calls
+        if request.url.path == "/u2c/api/v1/catalog":
+            return httpx.Response(200, json={"serviceLinks": {"conversation": "https://conv-primary.wbx2.com/conversation/api/v1"}})
+        catalog_calls += 1
+        return httpx.Response(429, headers={"Retry-After": "0"}) if catalog_calls == 1 else httpx.Response(200, json={"items": []})
+
+    result = await discover(handler)
+    assert catalog_calls == 2
+    assert result["complete"] is True and result["warnings"] == []
+    assert result["has_more"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("budget", [None, 2])
+async def test_exhausted_rate_limit_retains_pending_catalog_for_resume(monkeypatch: pytest.MonkeyPatch, budget: int | None) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(429, headers={"Retry-After": "0"})
+
+    if budget is not None:
+        monkeypatch.setattr(spaces, "MAX_REQUESTS", budget)
+    catalog = "https://conv-primary.wbx2.com/conversation/api/v1/conversations"
+    result = await discover(handler, catalog_urls=[catalog])
+    assert calls == (budget or spaces.MAX_REQUEST_ATTEMPTS)
+    assert result["complete"] is False and any("HTTP 429" in item for item in result["warnings"])
+    assert result["has_more"] is True
+    resumed = await discover(lambda _: httpx.Response(200, json={"items": []}), continuation=result["next_continuation"])
+    assert resumed["complete"] is True and resumed["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_shared_rate_limit_gate_admits_one_probe_then_restores_parallel_workers() -> None:
+    probe_started, release_probe = asyncio.Event(), asyncio.Event()
+    normals_started, release_normals = asyncio.Event(), asyncio.Event()
+    calls = 0
+    normal_count = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls, normal_count
+        calls += 1
+        if calls == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"})
+        if calls == 2:
+            probe_started.set()
+            await release_probe.wait()
+        else:
+            normal_count += 1
+            if normal_count == spaces.ACTIVITY_WORKERS - 1:
+                normals_started.set()
+            await release_normals.wait()
+        return httpx.Response(200, json={"items": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        state = spaces._Discovery(client, "Bearer example-user-token", LOWER, UPPER, "https://primary.webex.com", None, 200)
+        first = asyncio.create_task(state.request(CONVERSATION + "/activities", "activities", "Activities"))
+        await asyncio.wait_for(probe_started.wait(), timeout=1)
+        started = [asyncio.Event() for _ in range(spaces.ACTIVITY_WORKERS - 1)]
+
+        async def queued(event: asyncio.Event) -> Any:
+            event.set()
+            return await state.request(CONVERSATION + "/activities", "activities", "Activities")
+
+        others = [asyncio.create_task(queued(event)) for event in started]
+        await asyncio.gather(*(event.wait() for event in started))
+        assert calls == state.requests == 2
+        release_probe.set()
+        await asyncio.wait_for(normals_started.wait(), timeout=1)
+        release_normals.set()
+        assert all(await asyncio.gather(first, *others))
+        assert state.requests == spaces.ACTIVITY_WORKERS + 1
+        assert state.retry_until == 0 and state.warnings == []
+
+
+@pytest.mark.asyncio
+async def test_waiting_rate_limit_is_cancelled_without_losing_pending_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(spaces, "DISCOVERY_TIMEOUT", 0.01)
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(429, headers={"Retry-After": "3600"})
+
+    result = await discover(handler, conversation_urls=[CONVERSATION, SECONDARY])
+    assert calls == 1
+    assert result["complete"] is False and result["has_more"] is True
+    visited: set[str] = set()
+
+    def resumed(request: httpx.Request) -> httpx.Response:
+        visited.add(str(request.url).split("?")[0].removesuffix("/activities"))
+        return httpx.Response(200, json={"items": []})
+
+    result = await discover(resumed, continuation=result["next_continuation"])
+    assert result["complete"] is True and result["has_more"] is False
+    assert visited == {CONVERSATION, SECONDARY}
+
+
 @pytest.mark.asyncio
 async def test_share_does_not_invent_an_end_time_or_recording_availability() -> None:
     calls = 0
@@ -163,6 +283,7 @@ async def test_manual_catalog_reads_recaps_shared_in_one_to_one_conversations() 
 async def test_manual_catalog_follows_next_page_and_federation_then_reads_actual_occurrences() -> None:
     visited: list[str] = []
     activity_calls: set[str] = set()
+    next_url = "https://conv-primary.wbx2.com/conversation/api/v1/conversations?cursor=next&sinceDate=1767571200000&conversationsLimit=100"
 
     def handler(request: httpx.Request) -> httpx.Response:
         visited.append(str(request.url))
@@ -172,14 +293,17 @@ async def test_manual_catalog_follows_next_page_and_federation_then_reads_actual
             return httpx.Response(200, json={"serviceLinks": {"conversation": "https://conv-primary.wbx2.com/conversation/api/v1"}})
         if request.url.path.endswith("/conversations"):
             if request.url.params.get("cursor"):
+                assert str(request.url) == next_url
                 return httpx.Response(200, json={"items": [{"url": CONVERSATION}]})
             assert request.url.params["membershipsType"] == "memberships"
             assert request.url.params["paginate"] == "true"
+            assert request.url.params["conversationsLimit"] == "100"
+            assert request.url.params["sinceDate"] == str(int(LOWER.timestamp() * 1000))
             if request.url.host == "conv-secondary.wbx2.com":
                 return httpx.Response(200, json={"items": [{"url": SECONDARY}]})
             return httpx.Response(200, json={
                 "items": [], "additionalUrls": ["https://conv-secondary.wbx2.com/conversation/api/v1"],
-            }, headers={"Link": '<https://conv-primary.wbx2.com/conversation/api/v1/conversations?cursor=next>; rel="next"'})
+            }, headers={"Link": f'<{next_url}>; rel="next"'})
         assert request.url.path.endswith("/activities")
         first = request.url.host not in activity_calls
         activity_calls.add(request.url.host)
