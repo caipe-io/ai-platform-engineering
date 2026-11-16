@@ -840,10 +840,10 @@ async def test_recap_metadata_enrichment_uses_eight_bounded_requests(monkeypatch
     assert all("transcriptVerified" not in row for row in result["items"])
 
 
-@pytest.mark.parametrize("metadata", ["valid", "denied", "different-series", "wrong-type", "blank", "malformed"])
+@pytest.mark.parametrize("metadata", ["valid", "denied", "different-series", "wrong-type", "blank", "malformed", "invalid-json", "timeout"])
 @pytest.mark.asyncio
 async def test_summary_only_recaps_recover_only_the_exact_parent_title(
-    monkeypatch: pytest.MonkeyPatch, metadata: str,
+    monkeypatch: pytest.MonkeyPatch, metadata: str, caplog: pytest.LogCaptureFixture,
 ) -> None:
     original = {
         "id": ACTUAL, "meetingSeriesId": SERIES, "meetingType": "meeting",
@@ -863,6 +863,10 @@ async def test_summary_only_recaps_recover_only_the_exact_parent_title(
         assert request.url.path == f"/v1/meetings/{SERIES}"
         if metadata == "denied":
             return httpx.Response(403)
+        if metadata == "invalid-json":
+            return httpx.Response(200, content=b"not json: example-secret")
+        if metadata == "timeout":
+            raise httpx.ReadTimeout("example-secret", request=request)
         if metadata == "malformed":
             return httpx.Response(200, json=[])
         return httpx.Response(200, json={
@@ -886,6 +890,11 @@ async def test_summary_only_recaps_recover_only_the_exact_parent_title(
     assert requests.count(f"/v1/meetings/{SERIES}") == 1
     assert result["complete"] is True
     assert "example-secret" not in str(result)
+    assert "example-secret" not in caplog.text
+    assert "example-user-token" not in caplog.text
+    if metadata not in {"valid", "blank"}:
+        assert SERIES in caplog.text
+        assert "Parent-series title lookup" in caplog.text
 
 
 @pytest.mark.asyncio

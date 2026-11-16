@@ -18,7 +18,7 @@ def test_post_meeting_normalization_preserves_actual_identity_without_join_link(
     result = _normalize_userhub_calendar_item({
         "id": actual,
         "seriesId": "a" * 32,
-        "subject": "Example review",
+        "subject": "Example review", "organizer": {"email": "delegate@example.com"},
         "startTime": {"dateTime": "2026-10-15 09:00:10", "timeZone": "America/Los_Angeles"},
         "endTime": {"dateTime": "2026-10-15 10:00:00", "timeZone": "America/Los_Angeles"},
         "webex": {
@@ -35,6 +35,7 @@ def test_post_meeting_normalization_preserves_actual_identity_without_join_link(
     assert result["state"] == "ended"
     assert result["siteUrl"] == "https://primary.webex.com"
     assert result["hostEmail"] == "host@example.com"
+    assert result["organizerEmail"] == "delegate@example.com"
     assert result["webLink"] is None
     assert result["source"] == "userhub_history"
     # A metadata flag is not proof of readable transcript content.

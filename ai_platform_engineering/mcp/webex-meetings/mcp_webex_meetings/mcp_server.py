@@ -618,7 +618,7 @@ def _normalize_userhub_calendar_item(item: Any) -> dict[str, Any]:
                 "meetingType": "meeting",
                 "state": "ended",
                 "source": "userhub_history",
-                "hostEmail": _organizer_email(organizer) or _organizer_email(webex.get("wbxHost")),
+                "hostEmail": _organizer_email(webex.get("wbxHost")) or _organizer_email(organizer),
             })
             if isinstance(webex.get("wbxHasRecording"), bool):
                 normalized["hasRecording"] = webex["wbxHasRecording"]
@@ -1265,9 +1265,14 @@ def register_tools(server) -> None:
                             )
                             response.raise_for_status()
                             detail = response.json()
-                        except (httpx.HTTPError, ValueError):
+                        except httpx.HTTPStatusError as error:
+                            logger.warning("Parent-series title lookup failed (series=%s, status=%s)", series, error.response.status_code)
+                            return
+                        except (httpx.HTTPError, ValueError) as error:
+                            logger.warning("Parent-series title lookup failed (series=%s, error=%s)", series, type(error).__name__)
                             return
                     if not isinstance(detail, dict) or detail.get("id") != series or detail.get("meetingType") != "meetingSeries":
+                        logger.warning("Parent-series title lookup returned invalid metadata (series=%s)", series)
                         return
                     title = detail.get("title")
                     if isinstance(title, str) and title.strip():
