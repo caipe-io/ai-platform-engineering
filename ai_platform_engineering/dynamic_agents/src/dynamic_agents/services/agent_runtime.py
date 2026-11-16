@@ -1,3 +1,4 @@
+
 """Agent Runtime service for Dynamic Agents.
 
 Creates and manages DeepAgent instances with MCP tools.
@@ -23,6 +24,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import uuid4
 
+from agent_telemetry import current_scope_run, scope_session
 from deepagents import create_deep_agent
 from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.state import StateBackend
@@ -1881,9 +1883,10 @@ class AgentRuntime:
             turn_id,
             cancellation_event,
         )
-        async with aclosing(self._observe_turn(implementation, observation)) as observed:
-            async for frame in observed:
-                yield frame
+        with scope_session(self.config.id, session_id):
+            async with aclosing(self._observe_turn(implementation, observation)) as observed:
+                async for frame in observed:
+                    yield frame
 
     async def _observe_turn(
         self,
@@ -1905,6 +1908,9 @@ class AgentRuntime:
             observation.status = "error"
             raise
         finally:
+            scope_run = current_scope_run()
+            if scope_run is not None and not scope_run.canonical_tools:
+                scope_run.status = {"error": "failed", "cancelled": "cancelled"}.get(observation.status, scope_run.status)
             self._active_stream_count = max(0, self._active_stream_count - 1)
             self._is_streaming = self._active_stream_count > 0
             prom_metrics.active_streams.dec()
@@ -2192,6 +2198,8 @@ class AgentRuntime:
         interrupt_data = await self.has_pending_interrupt(session_id)
         logger.debug(f"[stream] has_pending_interrupt result: {interrupt_data}")
         if interrupt_data:
+            if (scope_run := current_scope_run()) is not None:
+                scope_run.status = "paused"
             logger.debug(f"[stream] Agent '{self.config.name}' has pending interrupt, emitting interrupt event")
             observation.status = "interrupted"
             for frame in self._emit_interrupt(encoder, interrupt_data):
@@ -2465,9 +2473,10 @@ class AgentRuntime:
             observation,
             cancellation_event,
         )
-        async with aclosing(self._observe_turn(implementation, observation)) as observed:
-            async for frame in observed:
-                yield frame
+        with scope_session(self.config.id, session_id):
+            async with aclosing(self._observe_turn(implementation, observation)) as observed:
+                async for frame in observed:
+                    yield frame
 
     async def _resume_impl(
         self,
@@ -2534,6 +2543,8 @@ class AgentRuntime:
         # ── HITL interrupt check ──
         interrupt_data = await self.has_pending_interrupt(session_id)
         if interrupt_data:
+            if (scope_run := current_scope_run()) is not None:
+                scope_run.status = "paused"
             logger.debug(f"[resume] Agent '{self.config.name}' has pending interrupt after resume")
             observation.status = "interrupted"
             for frame in self._emit_interrupt(encoder, interrupt_data):

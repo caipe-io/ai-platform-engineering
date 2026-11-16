@@ -202,6 +202,10 @@ config:
   AGENT_GATEWAY_MCP_SERVER_IDS: "all"
   # Tracing disabled by default
   ENABLE_TRACING: "false"
+  # Independent, metadata-only Scope export. No Langfuse credentials required.
+  SCOPE_TRACING_ENABLED: "false"
+  SCOPE_OTLP_ENDPOINT: ""
+  SCOPE_SERVICE_NAME: "agent-runtime"
   # Strip skill payloads (SKILL.md bodies, ancillary files,
   # skills_metadata channel) and task_config workflow prompts
   # (tasks/todos channels, workflow tool IO) from OTel spans

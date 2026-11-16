@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Dynamic Agent Builder - Standalone agent service with deepagents 0.7.37"
 requires-python = ">=3.14,<3.15"
 dependencies = [
+    "agent-telemetry",
     "fastapi==0.141.1",
     "uvicorn[standard]==0.52.4",
     "deepagents==0.7.37",
@@ -78,6 +79,7 @@ dev = [
 ]
 
 [tool.uv.sources]
+agent-telemetry = { path = "../telemetry" }
 llm-wrapper = { path = "../llm_wrapper", editable = true }
 
 [tool.uv]

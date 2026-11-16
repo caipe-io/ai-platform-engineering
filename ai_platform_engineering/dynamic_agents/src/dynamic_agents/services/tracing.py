@@ -1,4 +1,4 @@
-"""Langfuse + OpenTelemetry tracing for Dynamic Agents.
+"""Independent Langfuse and Scope tracing for Dynamic Agents.
 
 Replaces ``cnoe_agent_utils.tracing.TracingManager``. The environment contract
 is unchanged (spec FR-017): ``ENABLE_TRACING``, ``LANGFUSE_PUBLIC_KEY``,
@@ -15,6 +15,10 @@ import logging
 import os
 from contextvars import ContextVar
 from typing import Any
+
+from agent_telemetry import current_scope_run
+
+from dynamic_agents.services.scope_tracing import ScopeCallbackHandler
 
 logger = logging.getLogger(__name__)
 
@@ -96,12 +100,14 @@ class TracingManager:
     def create_config(self, context_id: str) -> dict[str, Any]:
         """Build a LangChain runnable config for ``context_id``.
 
-        Always carries ``thread_id`` so checkpointing works; adds the Langfuse
-        callback only when tracing is enabled, so callers need no branch.
+        Always carries ``thread_id`` so checkpointing works; adds callbacks
+        independently for enabled backends, so callers need no branch.
         """
         config: dict[str, Any] = {"configurable": {"thread_id": context_id}}
         if self._is_enabled and self._handler is not None:
             config["callbacks"] = [self._handler]
+        if current_scope_run() is not None:
+            config.setdefault("callbacks", []).append(ScopeCallbackHandler())
         return config
 
     def set_trace_id(self, trace_id: str | None) -> None:

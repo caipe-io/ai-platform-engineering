@@ -8,6 +8,9 @@ import logging
 from contextlib import aclosing, suppress
 from uuid import uuid4
 
+from agent_telemetry import scope_session
+from agent_telemetry.scope import ScopeRun
+
 from harness_engine.adapters.base import ExecutionUnconfirmedError
 from harness_engine.brokers import PromptCompiler
 from harness_engine.models import (
@@ -171,8 +174,17 @@ class RunCoordinator:
 
     async def _pump(
         self, run: RunRecord, request: CreateRunRequest, version: AgentVersion, binding: SessionBinding,
+        identity: ExecutionIdentity | None = None, prepared_prompt: RenderedPrompt | None = None,
+    ) -> None:
+        with scope_session(run.agent_id, run.conversation_id, run.run_id, run.traceparent,
+                           canonical_tools=run.harness_id != "dynamic_agents") as telemetry:
+            await self._pump_impl(run, request, version, binding, identity, prepared_prompt, telemetry)
+
+    async def _pump_impl(
+        self, run: RunRecord, request: CreateRunRequest, version: AgentVersion, binding: SessionBinding,
         identity: ExecutionIdentity | None = None,
         prepared_prompt: RenderedPrompt | None = None,
+        telemetry: ScopeRun | None = None,
     ) -> None:
         producer = asyncio.current_task()
         assert producer is not None
@@ -238,6 +250,8 @@ class RunCoordinator:
                             await self._repository.update_run_provider_id(
                                 run.run_id, updated_binding.provider_session_id
                             )
+                    if telemetry is not None:
+                        telemetry.event(event.event_type, event.data)
                     if current is not None and not current.cancellation_requested:
                         await self._repository.append_event(
                             run.run_id, event.event_type, event.data
@@ -258,6 +272,8 @@ class RunCoordinator:
                 raise asyncio.CancelledError
             if outcome and outcome.result:
                 await self._repository.append_event(run.run_id, "result.updated", outcome.result)
+            if telemetry is not None and outcome is not None:
+                telemetry.status = outcome.status
             if outcome and outcome.status == "paused":
                 if not outcome.interrupt or not outcome.interrupt.get("interrupt_id"):
                     raise RuntimeError("Paused execution requires a persisted interrupt")
@@ -268,21 +284,29 @@ class RunCoordinator:
                 await self._repository.set_session_interrupt(run.binding_id, run.run_id, None)
                 await self._repository.append_event(run.run_id, "run.completed", {}, RunStatus.COMPLETED)
         except ExecutionUnconfirmedError:
+            if telemetry is not None:
+                telemetry.status = "unconfirmed"
             release_reservation = False
             logger.error("Remote execution could not be confirmed", extra={"run_id": run.run_id})
             await self._repository.append_event(run.run_id, "run.failed", {
                 "code": "execution_unconfirmed", "message": "The remote worker may still be running; its session remains reserved",
             }, RunStatus.FAILED)
         except asyncio.CancelledError:
+            if telemetry is not None:
+                telemetry.status = "cancelled"
             await self._repository.append_event(
                 run.run_id, "run.cancelled", {}, RunStatus.CANCELLED
             )
             raise
         except AgentSessionClosedError:
+            if telemetry is not None:
+                telemetry.status = "cancelled"
             await self._repository.append_event(
                 run.run_id, "run.cancelled", {}, RunStatus.CANCELLED
             )
         except Exception:
+            if telemetry is not None:
+                telemetry.status = "failed"
             logger.exception("Harness run failed", extra={"run_id": run.run_id})
             await self._repository.append_event(
                 run.run_id,

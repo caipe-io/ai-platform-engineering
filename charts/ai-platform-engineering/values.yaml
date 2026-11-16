@@ -1888,7 +1888,10 @@ harnessEngine:
     serviceAccountName: ''
     podLabels: {}
     sidecars: []
-    env: {}
+    env:
+      SCOPE_TRACING_ENABLED: "false"
+      SCOPE_OTLP_ENDPOINT: ""
+      SCOPE_SERVICE_NAME: "agent-runtime"
     secretEnv: {}
     envFromSecrets: []
     affinity: {}

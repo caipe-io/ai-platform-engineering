@@ -658,3 +658,47 @@ migration so they enforce the same `execution_thread_leases` ownership fence.
   tools, checkpoint persistence and event replay remain real.
 - These tests do not certify model quality or live Slack/Webex delivery. App-owned
   assistants retain their own declared stream and lifecycle.
+
+## Optional Scope tracing
+
+Scope and Langfuse are independent. Existing `ENABLE_TRACING` and `LANGFUSE_*`
+settings retain their meaning for the Dynamic Agents Langfuse integration.
+
+| `ENABLE_TRACING` | `SCOPE_TRACING_ENABLED` | Enabled backends |
+| --- | --- | --- |
+| false | false | Neither |
+| true | false | Langfuse, with its existing credentials |
+| false | true | Scope, without Langfuse credentials |
+| true | true | Both independently |
+
+Scope is disabled by default. To opt in on the coordinating Engine process:
+
+```sh
+SCOPE_TRACING_ENABLED=true
+SCOPE_OTLP_ENDPOINT=http://collector.example.test:4318
+SCOPE_SERVICE_NAME=agent-runtime
+```
+
+`SCOPE_OTLP_ENDPOINT` is an OTLP/HTTP base URL; the exporter appends `/v1/traces`.
+It never reads Langfuse credentials or generic OTLP authorization headers. Changes
+require a process restart. Helm exposes these settings through
+`harnessEngine.engine.env`; standalone Dynamic Agents uses `dynamic-agents.config`.
+Enable export on the coordinator, rather than also enabling it on remote worker
+copies of the same run. This initial integration collects remote providers'
+reported tool events, not their unreported internal model activity.
+
+The coordinator owns one Scope session per admitted run. Browser disconnects and
+idempotent admission retries do not create additional sessions. In-process Deep
+Agents reuses that session; standalone Dynamic Agents creates one per invocation.
+Paused invocation segments close with outcome `paused`; a resume creates a new
+segment correlated by conversation ID. Unconfirmed remote execution does not emit
+a completion marker. Agent spans, reported tools, and Deep Agents model callbacks
+use the span names and attributes expected by Scope's normalizer.
+
+Export is asynchronous and best-effort, using a private tracer provider that does
+not replace Langfuse's global provider. Scope captures identifiers, timing,
+outcomes, model names and available token usage. It does **not** capture prompts,
+responses, reasoning, tool arguments/results, skill contents or exception text.
+Topology and timing analysis are available; evaluations requiring captured content
+need a separate content-capture design. Scope and Langfuse traces need not be
+identical: they retain their own instrumentation and exporter behavior.

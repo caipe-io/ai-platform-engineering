@@ -1,0 +1,16 @@
+[project]
+name = "agent-telemetry"
+version = "0.1.0"
+description = "Optional metadata-only Scope instrumentation for agent runtimes"
+requires-python = ">=3.13,<4.0"
+dependencies = [
+    "opentelemetry-sdk==1.45.2",
+    "opentelemetry-exporter-otlp-proto-http==1.45.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_telemetry"]
