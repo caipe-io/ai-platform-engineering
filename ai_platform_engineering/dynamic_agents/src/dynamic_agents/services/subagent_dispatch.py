@@ -24,6 +24,8 @@ def child_tool_update(data: dict[str, Any]) -> dict[str, Any] | None:
         message = ToolMessage(
             content=f"ERROR: {payload['error']}" if payload.get("error") else str(payload.get("result", "")),
             tool_call_id=payload["tool_call_id"],
+            additional_kwargs={"harness_tool_completed": True},
+            status="error" if payload.get("error") else "success",
         )
     else:
         return None

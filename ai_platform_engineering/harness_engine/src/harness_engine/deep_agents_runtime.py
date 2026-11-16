@@ -47,6 +47,8 @@ class DeepAgentsRuntime:
         self.subagent_dispatcher = HarnessSubagentDispatcher(coordinator, repository, self.mongo)
 
     async def close(self) -> None:
+        if self.subagent_dispatcher is not None:
+            await self.subagent_dispatcher.close()
         await self.cache.stop()
         self.mongo.disconnect()
 

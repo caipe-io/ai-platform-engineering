@@ -13,7 +13,7 @@ from typing import Any
 from acp import RequestError
 from acp.schema import ClientCapabilities, HttpMcpServer, RequestPermissionResponse, TextContentBlock
 
-from harness_engine.acp_events import canonical_update
+from harness_engine.acp_events import EXTENSION, canonical_update
 from harness_engine.adapters.base import ExecutionUnconfirmedError
 from harness_engine.adapters.claude_sdk import ClaudeHarnessOptions, ClaudeSDKAdapter
 from harness_engine.claude_acp_process import managed_acp_process
@@ -227,6 +227,10 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
                 result = await task
                 if result.stop_reason != "end_turn":
                     raise RuntimeError("The ACP agent did not complete its turn")
+                metadata = (result.field_meta or {}).get(EXTENSION)
+                final_content = metadata.get("final_content") if isinstance(metadata, dict) else None
+                if isinstance(final_content, str):
+                    yield CanonicalEventDraft(event_type="result.updated", data={"content": final_content, "final_content": final_content})
             finally:
                 if pending is not None:
                     pending.cancel()

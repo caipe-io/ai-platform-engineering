@@ -18,7 +18,7 @@ from langgraph.config import get_config, get_stream_writer
 from langgraph.graph import END, START, MessagesState, StateGraph
 
 from harness_engine.coordinator import RunCoordinator
-from harness_engine.models import TERMINAL_RUN_STATUSES, CreateRunRequest, RunContext, RunStatus
+from harness_engine.models import TERMINAL_RUN_STATUSES, CreateRunRequest, RunContext, RunRecord, RunStatus
 from harness_engine.repository import RunRepository
 
 _parent: ContextVar[RunContext | None] = ContextVar("harness_delegation_parent", default=None)
@@ -31,6 +31,18 @@ SUPPORTED_CHILD_HARNESSES = frozenset({
 class HarnessSubagentDispatcher:
     def __init__(self, coordinator: RunCoordinator, repository: RunRepository, mongo: Any) -> None:
         self.coordinator, self.repository, self.mongo = coordinator, repository, mongo
+        self._admissions: set[asyncio.Task[RunRecord]] = set()
+        self._cleanup_tasks: set[asyncio.Task[None]] = set()
+
+    async def close(self) -> None:
+        for task in self._admissions:
+            task.cancel()
+        tasks = [*self._admissions, *self._cleanup_tasks]
+        if tasks:
+            _, pending = await asyncio.wait(tasks, timeout=1)
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     @contextmanager
     def scope(self, context: RunContext) -> Iterator[None]:
@@ -71,17 +83,38 @@ class HarnessSubagentDispatcher:
                 agent_id=ref.agent_id, conversation_id=f"subagent-{key}", client_request_id=f"child-{key}",
                 message=state["messages"][-1].text,
             )
-            writer, run, admission, cursor, content = get_stream_writer(), None, None, 0, []
-            output_size = 0
+            writer, run, admission, cursor = get_stream_writer(), None, None, 0
+            progress, final_content = "", None
+
+            async def reconcile_admission() -> None:
+                nonlocal run
+                try:
+                    # Admission may commit after the caller's deadline. Retain
+                    # responsibility for cancelling its eventual receipt.
+                    if run is None and admission is not None:
+                        if admission.done():
+                            if admission.cancelled() or admission.exception() is not None:
+                                return
+                            run = admission.result()
+                        try:
+                            if run is None:
+                                run = await asyncio.shield(admission)
+                        except asyncio.CancelledError:
+                            if not admission.cancelled():
+                                raise
+                            return
+                    if run is not None:
+                        await self.coordinator.cancel(run.run_id)
+                except Exception as exc:
+                    logger.warning("Child cleanup failed (%s)", type(exc).__name__)
 
             async def stop() -> None:
-                nonlocal run
-                # Drain admission even if Stop/deadline arrives after the DB
-                # committed it but before its receipt reached this graph node.
-                if run is None and admission is not None:
-                    run = await asyncio.shield(admission)
-                if run is not None:
-                    await self.coordinator.cancel(run.run_id)
+                cleanup = asyncio.create_task(reconcile_admission())
+                self._cleanup_tasks.add(cleanup)
+                cleanup.add_done_callback(self._cleanup_tasks.discard)
+                # Caller cleanup is bounded independently of admission/provider
+                # latency. The tracked task continues reconciling late admission.
+                await asyncio.wait({cleanup}, timeout=0.1)
             try:
                 async with asyncio.timeout(ref.timeout_seconds):
                     # Admission pins the published child version and creates an
@@ -97,6 +130,8 @@ class HarnessSubagentDispatcher:
                         request, parent.identity.subject, parent.turn.traceparent, parent.identity,
                         parent_run_id=parent.turn.run_id,
                     ))
+                    self._admissions.add(admission)
+                    admission.add_done_callback(self._admissions.discard)
                     run = await asyncio.shield(admission)
                     writer({"type": "harness_subagent", "event_type": "subagent.started", "data": {
                         "child_run_id": run.run_id, "agent_id": ref.agent_id, "agent_version": run.agent_version,
@@ -106,11 +141,14 @@ class HarnessSubagentDispatcher:
                         for event in await self.repository.wait_for_events(run.run_id, cursor, 1):
                             cursor = event.sequence
                             if event.event_type == "content.delta":
-                                content.append(event.data["text"])
-                                output_size += len(event.data["text"])
-                                if output_size > 1_000_000:
+                                # Match the A2A transport's cumulative snapshots;
+                                # bound progress separately from the final report.
+                                progress = (progress + event.data["text"])[:1_000_000]
+                                writer({"type": "remote_agent_output", "result": progress})
+                            elif event.event_type == "result.updated" and isinstance(event.data.get("final_content"), str):
+                                final_content = event.data["final_content"]
+                                if len(final_content) > 1_000_000:
                                     raise ValueError("Subagent report exceeds the output limit")
-                                writer({"type": "remote_agent_output", "result": event.data["text"]})
                             elif event.event_type in {"tool.started", "tool.completed"}:
                                 writer({"type": "harness_subagent", "event_type": event.event_type,
                                         "data": {**event.data, "tool_call_id": f"{run.run_id}:{event.data['tool_call_id']}"}})
@@ -120,7 +158,9 @@ class HarnessSubagentDispatcher:
                         if current.status in TERMINAL_RUN_STATUSES and cursor >= current.last_sequence:
                             if current.status != RunStatus.COMPLETED:
                                 return {"messages": [AIMessage(content=f"ERROR: Subagent {run.run_id} is {current.status.value}; do not automatically retry.")]}
-                            return {"messages": [AIMessage(content="".join(content))]}
+                            if final_content is None:
+                                return {"messages": [AIMessage(content=f"ERROR: Subagent {run.run_id} completed without a verified final report; its worker must supply final-result metadata; do not automatically retry.")]}
+                            return {"messages": [AIMessage(content=final_content)]}
             except asyncio.CancelledError:
                 await asyncio.shield(stop())
                 raise

@@ -449,7 +449,7 @@ class AGUIStreamEncoder(StreamEncoder[FrameT]):
                 tc_id = getattr(msg, "tool_call_id", None)
                 if tc_id:
                     content = normalize_tool_message_content(getattr(msg, "content", ""))
-                    if "rejected" in content.lower():
+                    if "rejected" in content.lower() and not getattr(msg, "additional_kwargs", {}).get("harness_tool_completed"):
                         rejected_tool_call_ids.add(tc_id)
 
             for msg in messages:

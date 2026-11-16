@@ -624,8 +624,20 @@ references instead of reconstructing a different model.
 - Each delegated task has a separate, deterministic conversation/request identity.
 - Child text and tool start/result events stream inside the delegated task; only
   its final report returns to the supervisor. Child events remain in the Engine journal.
+  Progress snapshots are cumulative and bounded separately from the final report.
+  A report requires explicit `result.updated.final_content`: SDK workers use the
+  native SDK result, CLI ACP workers use the prompt response's
+  `_meta["caipe.io/harness"].final_content`, and managed AgentCore uses the
+  `messageStop: end_turn` boundary. Custom AgentCore SSE needs a JSON `result` or
+  `response` string; plain deltas remain streamable but cannot certify a final report.
+  Other ACP executables must supply the same optional metadata for delegation.
+  Without it, direct chat is unchanged and the supervisor receives an explicit
+  no-retry error instead of preamble text presented as a completed report.
 - `SubAgentRef.timeout_seconds` defaults to 120 (1–600). Stop/deadline requests
   child cancellation through the existing adapter; uncertain workers keep their reservations.
+  Caller cleanup waits at most 100 ms; Engine retains an asynchronous reconciliation
+  task to cancel a late admission, including a committed run with a delayed receipt.
+  Reconciliation lasts for the Engine process lifetime; crash recovery is not added.
 - Existing Deep Agents children and A2A settings keep their current execution paths.
 - ACP interactive permissions remain declined. A paused child is reported to the
   supervisor as requiring attention; parent-driven child approval/resume and

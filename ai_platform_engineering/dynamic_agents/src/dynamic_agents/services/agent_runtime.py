@@ -734,6 +734,7 @@ class AgentRuntime:
         # Track config timestamps for cache invalidation
         self._config_updated_at: datetime = config.updated_at
         self._subagent_models: dict[str, ModelConfig] = {}
+        self._subagent_execution_owners: dict[str, tuple[str, bool] | None] = {}
         self._mcp_servers_updated_at: datetime = max(
             (s.updated_at for s in mcp_servers), default=datetime.min.replace(tzinfo=timezone.utc)
         )
@@ -1574,6 +1575,7 @@ class AgentRuntime:
                 continue
 
             execution = self._mongo_service.get_agent_execution(ref.agent_id)
+            self._subagent_execution_owners[ref.agent_id] = self._subagent_execution_owner(execution)
             if execution and execution.get("enabled") is False:
                 continue
             if execution and execution.get("execution_harness_id") not in (None, "dynamic_agents"):
@@ -1787,6 +1789,12 @@ class AgentRuntime:
         """Get the age of this runtime in seconds."""
         return time.time() - self._created_at
 
+    @staticmethod
+    def _subagent_execution_owner(execution: dict[str, Any] | None) -> tuple[str, bool] | None:
+        if execution is None:
+            return None
+        return execution.get("execution_harness_id") or "dynamic_agents", execution.get("enabled") is not False
+
     def is_stale(
         self,
         agent_config: DynamicAgentConfig,
@@ -1801,6 +1809,10 @@ class AgentRuntime:
         if agent_config.model != self.config.model:
             return True
         if self._mongo_service:
+            for agent_id, owner in getattr(self, "_subagent_execution_owners", {}).items():
+                execution = self._mongo_service.get_agent_execution(agent_id)
+                if self._subagent_execution_owner(execution) != owner:
+                    return True
             for agent_id, model in getattr(self, "_subagent_models", {}).items():
                 subagent = self._mongo_service.get_agent(agent_id)
                 if subagent is None or subagent.model != model:
