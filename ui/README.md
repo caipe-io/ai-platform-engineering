@@ -225,6 +225,7 @@ for OAuth resource registration and rollout requirements.
 
 - [UI overview](../docs/docs/ui/index.md)
 - [UI configuration](../docs/docs/ui/configuration.md)
+- [Message actions](../docs/docs/ui/message-actions.md)
 - [Dynamic Agents API](../docs/docs/api/dynamic-agents-mcp.md)
 - [Helm chart reference](../docs/docs/installation/helm-charts/ai-platform-engineering/caipe-ui.md)
 
@@ -248,6 +249,54 @@ access token to the selected runtime. The browser does not attach a bearer token
   their bearer identity and do not inherit browser administrator privileges.
 - Conversation-write, agent-use and app installation admission checks remain in
   force for every operation. Keep admin-only app policies unchanged.
+
+## App message actions
+
+Apps that use the host assistant popup (`ui.assistant.overlay: "host"`) can add up to four optional buttons to finished assistant answers. The host renders them and calls the app's endpoint as the signed-in user. Declare them in the app manifest:
+
+```yaml
+agentic_apps:
+  packages:
+    - package_id: example
+      manifest:
+        ui:
+          assistant:
+            agentId: example-assistant
+            streamPath: /api/assistant/stream
+            hostOptions:
+              version: "1.0"
+              requireConfiguration: true
+              messageActions:
+                - id: flag-answer
+                  label: Flag answer
+                  icon: flag
+                  path: /api/assistant/actions/flag
+                  dialog:
+                    title: Flag this answer
+                    submitLabel: Submit
+                    field:
+                      label: Corrected answer
+                      prefill: message
+                      optional: true
+                      maxLength: 60000
+```
+
+Each `path` follows the `streamPath` rules: it starts with `/api/`, the app declares a runtime, and an allowed `POST` policy action covers it. Without a `dialog` the action runs on click.
+
+Actions stay hidden until the app enables them for the current user. Check the `messageActions.v1` capability first, then call `configure` (native) or `configureAssistant` (iframe bridge):
+
+```ts
+chat.assistant?.configure({
+  version: "1.0",
+  visible: true,
+  messageActions: { "flag-answer": { visible: userIsReviewer } },
+});
+```
+
+- Visibility is cosmetic. The app endpoint must still check the caller on every call.
+- The host sends `{ conversation_id, message_id, turn_id, action_id, text? }` and expects a JSON response. Failures return `{ error, code }`.
+- Web UI only. Older hosts reject a manifest that declares `messageActions`.
+- Full contract: [Message actions](../docs/docs/ui/message-actions.md). A runnable test app is in [`examples/external-apps/actions-demo`](examples/external-apps/actions-demo/README.md).
 
 ## App feedback
 
