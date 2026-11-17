@@ -125,7 +125,7 @@ class ClaudeACPAdapter(ClaudeSDKAdapter):
     async def _stream(
         self, context: RunContext, mcp_servers: list[HttpMcpServer], tool_names: dict[str, str]
     ) -> AsyncIterator[CanonicalEventDraft]:
-        profile = self._profile(context.binding.profile_id)
+        profile = self.execution_profile(context)
         options = ClaudeHarnessOptions.model_validate(context.blueprint.harness.options)
         workspace = Path(profile.cwd) / hashlib.sha256(context.binding.binding_id.encode()).hexdigest()
         await asyncio.to_thread(workspace.mkdir, parents=True, exist_ok=True, mode=0o700)
