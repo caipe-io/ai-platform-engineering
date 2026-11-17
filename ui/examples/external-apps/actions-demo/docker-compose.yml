@@ -1,0 +1,66 @@
+# Backing services and the demo app for the message actions demo.
+# The host UI runs on your machine (`make dev`): dev auth needs NODE_ENV=development.
+# See README.md. Every port is published on loopback only.
+# `docker compose up -d` works, but `up --wait` fails on openfga-init because it exits when done.
+# `make up` waits on the long-running services and then runs openfga-init once.
+name: actions-demo
+
+services:
+  mongo:
+    image: mongo:7
+    ports:
+      - "127.0.0.1:27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # In-memory store: it is empty on every start, and openfga-init loads the model again.
+  openfga:
+    image: openfga/openfga:latest
+    command: run
+    ports:
+      - "127.0.0.1:18080:8080"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/grpc_health_probe", "-addr=localhost:8081"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  openfga-init:
+    image: node:24.22.1-alpine3.24
+    depends_on:
+      openfga:
+        condition: service_healthy
+    working_dir: /demo
+    command: ["node", "setup-openfga.mjs"]
+    environment:
+      OPENFGA_HTTP: http://openfga:8080
+      OPENFGA_MODEL_PATH: /model/authorization-model.json
+    volumes:
+      - ./setup-openfga.mjs:/demo/setup-openfga.mjs:ro
+      - ../../../../charts/ai-platform-engineering/charts/openfga/authorization-model.json:/model/authorization-model.json:ro
+    restart: "no"
+
+  # The host reaches it at http://127.0.0.1:3021 (see runtime_origin_override in agentic-apps.yaml).
+  actions-demo:
+    image: node:24.22.1-alpine3.24
+    working_dir: /app
+    command: ["node", "server.mjs"]
+    environment:
+      # Written to .env by `make env`; it must match ui/.env.local.
+      AGENTIC_APP_TOKEN_SECRET: ${AGENTIC_APP_TOKEN_SECRET:?run `make env` first, or set it in .env}
+      ACTIONS_DEMO_PORT: "3021"
+      ACTIONS_DEMO_HOST: 0.0.0.0
+      ACTIONS_DEMO_SDK_DIR: /sdk
+    ports:
+      - "127.0.0.1:3021:3021"
+    volumes:
+      - ./:/app:ro
+      - ../../../app-sdk:/sdk:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3021/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

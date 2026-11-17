@@ -3,6 +3,7 @@
 
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { createDemoJwtVerifier } from "./auth.mjs";
@@ -65,7 +66,7 @@ export function createActionsDemoServer({
         if (routePath === "/assets/app.css") return send(request, response, 200, APP_CSS, "text/css; charset=utf-8");
         if (routePath === "/assets/app.js") return send(request, response, 200, APP_JS, "text/javascript; charset=utf-8");
         if (SDK_FILES.has(routePath)) {
-          const source = readFileSync(`${sdkDir}${SDK_FILES.get(routePath)}`, "utf8");
+          const source = readFileSync(join(sdkDir, SDK_FILES.get(routePath)), "utf8");
           return send(request, response, 200, source, "text/javascript; charset=utf-8");
         }
         if (routePath === "/api/assistant/actions/received") {
@@ -203,8 +204,10 @@ if (Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     throw new Error("ACTIONS_DEMO_PORT must be a valid TCP port");
   }
-  // Loopback only: the host proxies to it, and the demo records submitted text.
-  createActionsDemoServer().listen(port, "127.0.0.1", () => {
-    console.log(`Actions demo listening on http://127.0.0.1:${port}`);
+  // Loopback by default: the host proxies to it, and the demo records submitted text.
+  // A container sets ACTIONS_DEMO_HOST=0.0.0.0 and publishes the port on loopback only.
+  const host = process.env.ACTIONS_DEMO_HOST ?? "127.0.0.1";
+  createActionsDemoServer().listen(port, host, () => {
+    console.log(`Actions demo listening on http://${host}:${port}`);
   });
 }
