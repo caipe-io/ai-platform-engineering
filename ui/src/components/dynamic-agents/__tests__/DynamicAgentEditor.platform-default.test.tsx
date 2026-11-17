@@ -247,6 +247,45 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     expect(screen.getByLabelText("Maximum turns")).toHaveValue("80");
   });
 
+  it.each([false, true])("changes profile defaults while preserving only explicit turn overrides (%s)", async explicit => {
+    const fetchMock = mockFetch(null, true);
+    const implementation = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url, init) => {
+      const response = await implementation(url, init);
+      if (!String(url).endsWith("/api/harness-engine/harnesses")) return response;
+      const body = await response.json();
+      const descriptor = body.data.harnesses[0];
+      descriptor.profiles.push(
+        { ...descriptor.profiles[0], id: "managed-primary", display_name: "Primary", source: "managed", default_max_turns: 100 },
+        { ...descriptor.profiles[0], id: "managed-secondary", display_name: "Secondary", source: "managed", default_max_turns: 50 },
+      );
+      return jsonResponse(body);
+    });
+    render(<DynamicAgentEditor agent={editAgent} onCancel={jest.fn()} onSave={jest.fn()} />);
+    await flushAsync();
+    fireEvent.change(screen.getByLabelText("Execution harness"), { target: { value: "claude_agent_sdk" } });
+    fireEvent.change(screen.getByLabelText("Operator profile"), { target: { value: "managed-primary" } });
+    fireEvent.click(screen.getByRole("button", { name: /Advanced/i }));
+    expect(screen.getByLabelText("Maximum turns")).toHaveValue("100");
+    if (explicit) {
+      fireEvent.change(screen.getByLabelText("Maximum turns"), { target: { value: "80" } });
+      fireEvent.blur(screen.getByLabelText("Maximum turns"));
+    }
+    for (const [profile, defaultTurns] of [["managed-secondary", "50"], ["safe", "20"]]) {
+      fireEvent.click(screen.getByRole("button", { name: /Basic Info/i }));
+      fireEvent.change(screen.getByLabelText("Operator profile"), { target: { value: profile } });
+      fireEvent.click(screen.getByRole("button", { name: /Advanced/i }));
+      expect(screen.getByLabelText("Maximum turns")).toHaveValue(explicit ? "80" : defaultTurns);
+    }
+    fireEvent.click(screen.getByRole("button", { name: /Basic Info/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /existing conversations keep/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));
+    await flushAsync();
+    const validation = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/harness-engine/agent-drafts/validate"));
+    expect(validation).toBeDefined();
+    expect(JSON.parse(validation![1]!.body as string).blueprint.harness.options).toEqual(explicit ? { max_turns: 80 } : {});
+  });
+
   it("validates a provider blueprint before updating existing agent metadata", async () => {
     const fetchMock = mockFetch(null, true);
     render(<DynamicAgentEditor agent={editAgent} onCancel={jest.fn()} onSave={jest.fn()} />);

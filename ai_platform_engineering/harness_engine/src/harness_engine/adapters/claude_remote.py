@@ -82,20 +82,22 @@ class RemoteClaudeSDKAdapter:
                         "X-Harness-Engine-Subject": subject,
                     })
                     if response.status_code != 200:
+                        logger.warning("Worker model discovery unavailable (alias=%s, status=%s)", alias, response.status_code)
                         return
                     data = response.json()
                     for item in data.get("profiles", []):
                         if item.get("id") == profile.profile_id and isinstance(item.get("model"), str):
                             models[alias] = item["model"]
-                except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+                except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
                     # Discovery does not change execution or block profile administration.
+                    logger.warning("Worker model discovery failed (alias=%s, error=%s)", alias, type(exc).__name__)
                     return
             try:
                 async with asyncio.timeout(MODEL_DISCOVERY_TIMEOUT_SECONDS):
                     await asyncio.gather(*(discover(alias, profile) for alias, profile in self._deployment_profiles.items()))
             except TimeoutError:
                 # Keep fast-worker results when another worker misses the batch deadline.
-                pass
+                logger.warning("Worker model discovery batch deadline reached (error=TimeoutError)")
         return models
 
     @property

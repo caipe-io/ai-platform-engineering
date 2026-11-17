@@ -581,6 +581,16 @@ export function DynamicAgentEditor({
     () => harnessDescriptors.find((descriptor) => descriptor.id === harnessId),
     [harnessDescriptors, harnessId],
   );
+  const harnessOptionsSchema = React.useMemo(() => {
+    const schema = selectedHarness?.options_schema;
+    const profile = selectedHarness?.profiles.find(item => item.id === harnessProfileId);
+    if (!schema?.properties?.max_turns || profile?.default_max_turns === undefined) return schema;
+    // Profile defaults are presentation values. Only author edits enter the
+    // options payload, so switching profiles cannot carry a derived override.
+    return { ...schema, properties: { ...schema.properties, max_turns: {
+      ...schema.properties.max_turns, default: profile.default_max_turns,
+    } } };
+  }, [selectedHarness, harnessProfileId]);
   const isDeepAgents = harnessId === "dynamic_agents";
   const [harnessSwitchConfirmed, setHarnessSwitchConfirmed] = React.useState(false);
   const requiresHarnessConfirmation = isEditing && harnessId !== (agent?.execution_harness_id || "dynamic_agents");
@@ -622,21 +632,19 @@ export function DynamicAgentEditor({
     const draft = harnessDrafts.current.get(nextHarnessId);
     const descriptor = harnessDescriptors.find((item) => item.id === nextHarnessId);
     const profileId = draft?.profileId ?? descriptor?.profiles.find((profile) => profile.available)?.id ?? "";
-    const profile = descriptor?.profiles.find(item => item.id === profileId);
     setHarnessProfileId(profileId);
-    setHarnessOptions(draft?.options ?? (profile?.source === "managed" ? { max_turns: profile.default_max_turns ?? 20 } : {}));
+    setHarnessOptions(draft?.options ?? {});
   }, [harnessDescriptors, harnessId, harnessOptions, harnessProfileId]);
 
-  async function selectCreatedOperatorProfile(profileId: string, maxTurns: number) {
+  async function selectCreatedOperatorProfile(profileId: string) {
     const response = await fetch("/api/harness-engine/harnesses", { cache: "no-store" });
     const result = await response.json();
     if (!response.ok || !result.success || !result.data.harnesses.some((h: HarnessDescriptor) => h.id === harnessId && h.profiles.some(p => p.id === profileId))) {
-      throw new Error("Profile saved, but the catalog could not be refreshed. Reopen the editor to select it.");
+      throw new Error("The catalog could not be refreshed. Retry selection to keep your agent draft.");
     }
     setHarnessDescriptors(result.data.harnesses);
     setCatalogRevision(result.data.catalog_revision);
     setHarnessProfileId(profileId);
-    setHarnessOptions(previous => ({ ...previous, max_turns: maxTurns }));
     toast("Profile selected. Save this agent to use it in new chats.", "success");
   }
 
@@ -1878,8 +1886,6 @@ export function DynamicAgentEditor({
                           value={harnessProfileId}
                           onChange={(event) => {
                             setHarnessProfileId(event.target.value);
-                            const profile = selectedHarness.profiles.find(p => p.id === event.target.value);
-                            if (profile?.source === "managed") setHarnessOptions(previous => ({ ...previous, max_turns: profile.default_max_turns ?? 20 }));
                           }}
                           disabled={loading || !!readOnly}
                           className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
@@ -2985,7 +2991,7 @@ export function DynamicAgentEditor({
             {activeStep === "advanced" && (isDeepAgents || hasFeaturePanels ? (
               <AdvancedStep
                 descriptor={selectedHarness}
-                schemaPanel={selectedHarness && !isDeepAgents ? <HarnessOptionsForm schema={selectedHarness.options_schema} value={harnessOptions} onChange={setHarnessOptions} disabled={loading || !!readOnly} /> : undefined}
+                schemaPanel={harnessOptionsSchema && !isDeepAgents ? <HarnessOptionsForm schema={harnessOptionsSchema} value={harnessOptions} onChange={setHarnessOptions} disabled={loading || !!readOnly} /> : undefined}
                 agent={agent}
                 subagents={subagents}
                 setSubagents={setSubagents}
@@ -3013,7 +3019,7 @@ export function DynamicAgentEditor({
                 </div>
                 {selectedHarness && (
                   <HarnessOptionsForm
-                    schema={selectedHarness.options_schema}
+                    schema={harnessOptionsSchema ?? selectedHarness.options_schema}
                     value={harnessOptions}
                     onChange={setHarnessOptions}
                     disabled={loading || !!readOnly}
