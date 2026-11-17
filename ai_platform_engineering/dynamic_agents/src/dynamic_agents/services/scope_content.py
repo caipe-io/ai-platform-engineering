@@ -38,14 +38,14 @@ def message_attributes(messages: list[Any], prefix: str) -> dict[str, Any]:
     selected = messages if len(messages) <= 32 else messages[:2] + messages[-30:]
     attrs: dict[str, Any] = {"scope.content.capture": True}
     truncated = len(selected) != len(messages)
-    budget = 65536
+    budget = 131072
     for index, message in enumerate(selected):
         role = {"human": "user", "ai": "assistant"}.get(message.type, message.type)
         text = visible_text(message.content)
         calls = getattr(message, "tool_calls", None)
         if calls:
             text += "\nTool calls: " + json.dumps(calls, ensure_ascii=False)
-        limit = min(8192, budget)
+        limit = min(32768, budget)
         truncated = truncated or len(text) > limit
         if text and limit:
             attrs[f"{prefix}.{index}.role"] = role

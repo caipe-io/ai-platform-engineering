@@ -75,14 +75,24 @@ def test_capture_selects_visible_blocks_and_preserves_actual_tool_calls() -> Non
 
 
 def test_capture_limits_and_truncation_are_explicit() -> None:
-    messages = [HumanMessage(content='x' * 10000) for _ in range(40)]
+    messages = [HumanMessage(content='x' * 40000) for _ in range(40)]
     attrs = message_attributes(messages, 'gen_ai.prompt')
     assert attrs['scope.content.prompt_truncated'] is True
-    assert sum(len(v) for k, v in attrs.items() if k.endswith('.content')) <= 65536
-    assert all(len(v) <= 8192 for k, v in attrs.items() if k.endswith('.content'))
+    assert sum(len(v) for k, v in attrs.items() if k.endswith('.content')) <= 131072
+    assert all(len(v) <= 32768 for k, v in attrs.items() if k.endswith('.content'))
     output = entity_attributes('x' * 20000, 'output')
     assert output['scope.content.output_truncated'] is True
     assert len(output['traceloop.entity.output']) == 16384
+
+
+def test_long_system_instructions_and_initial_user_request_are_retained() -> None:
+    system = 'instruction\n' * 2000
+    messages = [SystemMessage(content=system), HumanMessage(content='original request')]
+    messages += [ToolMessage(content='observation', tool_call_id=str(i)) for i in range(35)]
+    attrs = message_attributes(messages, 'gen_ai.prompt')
+    assert attrs['gen_ai.prompt.0.content'] == system
+    assert attrs['gen_ai.prompt.1.content'] == 'original request'
+    assert attrs['scope.content.prompt_truncated'] is True
 
 
 def test_canonical_tools_are_not_duplicated_or_captured(monkeypatch: pytest.MonkeyPatch) -> None:

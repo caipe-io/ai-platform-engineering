@@ -627,7 +627,7 @@ retain metadata-only capture. Langfuse configuration is independent.
 Only enable this for conversations whose contents may be stored in the configured
 Scope backend. This is content capture, not automatic secret redaction. Image,
 file and reasoning blocks are excluded. Model capture is limited to 32 messages,
-8,192 characters per message and 65,536 characters per prompt/completion; when
+32,768 characters per message and 131,072 characters per prompt/completion; when
 there are more than 32 messages, the first two and last 30 are selected. Tool and
 delegate inputs/results are limited to 16,384 characters per direction. The
 `scope.content.*_truncated` attributes mark missing evidence; do not interpret
