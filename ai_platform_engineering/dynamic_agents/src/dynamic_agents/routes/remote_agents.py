@@ -114,6 +114,8 @@ async def discover_remote_agents(payload: DiscoveryRequest,
 
     async def discover_url(endpoint: str) -> dict:
         async with semaphore:
+            if not endpoint:
+                return {"endpoint": endpoint, "error": "Discovery URL must not be blank"}
             try:
                 # Public discovery never forwards the operator's JWT or saved credentials.
                 card = await read_agent_card(RemoteAgentProbeRequest(endpoint=endpoint, credential_source=RemoteAgentCredentialSource(kind="none")))

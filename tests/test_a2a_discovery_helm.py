@@ -41,3 +41,23 @@ def test_discovery_projects_a_short_lived_token_and_grants_only_scoped_lists():
     assert projection["projected"]["sources"][0]["serviceAccountToken"]["expirationSeconds"] == 3600
     config = next(doc for doc in docs if doc["kind"] == "ConfigMap")["data"]
     assert config["REMOTE_A2A_DISCOVERY_NAMESPACES"] == '["primary","secondary","primary"]'
+
+
+def test_discovery_configuration_rolls_out_pods_and_preserves_other_annotations() -> None:
+    def annotations(namespace: str) -> dict:
+        docs = render("--set", "a2aDiscovery.enabled=true", "--set-json", f'a2aDiscovery.namespaces=["{namespace}"]',
+                      "--set-json", 'podAnnotations={"example.test/owner":"team","checksum/dynamic-agents-config":"cannot-override"}')
+        deployment = next(doc for doc in docs if doc["kind"] == "Deployment")
+        return deployment["spec"]["template"]["metadata"]["annotations"]
+
+    primary, secondary = annotations("primary"), annotations("secondary")
+    key = "checksum/dynamic-agents-config"
+    assert primary[key] != secondary[key] and primary[key] != "cannot-override"
+    assert primary == annotations("primary")
+    assert primary["example.test/owner"] == secondary["example.test/owner"] == "team"
+
+
+def test_config_checksum_supports_null_pod_annotations() -> None:
+    docs = render("--set-json", "podAnnotations=null")
+    deployment = next(doc for doc in docs if doc["kind"] == "Deployment")
+    assert len(deployment["spec"]["template"]["metadata"]["annotations"]["checksum/dynamic-agents-config"]) == 64

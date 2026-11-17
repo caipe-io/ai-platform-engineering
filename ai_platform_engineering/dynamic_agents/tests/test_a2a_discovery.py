@@ -26,6 +26,17 @@ async def test_public_discovery_keeps_successes_and_per_url_errors_without_crede
     assert result["items"][1]["error"] == "Agent Card unavailable"
 
 
+async def test_blank_discovery_url_does_not_discard_successes(monkeypatch: pytest.MonkeyPatch) -> None:
+    resolver = AsyncMock(return_value=remote_agents.RemoteAgentProbeResponse(name="Example", description="Public agent", protocol_bindings=["JSONRPC"]))
+    monkeypatch.setattr(remote_agents, "read_agent_card", resolver)
+    result = await remote_agents.discover_remote_agents(remote_agents.DiscoveryRequest(
+        source="urls", urls=[" https://example.test ", " ", "\t\n", "https://example.test"]), None)
+    assert result["items"][0]["name"] == "Example"
+    assert result["items"][1] == {"endpoint": "", "error": "Discovery URL must not be blank"}
+    assert resolver.await_count == 1
+    assert resolver.await_args.args[0].endpoint == "https://example.test"
+
+
 async def test_kubernetes_scope_is_checked_before_reading_the_service_account():
     with pytest.raises(ValueError, match="configured"):
         await kubernetes.discover_services("other", ["primary"], "cluster.local")
