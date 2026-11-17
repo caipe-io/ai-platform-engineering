@@ -82,6 +82,7 @@ import remarkGfm from "remark-gfm";
 import { AgentAvatar } from "./AgentAvatar";
 import { AllowedToolsPicker } from "./AllowedToolsPicker";
 import { BuiltinToolsPicker } from "./BuiltinToolsPicker";
+import { OperatorProfilesDialog } from "@/components/harness-engine/OperatorProfilesDialog";
 import { ConnectAgentCoreDialog, useAgentCoreConnectionAccess } from "./ConnectAgentCoreDialog";
 import { DatasourcePicker } from "./DatasourcePicker";
 import { InterruptConfigPicker } from "./InterruptConfigPicker";
@@ -427,6 +428,7 @@ export function DynamicAgentEditor({
   const isCloning = !!cloneFrom;
   const { toast } = useToast();
   const connectionConfigured = useAgentCoreConnectionAccess();
+  const [operatorProfilesOpen, setOperatorProfilesOpen] = React.useState(false);
   const [connectionDialogOpen, setConnectionDialogOpen] = React.useState(false);
 
   // Source for initial values: editing agent > cloning source > empty defaults
@@ -553,6 +555,16 @@ export function DynamicAgentEditor({
     () => harnessDescriptors.find((descriptor) => descriptor.id === harnessId),
     [harnessDescriptors, harnessId],
   );
+  const harnessOptionsSchema = React.useMemo(() => {
+    const schema = selectedHarness?.options_schema;
+    const profile = selectedHarness?.profiles.find(item => item.id === harnessProfileId);
+    if (!schema?.properties?.max_turns || profile?.default_max_turns === undefined) return schema;
+    // Profile defaults are presentation values. Only author edits enter the
+    // options payload, so switching profiles cannot carry a derived override.
+    return { ...schema, properties: { ...schema.properties, max_turns: {
+      ...schema.properties.max_turns, default: profile.default_max_turns,
+    } } };
+  }, [selectedHarness, harnessProfileId]);
   const [showAdvancedRuntimes, setShowAdvancedRuntimes] = React.useState(false);
   const runtimeChoices = harnessChoices(harnessDescriptors, showAdvancedRuntimes, harnessId);
   const profileChoices = harnessProfileChoices(harnessDescriptors, harnessId);
@@ -596,10 +608,23 @@ export function DynamicAgentEditor({
     setHarnessSwitchConfirmed(false);
     setHarnessId(nextHarnessId);
     const draft = harnessDrafts.current.get(nextHarnessId);
-    setHarnessOptions(draft?.options ?? {});
     const descriptor = harnessDescriptors.find((item) => item.id === nextHarnessId);
-    setHarnessProfileId(draft?.profileId ?? descriptor?.profiles.find((profile) => profile.available)?.id ?? "");
+    const profileId = draft?.profileId ?? descriptor?.profiles.find((profile) => profile.available)?.id ?? "";
+    setHarnessProfileId(profileId);
+    setHarnessOptions(draft?.options ?? {});
   }, [harnessDescriptors, harnessId, harnessOptions, harnessProfileId]);
+
+  async function selectCreatedOperatorProfile(profileId: string) {
+    const response = await fetch("/api/harness-engine/harnesses", { cache: "no-store" });
+    const result = await response.json();
+    if (!response.ok || !result.success || !result.data.harnesses.some((h: HarnessDescriptor) => h.id === harnessId && h.profiles.some(p => p.id === profileId))) {
+      throw new Error("The catalog could not be refreshed. Retry selection to keep your agent draft.");
+    }
+    setHarnessDescriptors(result.data.harnesses);
+    setCatalogRevision(result.data.catalog_revision);
+    setHarnessProfileId(profileId);
+    toast("Profile selected. Save this agent to use it in new chats.", "success");
+  }
 
   async function selectConnectedAgentCore(profileId: string) {
     const response = await fetch("/api/harness-engine/harnesses", { cache: "no-store" });
@@ -1831,10 +1856,9 @@ export function DynamicAgentEditor({
                                 sideOffset={6}
                                 className="max-w-xs whitespace-normal px-3 py-2 text-left text-xs font-normal leading-relaxed"
                               >
-                                An operator profile is an administrator-managed execution
-                                configuration. It selects approved provider resources,
-                                security settings, and limits without exposing credentials or
-                                infrastructure identifiers to agent authors.
+                                Choose an admin-managed setup for this agent.
+                                It sets the model, permissions, and usage limits.
+                                Credentials stay private.
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
@@ -1866,10 +1890,11 @@ export function DynamicAgentEditor({
                           ))}
                         </Select>
                         <p className="text-xs text-muted-foreground">
-                          Profiles are managed by your administrator and define
-                          the execution model, security settings, and limits.
+                          Profiles set the model, permissions, and limits. Admins manage them.
                           {selectedHarness.profiles.find(profile => profile.id === harnessProfileId)?.description && ` ${selectedHarness.profiles.find(profile => profile.id === harnessProfileId)?.description}`}
                         </p>
+                        {selectedHarness.profiles.find(p => p.id === harnessProfileId)?.model && <p className="text-sm">Execution model: <code>{selectedHarness.profiles.find(p => p.id === harnessProfileId)?.model}</code></p>}
+                        {connectionConfigured === true && harnessId.startsWith("claude_") && !readOnly && <Button type="button" variant="outline" onClick={() => setOperatorProfilesOpen(true)} disabled={loading}>Manage operator profiles</Button>}
                       </div>
                     )}
                     {["claude_code_acp", "claude_code_cli_acp"].includes(harnessId) && selectedHarness ? (
@@ -2952,7 +2977,7 @@ export function DynamicAgentEditor({
             {activeStep === "advanced" && (isDeepAgents || hasFeaturePanels ? (
               <AdvancedStep
                 descriptor={selectedHarness}
-                schemaPanel={selectedHarness && !isDeepAgents ? <HarnessOptionsForm schema={selectedHarness.options_schema} value={harnessOptions} onChange={setHarnessOptions} disabled={loading || !!readOnly} /> : undefined}
+                schemaPanel={harnessOptionsSchema && !isDeepAgents ? <HarnessOptionsForm schema={harnessOptionsSchema} value={harnessOptions} onChange={setHarnessOptions} disabled={loading || !!readOnly} /> : undefined}
                 agent={agent}
                 subagents={subagents}
                 setSubagents={setSubagents}
@@ -2980,7 +3005,7 @@ export function DynamicAgentEditor({
                 </div>
                 {selectedHarness && (
                   <HarnessOptionsForm
-                    schema={selectedHarness.options_schema}
+                    schema={harnessOptionsSchema ?? selectedHarness.options_schema}
                     value={harnessOptions}
                     onChange={setHarnessOptions}
                     disabled={loading || !!readOnly}
@@ -3093,6 +3118,7 @@ export function DynamicAgentEditor({
         )}
       </div>
 
+      <OperatorProfilesDialog open={operatorProfilesOpen} onOpenChange={setOperatorProfilesOpen} harnessId={harnessId} onCreated={selectCreatedOperatorProfile} />
       <ConnectAgentCoreDialog open={connectionDialogOpen} onOpenChange={setConnectionDialogOpen} onConnected={selectConnectedAgentCore} />
       <UnsavedChangesDialog
         open={pendingClose}

@@ -133,6 +133,11 @@ export function DynamicAgentsTab({
       const data = await response.json();
       if (request !== requestRef.current) return;
       if (data.success) {
+        const lastPage = Math.max(1, Math.ceil((data.data.total ?? 0) / pageSize));
+        if (page > lastPage) {
+          setPage(lastPage);
+          return;
+        }
         setAgents(
           (data.data.items || []).map((agent: AgentCatalogEntry) => isConnectedAgent(agent) ? agent : ({
             ...agent,
@@ -440,7 +445,7 @@ export function DynamicAgentsTab({
   return (
     <RemoteAgentRegistry onRegistryChange={() => void fetchAgents()} renderCatalog={remote => <>
       <WorkspacePageActions>
-        <div className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
+        <div role="group" aria-label="Agent catalog actions" className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
           <div className="relative col-span-2 min-w-0 sm:flex-[1_0_12rem] xl:flex-none">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input

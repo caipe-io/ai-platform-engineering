@@ -106,6 +106,9 @@ async def discover_remote_agents(payload: DiscoveryRequest,
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except (OSError, TimeoutError, httpx.HTTPError, RuntimeError) as exc:
+            # Upstream exceptions may contain the service-account token or response body.
+            status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            logger.warning("Kubernetes discovery failed namespace=%s category=%s status=%s", payload.namespace, type(exc).__name__, status)
             raise HTTPException(status_code=502, detail="Kubernetes discovery unavailable; check the namespace configuration and read-only Service/EndpointSlice permissions") from exc
         return {"items": items}
     if not payload.urls:
@@ -114,6 +117,8 @@ async def discover_remote_agents(payload: DiscoveryRequest,
 
     async def discover_url(endpoint: str) -> dict:
         async with semaphore:
+            if not endpoint:
+                return {"endpoint": endpoint, "error": "Discovery URL must not be blank"}
             try:
                 # Public discovery never forwards the operator's JWT or saved credentials.
                 card = await read_agent_card(RemoteAgentProbeRequest(endpoint=endpoint, credential_source=RemoteAgentCredentialSource(kind="none")))

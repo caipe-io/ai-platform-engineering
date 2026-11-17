@@ -26,6 +26,17 @@ async def test_public_discovery_keeps_successes_and_per_url_errors_without_crede
     assert result["items"][1]["error"] == "Agent Card unavailable"
 
 
+async def test_blank_discovery_url_does_not_discard_successes(monkeypatch: pytest.MonkeyPatch) -> None:
+    resolver = AsyncMock(return_value=remote_agents.RemoteAgentProbeResponse(name="Example", description="Public agent", protocol_bindings=["JSONRPC"]))
+    monkeypatch.setattr(remote_agents, "read_agent_card", resolver)
+    result = await remote_agents.discover_remote_agents(remote_agents.DiscoveryRequest(
+        source="urls", urls=[" https://example.test ", " ", "\t\n", "https://example.test"]), None)
+    assert result["items"][0]["name"] == "Example"
+    assert result["items"][1] == {"endpoint": "", "error": "Discovery URL must not be blank"}
+    assert resolver.await_count == 1
+    assert resolver.await_args.args[0].endpoint == "https://example.test"
+
+
 async def test_kubernetes_scope_is_checked_before_reading_the_service_account():
     with pytest.raises(ValueError, match="configured"):
         await kubernetes.discover_services("other", ["primary"], "cluster.local")
@@ -80,3 +91,16 @@ async def test_kubernetes_permissions_failure_is_actionable_and_not_an_empty_suc
     with pytest.raises(HTTPException, match="read-only") as error:
         await remote_agents.discover_remote_agents(remote_agents.DiscoveryRequest(source="kubernetes", namespace="primary"), None)
     assert error.value.status_code == 502
+
+
+async def test_kubernetes_failure_logs_context_without_upstream_credentials(monkeypatch, caplog):
+    monkeypatch.setattr(remote_agents, "get_settings", lambda: SimpleNamespace(remote_a2a_discovery_namespaces=["primary"], remote_a2a_cluster_domain="cluster.local"))
+    request = httpx.Request("GET", "https://kubernetes.default.svc", headers={"Authorization": "Bearer private-cluster-token"})
+    failure = httpx.HTTPStatusError("private-cluster-token private-provider-response", request=request, response=httpx.Response(403, request=request))
+    monkeypatch.setattr(remote_agents, "discover_services", AsyncMock(side_effect=failure))
+    with caplog.at_level("WARNING"), pytest.raises(HTTPException) as error:
+        await remote_agents.discover_remote_agents(remote_agents.DiscoveryRequest(source="kubernetes", namespace="primary"), None)
+    assert error.value.status_code == 502
+    assert "namespace=primary category=HTTPStatusError status=403" in caplog.text
+    assert "private-cluster-token" not in caplog.text and "private-provider-response" not in caplog.text
+    assert "private" not in error.value.detail

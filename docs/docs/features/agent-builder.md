@@ -187,11 +187,23 @@ and skills later without rebuilding the agent.
   against current server availability and agent grants. A rejected admission
   reports **Agent configuration needs attention**, links to agent settings, and
   offers no blind retry. The error classification survives a chat reload.
+  Retry is hidden on both the rejected response and its user-message bubbles;
+  other turns retain their normal actions.
   Existing request replay and recovery controls remain available. This checks
   configuration metadata and initializes permitted MCP catalogs through the
   existing caller/agent gateway path. It never invokes tools. Credential and
   permission denials retain the existing unavailable-tool behavior. Execution-time
   authorization checks remain authoritative.
+  Session-based MCP catalog reads send the initialized notification before
+  listing tools and follow pagination within the shared readiness deadline.
+  Repeated cursors or catalogs exceeding 100 pages fail instead of producing a
+  partial catalog. Empty successful notification responses are accepted even
+  when labeled JSON. Failures log only agent/server IDs and a bounded diagnostic
+  category, excluding credentials and private upstream details.
+- Each picker catalog becomes usable independently. Requests and response-body
+  reads time out after ten seconds; refresh cancels pending reads and retries
+  without dropping saved references. Only CAIPE choices exclude the parent ID;
+  an A2A entry with the same ID remains a distinct agent.
 - Harness children require the Engine delegation capability. Older backends keep
   those choices disabled. ACP chat uses the configured worker directly; A2A
   delegation currently runs through a Deep Agents supervisor.

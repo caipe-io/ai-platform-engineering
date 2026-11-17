@@ -318,4 +318,34 @@ describe("GET /api/dynamic-agents search + pagination", () => {
     expect(body.data.items.map((a: { _id: string }) => a._id).sort()).toEqual(["remote", "sdk"]);
   });
 
+
+  it.each([".", "[", "+", "\\"])("uses literal %s search in both sources before counting and pagination", async symbol => {
+    const native = [{ _id: "native-match", name: `ALPHA${symbol}agent` }, { _id: "native-other", name: "Other native" }];
+    const findSpy = jest.fn((query: { $or: { name?: { $regex: string; $options: string } }[] }) => {
+      const regex = query.$or.find(clause => clause.name)!.name!;
+      const matcher = new RegExp(regex.$regex, regex.$options);
+      return { sort: jest.fn().mockReturnThis(), toArray: async () => native.filter(item => matcher.test(item.name)) };
+    });
+    mockGetCollection.mockResolvedValue({ find: findSpy });
+    mockReadRemoteRegistry.mockResolvedValue({ items: [
+      { _id: "remote-match", name: "Beta", description: `alpha${symbol}agent`, timeout_seconds: 120 },
+      { _id: "remote-other", name: "Other remote", timeout_seconds: 120 },
+    ] });
+    const { GET } = await import("../route");
+    const url = `/api/dynamic-agents?catalog=true&search=${encodeURIComponent(`alpha${symbol}`)}&page_size=1`;
+    const first = await (await GET(request(`${url}&page=1`))).json();
+    const second = await (await GET(request(`${url}&page=2`))).json();
+    expect(first.data.total).toBe(2);
+    expect(second.data.total).toBe(2);
+    expect(first.data.items.map((item: { _id: string }) => item._id)).toEqual(["native-match"]);
+    expect(second.data.items.map((item: { _id: string }) => item._id)).toEqual(["remote-match"]);
+  });
+
+  it("retains regex search for existing non-catalog API clients", async () => {
+    const findSpy = mockFind([]);
+    const { GET } = await import("../route");
+    await GET(request("/api/dynamic-agents?search=.%2B"));
+    expect(findSpy).toHaveBeenCalledWith({ $or: [{ name: { $regex: ".+", $options: "i" } }, { description: { $regex: ".+", $options: "i" } }] });
+  });
+
 });

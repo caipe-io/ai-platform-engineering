@@ -56,6 +56,7 @@ class ClaudeACPToolBridge:
         self,
         context: RunContext,
         broker: ClaudeToolBroker,
+        max_calls: int | None = None,
     ) -> AsyncIterator[tuple[list[HttpMcpServer], dict[str, str]]]:
         if not context.blueprint.tools.bindings:
             yield [], {}
@@ -63,6 +64,7 @@ class ClaudeACPToolBridge:
         async with broker.bind_tools(context) as (tools, names):
             server = Server("caipe")
             by_name = {tool.name: tool for tool in tools}
+            calls = 0
 
             @server.list_tools()
             async def list_tools() -> list[types.Tool]:
@@ -73,9 +75,13 @@ class ClaudeACPToolBridge:
 
             @server.call_tool()
             async def call_tool(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
+                nonlocal calls
                 tool = by_name.get(name)
                 if tool is None:
                     raise PermissionError("Tool is not in this run's allowlist")
+                if max_calls is not None and calls >= max_calls:
+                    raise PermissionError("Research MCP call budget exhausted")
+                calls += 1
                 # The shared broker rechecks the caller, agent and tool through
                 # CAS/AgentGateway on every call, and never retries a tool call.
                 return types.CallToolResult.model_validate(await tool.handler(arguments))

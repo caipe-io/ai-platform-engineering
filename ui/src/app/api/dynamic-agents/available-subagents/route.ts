@@ -63,7 +63,12 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
         // App-owned assistants require their app's execution path; they cannot
         // be reconstructed as local graphs or dispatched as Harness children.
         if (findAgenticAppAssistantStream(String(agent._id))) return false;
-      } catch { return false; } // Unavailable/ambiguous app bindings fail closed.
+      } catch (error) {
+        const category = error instanceof Error && error.message === "Assistant app is unavailable" ? "app_unavailable"
+          : error instanceof Error && error.message === "Multiple installed apps claim the assistant" ? "ambiguous_binding" : "routing_snapshot_error";
+        console.warn("[available-subagents] App binding excluded", { agentId: String(agent._id), category });
+        return false;
+      } // Unavailable/ambiguous app bindings fail closed.
       return true;
     });
 

@@ -59,16 +59,14 @@ Create chart name and version as used by the chart label.
 {{- end }}
 
 {{/*
-Get externalSecrets API version with fallback to v1 (most clusters have v1 installed)
+Resolve an explicit API version, the legacy setting, or the compatibility default.
 */}}
 {{- define "ai-platform-engineering.externalSecrets.apiVersion" -}}
-    {{- if and (hasKey .Values "global") (hasKey .Values.global "externalSecrets") (hasKey .Values.global.externalSecrets "apiVersion") }}
-        {{- .Values.global.externalSecrets.apiVersion }}
-    {{- else if and (hasKey .Values "global") (hasKey .Values.global "llmSecrets") (hasKey .Values.global.llmSecrets "externalSecrets") (hasKey .Values.global.llmSecrets.externalSecrets "apiVersion") }}
-        {{- .Values.global.llmSecrets.externalSecrets.apiVersion }}
-    {{- else }}
-        {{- "v1" }}
-    {{- end }}
+    {{- $global := .Values.global | default dict -}}
+    {{- $externalSecrets := $global.externalSecrets | default dict -}}
+    {{- $llmSecrets := $global.llmSecrets | default dict -}}
+    {{- $llmExternalSecrets := $llmSecrets.externalSecrets | default dict -}}
+    {{- coalesce $externalSecrets.apiVersion $llmExternalSecrets.apiVersion "v1beta1" -}}
 {{- end }}
 
 {{/*

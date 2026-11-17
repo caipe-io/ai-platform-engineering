@@ -1,14 +1,18 @@
 import React from "react";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 
 // assisted-by Codex Codex-sonnet-4-6
 
 const mockPush = jest.fn();
 const mockCreateConversation = jest.fn();
+let mockOnRegistryChange: (() => void) | undefined;
 
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { sub: "test-user" } }) }));
 jest.mock("../RemoteAgentRegistry", () => ({
-  RemoteAgentRegistry: ({ renderCatalog }: { renderCatalog: (controls: unknown) => React.ReactNode }) => renderCatalog({ toolbar: null, refresh: jest.fn(), renderAgent: jest.fn() }),
+  RemoteAgentRegistry: ({ renderCatalog, onRegistryChange }: { renderCatalog: (controls: unknown) => React.ReactNode; onRegistryChange?: () => void }) => {
+    mockOnRegistryChange = onRegistryChange;
+    return renderCatalog({ toolbar: null, refresh: jest.fn(), renderAgent: (item: { _id: string; name: string }) => <div key={item._id}>{item.name}</div> });
+  },
 }));
 
 jest.mock("next/navigation", () => ({
@@ -578,6 +582,52 @@ describe("DynamicAgentsTab search + pagination", () => {
     fireEvent.click(screen.getByRole("button", { name: "Connected", exact: true }));
     await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?catalog=true&source=connected&page=1&page_size=20"));
     expect(screen.getByRole("button", { name: "List", exact: true })).toHaveAttribute("aria-pressed", "true");
+  });
+
+
+  it.each([20, 0])("recovers after a registry mutation reduces the total to %s on a later page", async remaining => {
+    let removed = false;
+    const connected = (index: number) => ({ _id: `remote-${index}`, name: `Remote ${index}`, catalog_source: "a2a", timeout_seconds: 120 });
+    fetchMock.mockImplementation(async (url: string) => {
+      const query = new URL(url, "http://localhost").searchParams;
+      const page = Number(query.get("page"));
+      const items = removed ? (page === 1 ? Array.from({ length: remaining }, (_, i) => connected(i)) : [])
+        : page === 1 ? Array.from({ length: 20 }, (_, i) => connected(i)) : [connected(20)];
+      return jsonResponse({ success: true, data: { items, total: removed ? remaining : 21 } });
+    });
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Remote 0");
+    fireEvent.click(screen.getByRole("button", { name: "2", exact: true }));
+    await screen.findByText("Remote 20");
+    removed = true;
+    act(() => mockOnRegistryChange?.());
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=20"));
+    if (remaining) {
+      expect(await screen.findByText("Remote 0")).toBeInTheDocument();
+      expect(screen.queryByText("Remote 20")).not.toBeInTheDocument();
+    } else expect(await screen.findByText("No agents yet")).toBeInTheDocument();
+  });
+
+  it.each(["denial", "network"])("shows a %s delete failure and allows dismiss/retry inside the details dialog", async failure => {
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        if (failure === "network") throw new Error("Connection unavailable");
+        return jsonResponse({ success: false, error: "Delete denied" });
+      }
+      return jsonResponse({ success: true, data: { items: [makeAgent()], total: 1 } });
+    });
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Ops Helper");
+    fireEvent.click(screen.getByRole("button", { name: "Grid", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Details for Ops Helper" }));
+    const dialog = screen.getByRole("dialog", { name: "Ops Helper" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete Ops Helper" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm delete Ops Helper" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(failure === "network" ? "Connection unavailable" : "Delete denied");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Dismiss", exact: true }));
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Confirm delete Ops Helper" })).toBeEnabled();
+    expect(screen.queryByTestId("dynamic-agent-editor")).not.toBeInTheDocument();
   });
 
 });

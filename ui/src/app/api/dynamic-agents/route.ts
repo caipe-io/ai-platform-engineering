@@ -674,7 +674,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     : {};
 
   if (search) {
-    const regex = { $regex: search, $options: "i" };
+    // The unified catalog uses literal text for both native and connected entries.
+    // Preserve the existing regex API for clients that have not opted into it.
+    const regex = { $regex: unified ? search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : search, $options: "i" };
     const orClauses: Record<string, unknown>[] = [
       { name: regex },
       { description: regex },

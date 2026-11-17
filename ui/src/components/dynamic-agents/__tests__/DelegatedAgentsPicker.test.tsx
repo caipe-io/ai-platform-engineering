@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { DelegatedAgentsPicker } from "../DelegatedAgentsPicker";
 
 const local = { _id: "same-id", name: "Coding specialist", description: "Read-only coding", visibility: "global", execution_harness_id: "claude_code_cli_acp" };
@@ -8,6 +8,7 @@ function response(data: unknown, ok = true) { return { ok, json: async () => ({ 
 function props() { return { agentId: null, value: [], onChange: jest.fn(), parentVisibility: "team" as const, allowHarnessChildren: true,
   remote: { value: [], onChange: jest.fn(), timeoutValues: {}, onTimeoutChange: jest.fn() } }; }
 beforeEach(() => { global.fetch = jest.fn(async url => String(url).includes("remote-agents") ? response({ items: [a2a] }) : response({ agents: [local] })) as jest.Mock; });
+afterEach(() => { jest.useRealTimers(); });
 
 it("uses one picker and preserves distinct CAIPE and A2A references with matching IDs", async () => {
   const selection = props();
@@ -22,6 +23,69 @@ it("uses one picker and preserves distinct CAIPE and A2A references with matchin
   fireEvent.click(await screen.findByRole("option", { name: /Network specialist/ }));
   expect(selection.remote.onChange).toHaveBeenCalledWith(["same-id"]);
   expect(screen.getByRole("link", { name: "Discover remote agents" })).toHaveAttribute("target", "_blank");
+});
+
+it("excludes the CAIPE parent but keeps a remote agent with the same ID selectable", async () => {
+  const selection = props();
+  render(<DelegatedAgentsPicker {...selection} agentId="same-id" />);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Add subagent" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("combobox", { name: "Add subagent" }));
+  expect(screen.queryByRole("option", { name: /Coding specialist/ })).not.toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("option", { name: /Network specialist/ }));
+  expect(selection.remote.onChange).toHaveBeenCalledWith(["same-id"]);
+  expect(selection.onChange).not.toHaveBeenCalled();
+});
+
+it.each(["a2a", "caipe"])("uses the completed catalog and can refresh while %s stalls", async stalled => {
+  let recover = false;
+  let pendingSignal: AbortSignal | undefined;
+  global.fetch = jest.fn(async (url, options) => {
+    const source = String(url).includes("remote-agents") ? "a2a" : "caipe";
+    if (source === stalled && !recover) {
+      pendingSignal = options?.signal as AbortSignal;
+      return new Promise<Response>(() => {});
+    }
+    return source === "a2a" ? response({ items: [a2a] }) : response({ agents: [local] });
+  }) as jest.Mock;
+  const selection = props();
+  render(<DelegatedAgentsPicker {...selection} />);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Add subagent" })).toBeEnabled());
+  expect(screen.getByRole("button", { name: "Refresh agents" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("combobox", { name: "Add subagent" }));
+  fireEvent.click(await screen.findByRole("option", { name: stalled === "a2a" ? /Coding specialist/ : /Network specialist/ }));
+  if (stalled === "a2a") expect(selection.onChange).toHaveBeenCalledWith([expect.objectContaining({ agent_id: "same-id" })]);
+  else expect(selection.remote.onChange).toHaveBeenCalledWith(["same-id"]);
+  recover = true;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+  expect(pendingSignal?.aborted).toBe(true);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Add subagent" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("combobox", { name: "Add subagent" }));
+  expect(await screen.findByRole("option", { name: /Coding specialist/ })).toBeEnabled();
+  expect(await screen.findByRole("option", { name: /Network specialist/ })).toBeEnabled();
+});
+
+it("bounds stalled request/body reads and lets refresh recover without dropping saved references", async () => {
+  jest.useFakeTimers();
+  const signals: AbortSignal[] = [];
+  global.fetch = jest.fn(async (url, options) => {
+    signals.push(options!.signal as AbortSignal);
+    if (String(url).includes("remote-agents")) return { ok: true, json: () => new Promise(() => {}) };
+    return new Promise<Response>(() => {});
+  }) as jest.Mock;
+  const selection = props();
+  render(<DelegatedAgentsPicker {...selection} remote={{ ...selection.remote, value: ["saved-remote"] }} />);
+  await act(async () => { await jest.advanceTimersByTimeAsync(10_000); });
+  expect(screen.getAllByRole("alert")).toHaveLength(2);
+  expect(screen.getAllByRole("alert").every(alert => alert.textContent?.includes("timed out"))).toBe(true);
+  expect(signals.every(signal => signal.aborted)).toBe(true);
+  expect(screen.getByRole("button", { name: "Refresh agents" })).toBeEnabled();
+  expect(screen.getByText("saved-remote")).toBeInTheDocument();
+  expect(selection.remote.onChange).not.toHaveBeenCalled();
+  global.fetch = jest.fn(async url => String(url).includes("remote-agents") ? response({ items: [a2a] }) : response({ agents: [local] })) as jest.Mock;
+  fireEvent.click(screen.getByRole("button", { name: "Refresh agents" }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Add subagent" })).toBeEnabled());
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByText("saved-remote")).toBeInTheDocument();
 });
 
 it("edits the child deadline and removes only parent references", async () => {

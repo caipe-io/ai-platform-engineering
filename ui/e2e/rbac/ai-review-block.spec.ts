@@ -144,7 +144,7 @@ async function installEditorMocks(page: Page): Promise<void> {
 /** Open the Create CAIPE Agent editor from the dynamic-agents page. */
 async function openNewAgentEditor(page: Page): Promise<void> {
   await page.goto("/dynamic-agents?tab=agents", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: /create caipe agent/i }).click();
+  await page.getByRole("group", { name: "Agent catalog actions", exact: true }).getByRole("button", { name: "Create CAIPE Agent", exact: true }).click();
   // Wait for the editor heading to confirm it's mounted
   await expect(page.getByText(/step 1/i)).toBeVisible({ timeout: 10_000 });
 }

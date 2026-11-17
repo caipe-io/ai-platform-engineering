@@ -8,6 +8,7 @@ import { DynamicAgentsTab } from "@/components/dynamic-agents/DynamicAgentsTab";
 import { LLMModelsTab } from "@/components/dynamic-agents/LLMModelsTab";
 import { LLMProvidersTab } from "@/components/dynamic-agents/LLMProvidersTab";
 import { MCPServersTab } from "@/components/dynamic-agents/MCPServersTab";
+import { RemoteAgentsTab } from "@/components/dynamic-agents/RemoteAgentsTab";
 import { isAgentSetupStep,type AgentSetupStep } from "@/components/dynamic-agents/deep-linking";
 import {
   BASE_DYNAMIC_AGENT_TABS,
@@ -254,6 +255,7 @@ function DynamicAgentsPageContent() {
         ) : null}
 
         {activeTab === "model-providers" ? <LLMProvidersTab /> : null}
+        {activeTab === "remote-agents" ? <RemoteAgentsTab /> : null}
 
         {activeTab === "llm-models" ? (
           <LLMModelsTab

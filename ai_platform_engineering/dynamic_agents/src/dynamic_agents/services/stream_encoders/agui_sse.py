@@ -35,6 +35,7 @@ from dynamic_agents.services.stream_encoders.langgraph_helpers import (
     truncate_tool_result,
 )
 from dynamic_agents.services.structured_response import STRUCTURED_OUTPUT_EVENT
+from dynamic_agents.services.subagent_dispatch import child_tool_update
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,12 @@ class AGUIStreamEncoder(StreamEncoder[FrameT]):
         namespace: tuple[str, ...],
     ) -> list[FrameT]:
         """Encode transport-neutral runtime signals as AG-UI custom events."""
+        data, namespace = self._helper.normalize_remote_output(data, namespace)
+        if isinstance(data, dict) and data.get("type") == "harness_subagent":
+            update = child_tool_update(data)
+            return self._handle_updates(update, namespace) if update else [self._frame("CUSTOM", {
+                "type": "CUSTOM", "name": "HARNESS_SUBAGENT", "value": data, "timestamp": _ts(),
+            })]
         if isinstance(data, dict) and data.get("type") == STRUCTURED_OUTPUT_EVENT:
             if isinstance(data.get("payload"), dict):
                 return self.on_structured_output(data["payload"], data.get("schema_id"))
@@ -345,7 +352,7 @@ class AGUIStreamEncoder(StreamEncoder[FrameT]):
         if not content:
             return []
 
-        self._helper.accumulate_content(content)
+        self._helper.accumulate_content(content, namespace)
 
         ns_key = _namespace_key(namespace)
         frames: list[FrameT] = []
@@ -442,7 +449,7 @@ class AGUIStreamEncoder(StreamEncoder[FrameT]):
                 tc_id = getattr(msg, "tool_call_id", None)
                 if tc_id:
                     content = normalize_tool_message_content(getattr(msg, "content", ""))
-                    if "rejected" in content.lower():
+                    if "rejected" in content.lower() and not getattr(msg, "additional_kwargs", {}).get("harness_tool_completed"):
                         rejected_tool_call_ids.add(tc_id)
 
             for msg in messages:
@@ -463,7 +470,7 @@ class AGUIStreamEncoder(StreamEncoder[FrameT]):
                             continue
 
                         logger.debug(f"[sse:TOOL_CALL_START] {tool_name} id={tool_call_id[:8]}... ns={namespace}")
-                        self._helper.reset_accumulated_content()
+                        self._helper.reset_accumulated_content(namespace)
                         results.extend(self._emit_namespace_if_changed(namespace))
                         results.append(
                             self._frame(

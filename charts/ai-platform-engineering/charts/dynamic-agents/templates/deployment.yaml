@@ -16,10 +16,11 @@ spec:
       {{- include "dynamic-agents.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      {{- with .Values.podAnnotations }}
       annotations:
+        checksum/dynamic-agents-config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with omit (.Values.podAnnotations | default (dict)) "checksum/dynamic-agents-config" }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       labels:
         {{- include "dynamic-agents.labels" . | nindent 8 }}
         {{- with .Values.podLabels }}
