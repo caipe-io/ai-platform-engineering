@@ -8,7 +8,7 @@ from agent_telemetry import scope as scope_module
 from agent_telemetry.scope import scope_session
 from deepagents import create_deep_agent
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -189,8 +189,6 @@ async def test_real_parallel_deep_agent_graph_attributes_both_delegates(monkeypa
 
 @pytest.mark.parametrize('enabled', [False, True])
 def test_protocol_evidence_is_opt_in_and_excludes_content(monkeypatch: pytest.MonkeyPatch, enabled: bool) -> None:
-    from langchain_core.messages import HumanMessage, SystemMessage
-
     monkeypatch.setenv('SCOPE_PROTOCOL_EVIDENCE_ENABLED', str(enabled).lower())
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
