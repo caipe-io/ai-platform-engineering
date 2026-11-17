@@ -214,6 +214,9 @@ Do not renumber existing children when inserting a new assertion.
 
 | Assertion ID | Prerequisites and steps | Expected result / required evidence |
 |---|---|---|
+| REL-04.01 | Declared plan with missing/partial results, scoped evidence, cleanup failure and an optional accepted risk: render twice | Deterministic artifacts and recomputed counts/verdicts agree; missing coverage and failed cleanup remain visible; see renderer tests |
+| REL-04.02 | Open locally generated HTML at desktop/narrow viewport; search/filter, expand assertions and download JSON | No external layout dependencies or script errors; readable numbered dispositions, controls and embedded records agree |
+| REL-04.03 | Try private-suite/private-evidence public export, unsafe evidence URLs, untrusted text and inconsistent PASS records | Invalid export/records reject; text is escaped; no automatic upload/redaction; release summary preserves actual scope |
 | SEC-01.01 | Real approved ordinary-user session: sign in and open a permitted protected page/API | Displayed identity and returned subject agree; screenshot and redacted API evidence |
 | SEC-01.02 | Same session: exercise its actual renewal boundary and revisit a protected API | Session renews per deployed contract without changed identity or widened grants; redacted before/after results |
 | SEC-01.03 | Owned session: log out, revisit protected URL and call protected API | Server and UI enforce logout; no authenticated data reappears through back navigation; API/status and screenshot |

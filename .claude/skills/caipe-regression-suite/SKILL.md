@@ -67,6 +67,12 @@ work without private-app access; host-only success is not integrated sign-off.
    Include its full matrix disposition table (ID, capability/runtime/context,
    status, detail, evidence) and matching structured assertion records. Show all
    uncompleted/excluded rows and counts; preserve failed assertions after repair.
+9. Follow the matrix's report-artifact contract. Build the complete schema-1
+   manifest, then run `node scripts/render-regression-report.mjs --input
+   RUN/report.json --output RUN/report.html` to produce the consistent offline
+   HTML and `report-summary.md`. Include blocked/unexecuted planning gaps; do not
+   omit cases to make a report render. Attach/link artifacts in the final handoff;
+   rendering alone does not execute tests, redact private text or publish a release.
 
 ## Maintain the plan
 

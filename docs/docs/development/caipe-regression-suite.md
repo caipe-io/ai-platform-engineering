@@ -82,6 +82,7 @@ enough to determine which kind of evidence they provide.
 | REL-01 | core | Record baseline/candidate SHAs and image/chart digests; map every reachable commit, including merges, to cases; unresolved mappings remain visible |
 | REL-02 | core | Matrix and detailed inventories build, appear in documentation navigation and preserve previously assigned case IDs |
 | REL-03 | core | Source-drift validation passes for all current page routes and API families; inspect catch-all destinations, tabs, handlers and feature flags separately |
+| REL-04 | core | Versioned run input generates deterministic offline HTML and a matching release summary; planned-but-missing cases stay NOT_RUN; counts, suite/verdict rollups, cleanup failures and sharing boundaries remain accurate |
 | PRE-01 | core | Verify target, versions, personas and enabled-profile inventory; scope each case's model/tool, destination and cleanup prerequisites |
 | DEP-01 | core | Verify UI/API/worker versions, readiness and critical routes; distinguish deployment health from functional execution |
 | DEP-02 | core | Upgrade an isolated baseline with retained configuration/data; preserve existing models, catalogs, assistant bindings, credentials and volumes; verify rollback compatibility |
@@ -257,6 +258,7 @@ current implementation and prerequisites before use.
 | `ai_platform_engineering/autonomous_agents/tests/`, `ai_platform_engineering/scheduler/tests/` | Webhook, encryption, trigger-instance, schedule and dispatch contracts | Actual fixture event delivery, execution, restart and cleanup need live evidence |
 | `ui/src/app/api/catalog-api-keys/__tests__/`, `ui/src/components/settings/__tests__/` | Catalog key and preference contracts | Token use, real notification delivery and cross-session persistence need live checks |
 | `scripts/validate-regression-inventory.mjs` and its `.test.mjs` | Route/family drift, case references and stable assertion definitions | Static planning gate; no handler-level, model, bot or authorization execution |
+| `scripts/render-regression-report.mjs` and its `.test.mjs` | Structured report validation, computed dispositions/verdicts and portable HTML/Markdown artifacts | Renders collected evidence; cannot execute tests, discover omitted plan cases, redact content or publish a release |
 | `.claude/skills/{docker-compose-first-install,integration-testing,streaming-testing}` | First install, legacy routing and stream comparison procedures | Use only matching environments/contracts; do not run old fixed-port instructions blindly |
 
 This plan uses stable IDs, commit mapping, role-negative checks, evidence and
@@ -334,25 +336,12 @@ For cleanup, distinguish **automatic product cleanup** from **final fixture
 residue after manual repair**. A failed automatic-cleanup assertion remains FAIL
 when manual remediation leaves zero residue; report both outcomes explicitly.
 
-Use this record shape for every case; repeat it for the expanded runtime/bot rows:
-
-```json
-{
-  "case_id": "RUN-01/sdk-remote",
-  "status": "NOT_RUN",
-  "evidence_kind": null,
-  "assertions": [
-    {"check": "real model reply", "status": "NOT_RUN", "evidence": []},
-    {"check": "follow-up marker", "status": "NOT_RUN", "evidence": []},
-    {"check": "authorized real tool call", "status": "NOT_RUN", "evidence": []},
-    {"check": "history after reload", "status": "NOT_RUN", "evidence": []}
-  ],
-  "observed": null,
-  "blocker": null,
-  "fixture_ids": [],
-  "cleanup": "NOT_RUN"
-}
-```
+Use the versioned [report artifact contract](./regression-report-artifacts.md)
+for structured records and generation of `report.html` plus `report-summary.md`.
+Declare the complete expanded plan before execution; the renderer fills missing
+results as NOT_RUN and derives totals/verdicts from assertion and cleanup records.
+Keep source JSON and evidence with the report so release attachments remain
+inspectable. Rendering is not live execution or authorization to publish.
 
 | Verdict | Requirement |
 |---|---|

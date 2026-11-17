@@ -70,6 +70,11 @@ Each component has its own environment variables - see `env.example` in `ui/` an
   establish live functional or backward-compatibility coverage.
 - Release readiness reviews existing evidence first; it does not authorize a
   deployment or new test writes. Reuse target/scope authorization already given.
+- Finish every run/review with the schema-1 manifest and consistent HTML/Markdown
+  artifacts from `scripts/render-regression-report.mjs --input RUN/report.json
+  --output RUN/report.html` (invoke with `node`). Follow
+  `docs/docs/development/regression-report-artifacts.md`; rendering is not testing
+  or publication. Restricted combined reports stay in protected run storage.
 
 ## Docs & Spec Rules
 

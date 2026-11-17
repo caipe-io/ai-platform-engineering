@@ -214,6 +214,11 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'development/regression-report-artifacts',
+          label: 'Regression Report Artifacts',
+        },
+        {
+          type: 'doc',
           id: 'development/prebuild-flow',
           label: 'Prebuild Flow',
         },

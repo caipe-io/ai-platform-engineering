@@ -6,6 +6,9 @@ on:
       - "ui/src/app/**"
       - "docs/docs/development/caipe-regression-*.md"
       - "scripts/validate-regression-inventory*.mjs"
+      - "scripts/render-regression-report*.mjs"
+      - "docs/docs/development/regression-report-artifacts.md"
+      - "docs/examples/regression-report.json"
       - ".github/workflows/regression-inventory.yml"
   workflow_dispatch:
 
@@ -32,3 +35,7 @@ jobs:
         run: node --test scripts/validate-regression-inventory.test.mjs
       - name: Compare source routes and feature mappings
         run: node scripts/validate-regression-inventory.mjs
+      - name: Test report contract and release artifacts
+        run: node --test scripts/render-regression-report.test.mjs
+      - name: Render the fictional example
+        run: node scripts/render-regression-report.mjs --input docs/examples/regression-report.json --output /tmp/example-run/report.html
