@@ -49,7 +49,8 @@ export function ChatView({
   const contextPanelRef = usePanelRef();
   const { app, configuration } = useAppAssistantPresentation(agent?.presentation?.available ? agent.presentation.app.id : undefined, selectedAgentId);
   const options = app?.assistantOptions;
-  const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration, app?.appId);
+  const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration,
+    `${app?.appId ?? ""}:${selectedAgentId}:${conversationId}`);
   const assistantLabel = app ? app.assistantLabel?.trim() || "Ask CAIPE" : undefined;
 
   const handleCollapse = useCallback((collapsed: boolean) => {

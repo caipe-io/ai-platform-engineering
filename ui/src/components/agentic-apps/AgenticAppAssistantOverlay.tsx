@@ -83,11 +83,12 @@ export function AgenticAppAssistantOverlay({
   const renderPanel = useAssistantDockMotion(open, appId === "tome", panelRef, launcherRef);
   const resizeRef = useRef<{ pointerId: number; x: number; y: number; width: number; height: number; maxWidth: number; maxHeight: number } | null>(null);
   const [historyRevision, setHistoryRevision] = useState(0);
-  const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration);
   const [assistantConversation, setAssistantConversation] = useState<{
     key: string;
     id: string;
   } | null>(null);
+  const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration,
+    `${appId}:${assistantAgentId}:${assistantConversation?.id ?? ""}`);
   const [conversationError, setConversationError] = useState<{
     key: string;
     message: string;
