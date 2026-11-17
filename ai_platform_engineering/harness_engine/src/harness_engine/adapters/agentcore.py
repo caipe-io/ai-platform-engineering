@@ -253,12 +253,15 @@ class AgentCoreAdapter:
             raise RuntimeError("AgentCore Harness returned no response stream")
 
         iterator = iter(body)
+        message: list[str] = []
         while True:
             raw = await asyncio.to_thread(_next_or_end, iterator)
             if raw is _END:
                 break
             if not isinstance(raw, dict):
                 continue
+            if "messageStart" in raw:
+                message = []
             for error_type in ("runtimeClientError", "internalServerException", "validationException"):
                 if error_type in raw:
                     logger.error(
@@ -271,7 +274,11 @@ class AgentCoreAdapter:
             delta = raw.get("contentBlockDelta", {}).get("delta", {})
             text = delta.get("text")
             if text:
+                message.append(str(text))
                 yield CanonicalEventDraft(event_type="content.delta", data={"text": str(text)})
+            if raw.get("messageStop", {}).get("stopReason") == "end_turn":
+                final = "".join(message)
+                yield CanonicalEventDraft(event_type="result.updated", data={"content": final, "final_content": final})
             reasoning = delta.get("reasoningContent", {}).get("text")
             if reasoning:
                 yield CanonicalEventDraft(
@@ -314,6 +321,7 @@ class AgentCoreAdapter:
 
         if "text/event-stream" in content_type and hasattr(body, "iter_lines"):
             iterator = iter(body.iter_lines(chunk_size=64))
+            final: str | None = None
             while True:
                 raw = await asyncio.to_thread(_next_or_end, iterator)
                 if raw is _END:
@@ -325,6 +333,16 @@ class AgentCoreAdapter:
                     line = line[5:].lstrip()
                 if line:
                     yield CanonicalEventDraft(event_type="content.delta", data={"text": line})
+                    try:
+                        value = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(value, dict):
+                        result = value.get("result", value.get("response"))
+                        if isinstance(result, str):
+                            final = result
+            if final is not None:
+                yield CanonicalEventDraft(event_type="result.updated", data={"content": final, "final_content": final})
             return
 
         chunks: list[bytes] = []
@@ -343,3 +361,4 @@ class AgentCoreAdapter:
         except json.JSONDecodeError:
             text = decoded
         yield CanonicalEventDraft(event_type="content.delta", data={"text": text})
+        yield CanonicalEventDraft(event_type="result.updated", data={"content": text, "final_content": text})

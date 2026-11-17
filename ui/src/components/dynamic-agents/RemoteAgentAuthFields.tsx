@@ -100,7 +100,7 @@ export function RemoteAgentAuthFields({
             onChange={(event) => onChange({
               kind: event.target.value as RemoteAgentCredentialSource["kind"],
               target: "header",
-              name: value.name,
+              name: event.target.value === "none" ? "Authorization" : value.name,
             })}
           >
             <option value="caller_token">User JWT</option>

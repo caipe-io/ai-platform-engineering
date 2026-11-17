@@ -556,8 +556,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
           // overwriting the correct in-memory state with stale MongoDB data
           // before this save completes.
           pendingSaveTimestamps.set(conversationId, Date.now());
-          // Use setTimeout to let the final message update settle before saving
-          setTimeout(() => {
+          const persistCompletedTurn = () => {
             get().saveMessagesToServer(conversationId)
               .then(() => {
                 pendingSaveTimestamps.delete(conversationId);
@@ -567,7 +566,12 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
                 pendingSaveTimestamps.delete(conversationId);
                 console.error('[ChatStore] Background save failed:', error);
               });
-          }, 500);
+          };
+          const lastResponse = get().conversations.find(conv => conv.id === conversationId)?.messages.findLast(msg => msg.role === "assistant");
+          // A rejected admission is already final. Start its save synchronously
+          // so it captures this turn before a queued prompt becomes current.
+          if (lastResponse?.error === "HARNESS_AGENT_NOT_READY") persistCompletedTurn();
+          else setTimeout(persistCompletedTurn, 500);
         }
       },
 

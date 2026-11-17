@@ -43,27 +43,6 @@ SDK negotiates JSON-RPC or HTTP+JSON from the Agent Card.
 
 :::
 
-## Remote agent catalog
-
-Open **Agents → Remote Agents** to browse A2A and configured ACP specialists in
-one searchable grid. Official framework logos identify known runtimes; protocol
-badges identify A2A or ACP independently. For registered A2A services, admins can
-set an optional **Framework** display label (Claude Code, Claude Agent SDK,
-Google ADK, or Deep Agents). Unspecified frameworks retain the A2A protocol logo;
-the label never changes runtime execution, credentials, or tool permissions.
-Filter by protocol and open **View details** for connection
-settings and capabilities. Discovery, registration, and editing use separate dialogs.
-
-- **A2A:** registry managers can run **Test connection** with the saved authentication.
-  The result shows latency, advertised capabilities, skills, and the full Agent Card.
-  This reads metadata; it does not execute an agent task. Results are local to the
-  current page and reset on refresh. Advertised skills become searchable after testing.
-- **ACP:** **Test chat** opens a new conversation using the existing agent and operator
-  profile. Agents with known readiness problems stay disabled and explain what needs
-  attention. Configuration readiness does not guarantee provider availability.
-- Select registered specialists in **Agent Builder → Advanced → Subagents** to delegate
-  work. Catalog browsing and testing do not change agent permissions or registrations.
-
 ## Watch the demo
 
 <a href="https://app.vidcast.io/share/70f22189-0a44-42d3-b601-b5730504a8e3">
@@ -176,11 +155,23 @@ and skills later without rebuilding the agent.
   against current server availability and agent grants. A rejected admission
   reports **Agent configuration needs attention**, links to agent settings, and
   offers no blind retry. The error classification survives a chat reload.
+  Retry is hidden on both the rejected response and its user-message bubbles;
+  other turns retain their normal actions.
   Existing request replay and recovery controls remain available. This checks
   configuration metadata and initializes permitted MCP catalogs through the
   existing caller/agent gateway path. It never invokes tools. Credential and
   permission denials retain the existing unavailable-tool behavior. Execution-time
   authorization checks remain authoritative.
+  Session-based MCP catalog reads send the initialized notification before
+  listing tools and follow pagination within the shared readiness deadline.
+  Repeated cursors or catalogs exceeding 100 pages fail instead of producing a
+  partial catalog. Empty successful notification responses are accepted even
+  when labeled JSON. Failures log only agent/server IDs and a bounded diagnostic
+  category, excluding credentials and private upstream details.
+- Each picker catalog becomes usable independently. Requests and response-body
+  reads time out after ten seconds; refresh cancels pending reads and retries
+  without dropping saved references. Only CAIPE choices exclude the parent ID;
+  an A2A entry with the same ID remains a distinct agent.
 - Harness children require the Engine delegation capability. Older backends keep
   those choices disabled. ACP chat uses the configured worker directly; A2A
   delegation currently runs through a Deep Agents supervisor.

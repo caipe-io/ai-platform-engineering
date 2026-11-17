@@ -44,7 +44,8 @@ it("does not expose discovery or write controls to registry readers", async () =
   global.fetch = jest.fn(async url => String(url).includes("available-subagents") ? response({ agents: [] }) : response({ items: [{ _id: "example", name: "Example", timeout_seconds: 120 }], can_manage_registry: false })) as unknown as typeof fetch;
   render(<RemoteAgentsTab />);
   await screen.findByText("Example");
-  expect(screen.queryByLabelText("Discover remote agents")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Discover agents", exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Add agent", exact: true })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Register agent" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Edit Example" })).not.toBeInTheDocument();
 });

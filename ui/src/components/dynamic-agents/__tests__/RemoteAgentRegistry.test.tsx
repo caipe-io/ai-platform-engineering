@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const mockToast = jest.fn();
 jest.mock("@/components/ui/toast", () => ({
@@ -151,6 +151,112 @@ describe("RemoteAgentRegistry", () => {
     expect(fetchMock.mock.calls.filter(([, init]) => init?.method === method)).toHaveLength(1);
     finish(jsonResponse(item));
     await waitFor(() => expect(mockToast).toHaveBeenCalledWith(method === "PUT" ? "Remote A2A agent updated" : "Remote A2A agent added", "success"));
+  });
+
+  it("can switch an empty credential header to public authentication and save", async () => {
+    const fetcher = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes("available-subagents")) return jsonResponse({ agents: [] });
+      if (String(url).endsWith("/discovery")) return jsonResponse({ namespaces: [] });
+      if (init?.method === "POST") return jsonResponse({ _id: "public-agent", ...JSON.parse(init.body as string) });
+      return jsonResponse({ items: [], can_manage_registry: true });
+    });
+    global.fetch = fetcher;
+    render(<RemoteAgentRegistry />);
+    await screen.findByText("No A2A or configured ACP agents are available.");
+    fireEvent.click(screen.getByRole("button", { name: "Add agent", exact: true }));
+    fireEvent.change(screen.getByLabelText("Credential source"), { target: { value: "caller_token" } });
+    fireEvent.change(screen.getByLabelText("Header name"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Credential source"), { target: { value: "none" } });
+    expect(screen.getByLabelText("Header name")).toHaveValue("Authorization");
+    expect(screen.getByLabelText("Header name")).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Public agent" } });
+    fireEvent.change(screen.getByLabelText("Agent URL"), { target: { value: "https://agent.example.test" } });
+    fireEvent.click(screen.getByRole("button", { name: "Register agent" }));
+    await waitFor(() => expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
+    const posted = fetcher.mock.calls.find(([, init]) => init?.method === "POST")!;
+    expect(JSON.parse(posted[1]!.body as string).credential_source).toEqual({ kind: "none", target: "header", name: "Authorization" });
+  });
+
+  it.each(["delete", "refresh"])("serializes registry reads and mutations when %s starts first", async first => {
+    const item = { _id: "race-agent", name: "Race agent", endpoint: "https://agent.example.test", timeout_seconds: 120 };
+    let finish!: (value: unknown) => void;
+    const pending = new Promise(resolve => { finish = resolve; });
+    let reads = 0;
+    const fetcher = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes("available-subagents")) return jsonResponse({ agents: [] });
+      if (String(url).endsWith("/discovery")) return jsonResponse({ namespaces: [] });
+      if (init?.method === "DELETE") return first === "delete" ? pending : jsonResponse({});
+      reads += 1;
+      return reads === 2 && first === "refresh" ? pending : jsonResponse({ items: [item], can_manage_registry: true });
+    });
+    global.fetch = fetcher as typeof fetch;
+    jest.spyOn(window, "confirm").mockReturnValue(true);
+    render(<RemoteAgentRegistry />);
+    await screen.findByText("Race agent");
+    const refresh = screen.getByRole("button", { name: "Refresh agents" });
+    await waitFor(() => expect(refresh).toBeEnabled());
+    if (first === "delete") {
+      fireEvent.click(screen.getByRole("button", { name: "Details for Race agent" }));
+      fireEvent.click(screen.getByRole("button", { name: "Remove agent" }));
+      expect(refresh).toBeDisabled();
+      fireEvent.click(refresh);
+      expect(reads).toBe(1);
+      await act(async () => { finish(jsonResponse({})); });
+    } else {
+      fireEvent.click(screen.getByRole("button", { name: "Add agent", exact: true }));
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New agent" } });
+      fireEvent.change(screen.getByLabelText("Agent URL"), { target: { value: "https://new.example.test" } });
+      fireEvent.click(refresh);
+      expect(screen.queryByRole("button", { name: "Remove Race agent" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Register agent" })).toBeDisabled();
+      fireEvent.keyDown(screen.getByLabelText("Name"), { key: "Enter" });
+      expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST" || init?.method === "DELETE")).toBe(false);
+      await act(async () => { finish(jsonResponse({ items: [item], can_manage_registry: true })); });
+      fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+      fireEvent.click(await screen.findByRole("button", { name: "Details for Race agent" }));
+      fireEvent.click(screen.getByRole("button", { name: "Remove agent" }));
+    }
+    await waitFor(() => expect(screen.queryByText("Race agent")).not.toBeInTheDocument());
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
+  });
+
+
+  it.each(["endpoint", "credential", "header"])("clears an edited Agent Card preview when the %s changes", async field => {
+    const item = { _id: "example-agent", name: "Example agent", endpoint: "https://first.example.test", timeout_seconds: 120 };
+    const fetcher = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes("available-subagents")) return jsonResponse({ agents: [] });
+      if (String(url).endsWith("/probe")) return jsonResponse({ agent_card: { skills: [{ name: "Original skill" }] } });
+      if (init?.method === "PUT") return jsonResponse({ ...item, ...JSON.parse(init.body as string) });
+      return jsonResponse({ items: [item], can_manage_registry: true });
+    });
+    global.fetch = fetcher;
+    render(<RemoteAgentRegistry />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Example agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "Test connection", exact: true }));
+    expect(await screen.findByText("Original skill")).toBeInTheDocument();
+    if (field === "endpoint") fireEvent.change(screen.getByLabelText("Agent URL"), { target: { value: "https://second.example.test" } });
+    else if (field === "credential") fireEvent.change(screen.getByLabelText("Credential source"), { target: { value: "none" } });
+    else fireEvent.change(screen.getByLabelText("Header name"), { target: { value: "X-Agent-Token" } });
+    expect(screen.queryByText("Original skill")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+    await waitFor(() => expect(fetcher.mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(1));
+  });
+
+  it("describes a legacy connection with the same caller-identity fallback used for its probe", async () => {
+    const item = { _id: "legacy", name: "Legacy agent", endpoint: "https://agent.example.test", timeout_seconds: 120 };
+    const fetcher = jest.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes("available-subagents")) return jsonResponse({ agents: [] });
+      if (String(url).endsWith("/probe")) return jsonResponse({ agent_card: {} });
+      return jsonResponse({ items: [item], can_manage_registry: true });
+    });
+    global.fetch = fetcher;
+    render(<RemoteAgentRegistry />);
+    fireEvent.click(await screen.findByRole("button", { name: "Details for Legacy agent" }));
+    expect(screen.getByText("Your user identity")).toBeInTheDocument();
+    expect(screen.queryByText("Public agent")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Read Agent Card" }));
+    await screen.findByRole("status");
+    expect(fetcher).toHaveBeenCalledWith("/api/remote-agents/probe", expect.objectContaining({ body: JSON.stringify({ endpoint: item.endpoint, credential_source: { kind: "caller_token", target: "header", name: "Authorization" } }) }));
   });
 
 });
