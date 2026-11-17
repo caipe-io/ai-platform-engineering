@@ -479,6 +479,8 @@ research through `HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON`:
   artifact reader**, not native filesystem, shell, or edit tools. It is a tool
   capability boundary inside the worker container, not a per-session OS sandbox.
   Do not use it for untrusted executables or generic coding tools.
+  Helm accepts this explicit mode as `harnessEngine.workers.cli-acp.isolation=artifacts`;
+  the worker rejects non-research profiles or any native tools before execution.
 - The read-only `research.read_artifact` MCP tool can access only this workspace's
   `.claude/projects/**/tool-results` files, up to 16 MiB. It decodes JSON content
   wrappers and returns bounded character pages, offsets, and a content hash.
@@ -728,11 +730,19 @@ Creating a profile requires both `admin_ui:admin` and platform
 `system_config:admin`. Publication is audited by the BFF.
 
 - Choose an existing deployment-owned worker configuration.
-- Set a unique `managed-` profile ID, display name, execution model ID, and
-  default maximum turns (1–100). Use a model ID supported by the worker's
+- Enter a unique profile ID suffix (for example `100`) or a full `managed-`
+  ID. The dialog previews the stored ID and adds the prefix once. Set the
+  display name, execution model ID, and default maximum turns (1–100). Use a model ID supported by the worker's
   existing provider; publication does not probe model availability.
+- Invalid IDs, duplicate IDs, model-ID syntax, and turn limits are checked
+  before submission. Server validation errors identify the field. Reloading
+  the profile list preserves the current draft.
 - Select the new profile and save the agent. New conversations use that
   configuration; existing conversations retain their pinned agent version.
+- If creation succeeds but selection fails, **Retry selection** selects the
+  saved profile without publishing it again or discarding the agent draft.
+- Changing profiles updates the displayed turn default. Only an explicit author
+  override carries across profile selections.
 - To revise a profile, copy its settings and publish a new ID. Profiles are
   immutable and cannot retarget an existing conversation.
 

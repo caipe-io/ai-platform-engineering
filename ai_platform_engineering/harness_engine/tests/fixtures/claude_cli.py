@@ -90,7 +90,7 @@ def main() -> None:
             Path("formatter-fallback").write_text("denied" if "denied" in prompt else "accepted")
         fallback = "--json-schema" in args and Path("formatter-fallback").exists()
         if fallback:
-            tool("formatter", output, "collected", name="StructuredOutput", failed=Path("formatter-fallback").read_text()=="denied")
+            tool("formatter", output, {"collected": output}, name="StructuredOutput", failed=Path("formatter-fallback").read_text()=="denied")
         emit({"type": "stream_event", "session_id": session, "event": {"delta": {"type": "text_delta", "text": "Unverified draft"}}})
         if prompt.startswith("research-cost-cap"):
             Path("cost-cap").touch()

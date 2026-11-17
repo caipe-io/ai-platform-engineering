@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from acp.schema import TextContentBlock
@@ -15,11 +16,26 @@ from harness_engine.adapters.claude_acp import ClaudeACPAdapter
 from harness_engine.claude_cli_acp import ClaudeCodeCLIAgent
 from harness_engine.claude_research import ResearchEvidence, ResearchReport
 from harness_engine.claude_research_artifacts import read_artifact
-from harness_engine.config import ClaudeResearchPolicy, Settings
-from tests.test_claude_cli_acp import configured, policy, servers
+from harness_engine.config import Settings
+from tests.test_claude_cli_acp import FIXTURE, Updates, configured, policy, servers
 from tests.test_claude_workers import context
 
 SHA = "a" * 40
+
+
+async def research_configured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, max_turns: int = 12) -> tuple[ClaudeCodeCLIAgent, Updates, str]:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / ".claude"))
+    agent = ClaudeCodeCLIAgent([sys.executable, str(FIXTURE)])
+    client = Updates()
+    agent.on_connect(client)
+    metadata = policy()
+    metadata["claudeCode"]["options"].update(
+        maxTurns=max_turns, research={}, researchPrTools=["mcp__caipe__tool_0"],
+        allowedTools=["mcp__caipe__example_wait", "mcp__caipe__tool_0"],
+    )
+    session = await agent.new_session(str(tmp_path), servers(), **metadata)
+    return agent, client, session.session_id
 
 
 def report() -> ResearchReport:
@@ -67,6 +83,32 @@ def test_decoded_pages_cover_long_json_lines_without_changing_literal_escapes(tm
     path.write_text('"replacement"')
     ledger.artifact_receipt(read_artifact(tmp_path, str(path), 1))
     assert ledger.rejection(report())  # A changed hash invalidates prior receipts.
+
+
+@pytest.mark.parametrize("layout", ["single", "multiple", "split"])
+@pytest.mark.parametrize("notice", ["<persisted-output>\nFull output saved to: ", "Error: result too large. Output has been saved to "])
+def test_saved_artifact_paths_use_actual_text_blocks(tmp_path: Path, layout: str, notice: str) -> None:
+    path = artifact(tmp_path)
+    text = f"{notice}{path}\nPreview: truncated evidence"
+    content = [{"type": "text", "text": text}]
+    if layout == "multiple":
+        content.append({"type": "text", "text": "Additional tool context"})
+    elif layout == "split":
+        content = [{"type": "text", "text": notice}, {"type": "text", "text": f"{path}\nPreview: truncated evidence"}]
+    ledger = evidence(tmp_path)
+    ledger.calls["overflow"] = ("mcp__caipe__tool_0", {})
+    ledger.result("overflow", content, False)
+    assert ledger.overflow == {str(path)}
+    assert not ledger.unavailable_artifact
+    assert ledger.rejection(report()) is not None
+    offset = 0
+    while True:
+        page = read_artifact(tmp_path, str(path), offset)
+        ledger.artifact_receipt(page)
+        if page["next_offset"] is None:
+            break
+        offset = page["next_offset"]
+    assert ledger.rejection(report()) is None
 
 
 @pytest.mark.parametrize("kind", ["outside", "sibling", "symlink", "directory_symlink", "config"])
@@ -165,9 +207,7 @@ def test_other_tools_cannot_spoof_authoritative_pr_metadata(tmp_path: Path) -> N
 
 
 async def test_three_pass_cli_uses_one_session_shared_budget_and_hides_unverified_answers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    agent, client, session = await configured(tmp_path, monkeypatch)
-    agent.research_policy = ClaudeResearchPolicy()
-    agent.options["maxTurns"] = 12
+    agent, client, session = await research_configured(tmp_path, monkeypatch)
     result = await agent.prompt(session, [TextContentBlock(type="text", text="research example")])
     assert result.stop_reason == "end_turn"
     calls = [json.loads(line) for line in (tmp_path / "research-calls.jsonl").read_text().splitlines()]
@@ -184,9 +224,7 @@ async def test_three_pass_cli_uses_one_session_shared_budget_and_hides_unverifie
 
 @pytest.mark.parametrize("costs, released", [([4.0, 4.2, 4.4], True), ([4.0, 4.2, 5.1], False)])
 async def test_restored_session_cost_is_charged_once_and_final_overrun_is_withheld(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, costs: list[float], released: bool) -> None:
-    agent, client, session = await configured(tmp_path, monkeypatch)
-    agent.research_policy = ClaudeResearchPolicy()
-    agent.options["maxTurns"] = 12
+    agent, client, session = await research_configured(tmp_path, monkeypatch)
     original = agent.run_prompt
     allowances = []
 
@@ -207,27 +245,21 @@ async def test_restored_session_cost_is_charged_once_and_final_overrun_is_withhe
 
 
 async def test_failed_verification_releases_only_an_incomplete_notice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    agent, client, session = await configured(tmp_path, monkeypatch)
-    agent.research_policy = ClaudeResearchPolicy()
-    agent.options["maxTurns"] = 12
+    agent, client, session = await research_configured(tmp_path, monkeypatch)
     await agent.prompt(session, [TextContentBlock(type="text", text="research no-evidence")])
     messages = [event.content.text for event in client.events if event.session_update == "agent_message_chunk"]
     assert len(messages) == 1 and messages[0].startswith("Research incomplete:")
 
 
 async def test_investigation_turn_cap_preserves_budget_for_challenge_and_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    agent, client, session = await configured(tmp_path, monkeypatch)
-    agent.research_policy = ClaudeResearchPolicy()
-    agent.options["maxTurns"] = 12
+    agent, client, session = await research_configured(tmp_path, monkeypatch)
     await agent.prompt(session, [TextContentBlock(type="text", text="research-capped")])
     messages = [event.content.text for event in client.events if event.session_update == "agent_message_chunk"]
     assert len(messages) == 1 and "Research execution: 3 passes; 10 model turns" in messages[0]
 
 
 async def test_report_budget_failure_explains_the_limit_and_preserves_safe_usage_receipts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    agent, client, session = await configured(tmp_path, monkeypatch)
-    agent.research_policy = ClaudeResearchPolicy()
-    agent.options["maxTurns"] = 12
+    agent, client, session = await research_configured(tmp_path, monkeypatch)
     await agent.prompt(session, [TextContentBlock(type="text", text="research-cost-cap")])
     messages = [event.content.text for event in client.events if event.session_update == "agent_message_chunk"]
     assert len(messages) == 1 and "Report reached its CLI-reported cost allowance" in messages[0]
@@ -236,9 +268,7 @@ async def test_report_budget_failure_explains_the_limit_and_preserves_safe_usage
 
 
 async def test_premature_complete_report_is_repaired_until_actual_artifact_receipt_arrives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    agent, client, session = await configured(tmp_path, monkeypatch)
-    agent.research_policy = ClaudeResearchPolicy()
-    agent.options["maxTurns"] = 12
+    agent, client, session = await research_configured(tmp_path, monkeypatch)
     await agent.prompt(session, [TextContentBlock(type="text", text="research-repair")])
     messages = [event.content.text for event in client.events if event.session_update == "agent_message_chunk"]
     assert len(messages) == 1 and "1/1 saved outputs fully paged" in messages[0]
@@ -249,13 +279,17 @@ async def test_premature_complete_report_is_repaired_until_actual_artifact_recei
 
 @pytest.mark.parametrize("denied", [False, True])
 async def test_formatter_input_requires_successful_native_ack_before_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, denied: bool) -> None:
-    agent, client, session = await configured(tmp_path, monkeypatch)
-    agent.research_policy = ClaudeResearchPolicy()
-    agent.options["maxTurns"] = 12
+    agent, client, session = await research_configured(tmp_path, monkeypatch)
     await agent.prompt(session, [TextContentBlock(type="text", text="research-fallback" + ("-denied" if denied else ""))])
     messages = [event.content.text for event in client.events if event.session_update == "agent_message_chunk"]
     assert len(messages) == 1
     assert messages[0].startswith("Research incomplete:") is denied
+    formatter = next(event for event in client.events if event.session_update == "tool_call" and event.title == "StructuredOutput")
+    completed = next(event for event in client.events if event.session_update == "tool_call_update" and event.tool_call_id == formatter.tool_call_id)
+    assert formatter.raw_input == {} and completed.raw_output is None
+    assert completed.status == ("failed" if denied else "completed")
+    tools = [event.model_dump(mode="json") for event in client.events if event.session_update.startswith("tool_call")]
+    assert "Source-backed review" not in json.dumps(tools)
 
 
 async def test_research_configuration_exposes_only_read_search_and_artifact_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -280,29 +314,58 @@ async def test_artifact_only_configuration_never_enables_native_filesystem_tools
     assert agent.options["allowedTools"] == ["mcp__caipe__example_wait", "mcp__research__read_artifact"]
 
 
+@pytest.mark.parametrize("pr_tools", [["mcp__caipe__unapproved"], "mcp__caipe__example_wait"])
+async def test_research_pr_aliases_must_be_in_the_configured_allowlist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pr_tools: object) -> None:
+    monkeypatch.chdir(tmp_path)
+    agent = ClaudeCodeCLIAgent([sys.executable, str(FIXTURE)])
+    metadata = policy()
+    metadata["claudeCode"]["options"].update(maxTurns=12, research={}, researchPrTools=pr_tools)
+    with pytest.raises(ValueError, match="broker allowlist"):
+        await agent.new_session(str(tmp_path), servers(), **metadata)
+    assert not list(tmp_path.glob(".caipe-cli-*"))
+
+
+@pytest.mark.parametrize("task, report_number", [("research example", 1), ("research-repair", 2)])
+async def test_cancellation_during_report_usage_withholds_final_and_delegation_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, task: str, report_number: int) -> None:
+    agent, client, session = await research_configured(tmp_path, monkeypatch)
+    original = client.session_update
+    reports = 0
+
+    async def cancel_on_usage(session_id: str, update: Any) -> None:
+        nonlocal reports
+        await original(session_id, update)
+        if getattr(update, "session_update", None) == "agent_thought_chunk" and '"phase": "Report"' in update.content.text:
+            reports += 1
+            if reports == report_number:
+                assert agent.process is not None and agent.process.returncode == 0
+                await agent.cancel(session_id)
+
+    monkeypatch.setattr(client, "session_update", cancel_on_usage)
+    result = await agent.prompt(session, [TextContentBlock(type="text", text=task)])
+    assert reports == report_number
+    assert result.stop_reason == "cancelled" and result.field_meta is None
+    assert not any(event.session_update == "agent_message_chunk" for event in client.events)
+    assert agent.research is None and agent.process is None
+
+
 async def test_deadline_drains_the_cli_and_releases_no_unverified_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    agent, client, session = await configured(tmp_path, monkeypatch)
-    agent.research_policy = ClaudeResearchPolicy().model_copy(update={"max_seconds": 0.1})
-    agent.options["maxTurns"] = 12
+    agent, client, session = await research_configured(tmp_path, monkeypatch)
+    # Compress the production policy's validated deadline for this drain test.
+    monkeypatch.setattr(agent.research_policy, "max_seconds", 0.1)
     await agent.prompt(session, [TextContentBlock(type="text", text="research-wait")])
     assert agent.process is None
     messages = [event.content.text for event in client.events if event.session_update == "agent_message_chunk"]
     assert len(messages) == 1 and "deadline" in messages[0]
 
 
-async def test_shared_turn_budget_can_stop_before_the_challenge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    agent, client, session = await configured(tmp_path, monkeypatch)
-    agent.research_policy = ClaudeResearchPolicy()
-    agent.options["maxTurns"] = 4
-    await agent.prompt(session, [TextContentBlock(type="text", text="research example")])
+async def test_research_rejects_too_small_turn_budget_during_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(ValueError, match="at least six turns"):
+        await research_configured(tmp_path, monkeypatch, max_turns=4)
     assert not (tmp_path / "research-calls.jsonl").exists()
-    assert any("budget" in event.content.text for event in client.events if event.session_update == "agent_message_chunk")
 
 
 async def test_cancellation_stops_later_passes_and_drains_native_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    agent, client, session = await configured(tmp_path, monkeypatch)
-    agent.research_policy = ClaudeResearchPolicy()
-    agent.options["maxTurns"] = 12
+    agent, client, session = await research_configured(tmp_path, monkeypatch)
     task = asyncio.create_task(agent.prompt(session, [TextContentBlock(type="text", text="research-wait")]))
     for _ in range(200):
         if (tmp_path / "cli-started").exists():
@@ -326,13 +389,15 @@ async def test_research_requires_os_isolation_before_starting_a_process(settings
             pytest.fail("A research process was started without isolation")
 
 
-async def test_artifact_only_worker_rejects_native_tool_configuration(settings: Settings) -> None:
+@pytest.mark.parametrize("research, tools", [(True, ["Read"]), (False, [])])
+async def test_artifact_only_worker_requires_research_without_native_tools(settings: Settings, research: bool, tools: list[str]) -> None:
     profiles = json.loads(settings.claude_sdk_profiles_json)
-    profiles["safe"]["research"] = {}
+    if research:
+        profiles["safe"]["research"] = {}
     adapter = ClaudeACPAdapter(settings.model_copy(update={"claude_sdk_profiles_json": json.dumps(profiles),
                                                           "claude_acp_runtime": "claude_code_cli_acp",
                                                           "claude_cli_isolation": "artifacts",
-                                                          "claude_acp_tools": ["Read"]}))
+                                                          "claude_acp_tools": tools}))
     with pytest.raises(ValueError, match="no native tools"):
         async for _ in adapter._stream(context(), [], {}):
             pytest.fail("Artifact-only mode allowed a native filesystem tool")

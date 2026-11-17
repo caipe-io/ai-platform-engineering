@@ -106,6 +106,7 @@ class ResearchEvidence:
             try:
                 self.capture(json.loads(value), method, depth + 1)
             except (ValueError, TypeError):
+                # Plain tool text is expected; only decoded JSON contributes metadata.
                 pass
         elif isinstance(value, list):
             for item in value:
@@ -129,6 +130,7 @@ class ResearchEvidence:
             try:
                 self.artifact_receipt(json.loads(content))
             except ValueError:
+                # Ordinary text has no JSON page receipt to add to the ledger.
                 pass
         elif isinstance(content, list):
             for block in content:
@@ -162,8 +164,9 @@ class ResearchEvidence:
         if name == "mcp__research__read_artifact":
             self.artifact_receipt(content)
         text = content if isinstance(content, str) else ""
-        if isinstance(content, list) and len(content) == 1 and isinstance(content[0], dict):
-            text = content[0].get("text", "")
+        if isinstance(content, list):
+            text = "\n".join(block["text"] for block in content
+                             if isinstance(block, dict) and isinstance(block.get("text"), str))
         method = args.get("method", "") if name in self.pr_tools else ""
         if method in {"get", "get_files", "get_diff"} and all(key in args for key in ("owner", "repo", "pullNumber")):
             self.targets.add((args["owner"], args["repo"], args["pullNumber"]))
