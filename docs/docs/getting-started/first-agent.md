@@ -14,7 +14,7 @@ connected accounts, and automation can be added later.
   or custom agents, and at most one user), or while saved setup is in progress.
 - The full wizard opens when the admin chooses to start or resume it.
 - Completed, dismissed, or hidden setup does not prompt automatically.
-- **Tour → Setup experience** in the top-right bar opens the setup page for
+- **CAIPE Tour → Setup experience** in the top-right bar opens the setup page for
   admins. Choose **Start setup**, **Resume setup**, or **Run setup again** there.
 - `SETUP_WIZARD_ENABLED=false` suppresses automatic onboarding. Manual setup
   and workspace tour replay remain available.
@@ -125,8 +125,8 @@ Manual setup in Admin and tour replay in Settings remain available.
 
 ## Explore the workspace
 
-Choose **Tour → Workspace tour** in the top-right application header, or
-**Take a tour** on the Setup Wizard page.
+Choose **CAIPE Tour → Workspace tour** in the top-right application header, or
+**Take CAIPE Tour** on the Setup Wizard page.
 The guide docks beside the workspace on wide screens and below it on smaller
 screens, leaving the workspace controls available. It highlights navigation while
 you keep using the workspace. Use
@@ -142,7 +142,7 @@ you request them; setup keeps the next decision in focus.
 
 ## Task tours
 
-The top-right **Tour** menu includes short guides for:
+The top-right **CAIPE Tour** menu includes short guides for:
 
 - **Add a model:** connect its provider, register identifiers, and verify with chat.
 - **Add an MCP server:** configure the endpoint and authentication, then test a tool.
@@ -160,3 +160,16 @@ Finishing a tour does not verify or create the resource. Model, MCP, and agent g
 appear when the agent workspace is enabled and your account has access. Connected
 credentials guidance appears when account connections and persistent storage are enabled.
 The underlying screens enforce the permissions required for each action.
+
+## CAIPE Tour controls
+
+- **Settings → Chat & agents → CAIPE Tour:** turn **Enable CAIPE Tour** off to
+  hide the menu and stop guided tours for your account across browsers. Turn it
+  back on there; saved progress is retained.
+- **Admin → Platform configuration → Defaults → CAIPE Tour:** check the tours
+  users may see, then choose **Save tours**. Uncheck every tour to hide the menu
+  for everyone. Permissions and deployed features still limit available tours.
+- Existing deployments show all tours until an operator saves a selection.
+  Preferences and the operator selection are stored in MongoDB; no redeploy is needed.
+- Policy changes apply immediately to API requests. Other browser sessions update
+  on focus or within a minute. An operator change cannot re-enable a user’s opt-out.

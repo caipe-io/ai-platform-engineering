@@ -10,6 +10,8 @@
  */
 
 import React from 'react'
+import { useCaipeTourStore } from '@/store/caipe-tour-store'
+import { ALL_PRODUCT_TOUR_IDS } from '@/lib/caipe-tour-policy'
 import Link from 'next/link'
 import {
   render as testingRender,
@@ -409,6 +411,7 @@ function applicationButton(name: string): HTMLElement {
 // ============================================================================
 
 beforeEach(() => {
+  useCaipeTourStore.setState({ loaded: true, enabled: true, enabledTours: [...ALL_PRODUCT_TOUR_IDS], error: null })
   mockAgenticAppsEnabled = false
   mockMigrationStatus = {
     status: null,
@@ -464,6 +467,24 @@ describe('AppHeader — application chrome', () => {
     mockReleasePrompt.releaseMarkdown = null
   })
 
+  it('hides CAIPE Tour for a personal opt-out or empty operator selection', () => {
+    useCaipeTourStore.setState({ enabled: false });
+    const view = render(<AppHeader />);
+    expect(screen.queryByRole('button', { name: 'CAIPE Tour', exact: true })).not.toBeInTheDocument();
+    view.unmount();
+    useCaipeTourStore.setState({ enabled: true, enabledTours: [] });
+    render(<AppHeader />);
+    expect(screen.queryByRole('button', { name: 'CAIPE Tour', exact: true })).not.toBeInTheDocument();
+  });
+
+  it('shows only operator-selected tours within the user permissions', () => {
+    useCaipeTourStore.setState({ enabledTours: ['chat'] });
+    render(<AppHeader />);
+    expect(screen.getByRole('button', { name: /Chat with an agent/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Workspace tour/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Add a model/ })).not.toBeInTheDocument();
+  });
+
   it('opens the saved product tour from the header', () => {
     const request = jest.fn();
     window.addEventListener('caipe:product-tour-request', request);
@@ -476,7 +497,7 @@ describe('AppHeader — application chrome', () => {
   it('offers guided setup to admins from Tour', () => {
     mockIsAdmin = true;
     render(<AppHeader />);
-    expect(screen.getByRole('button', { name: 'Tour', exact: true })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'CAIPE Tour', exact: true })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Setup experience/ })).toHaveAttribute('href', '/admin/configuration/setup-wizard');
   });
 

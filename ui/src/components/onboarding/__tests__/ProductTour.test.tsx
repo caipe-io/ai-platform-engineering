@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { PRODUCT_TOUR_AGENT_CREATED_EVENT, requestProductTour } from "@/lib/product-tour";
 import { ProductTourDialog, ProductTourGate } from "../ProductTour";
+import { useCaipeTourStore } from "@/store/caipe-tour-store";
 import { useUnsavedChangesStore } from "@/store/unsaved-changes-store";
 
 const mockGetConfig = jest.fn();
@@ -41,6 +42,7 @@ function tourPayload(status = "not_started", autoStart = true) {
 describe("ProductTourGate", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    useCaipeTourStore.getState().reset();
     mockPathname = "/";
     window.history.replaceState({}, "", "/");
     useUnsavedChangesStore.setState({ hasUnsavedChanges: false, pendingNavigationHref: null });
@@ -75,10 +77,10 @@ describe("ProductTourGate", () => {
     jest.restoreAllMocks();
   });
 
-  it("does not fetch or open automatic guidance when onboarding is disabled", () => {
+  it("loads availability without opening automatic guidance when onboarding is disabled", async () => {
     mockGetConfig.mockReturnValue(false);
     render(<ProductTourGate />);
-    expect(global.fetch).not.toHaveBeenCalled();
+    await waitFor(() => expect(useCaipeTourStore.getState().loaded).toBe(true));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
@@ -244,6 +246,15 @@ describe("ProductTourGate", () => {
     expect(screen.getByRole("heading", { name: "Choose who you want to work with" })).toBeInTheDocument();
   });
 
+  it("closes an active tour when the personal switch is turned off", async () => {
+    render(<ProductTourGate />);
+    await screen.findByRole("heading", { name: "Your workspace is ready" });
+    act(() => useCaipeTourStore.getState().receive({ ...tourPayload().data, tours_enabled: false }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    act(() => requestProductTour(true));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("returns a resumed agent guide to the start when its unsaved form is gone", async () => {
     render(<ProductTourDialog open initialPayload={{ ...tourPayload("in_progress", false).data, tour_id: "add-agent", state: { ...tourPayload().data.state, status: "in_progress", current_step: 3 } }} onOpenChange={jest.fn()} />);
     expect(await screen.findByRole("heading", { name: "Create an agent for one purpose" })).toBeInTheDocument();
@@ -300,7 +311,7 @@ describe("ProductTourGate", () => {
     render(<ProductTourGate />);
     act(() => requestProductTour(false, "chat"));
     expect(await screen.findByRole("heading", { name: "Look behind the answer" })).toBeInTheDocument();
-    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
   it("does not let a late automatic response replace a manually selected tour", async () => {
@@ -308,6 +319,7 @@ describe("ProductTourGate", () => {
     let resolveAutomatic!: (response: Response) => void;
     global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (!init?.method && String(input) === "/api/onboarding/product-tour") return new Promise<Response>((resolve) => { resolveAutomatic = resolve; });
+      if (!init?.method && String(input).includes("?tour=")) return response(tourPayload());
       return originalFetch(input, init);
     });
     render(<ProductTourGate />);

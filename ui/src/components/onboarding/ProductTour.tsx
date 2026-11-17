@@ -11,6 +11,8 @@ import {
   type ProductTourPayload,
   type ProductTourState,
 } from "@/lib/product-tour";
+import { useCaipeTourStore } from "@/store/caipe-tour-store";
+import { SettingsSwitch } from "@/components/settings/shared/SettingsSwitch";
 import { getConfig } from "@/lib/config";
 import { GuardedNavigationLink } from "@/components/layout/GuardedNavigationLink";
 import { cn } from "@/lib/utils";
@@ -307,6 +309,7 @@ export function ProductTourDialog({
 }
 
 export function ProductTourGate(): React.ReactElement | null {
+  const tourPolicy = useCaipeTourStore();
   const [payload, setPayload] = useState<ProductTourPayload | null>(null);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -318,13 +321,14 @@ export function ProductTourGate(): React.ReactElement | null {
     const version = ++requestVersion.current;
     setError(null);
     try {
-      let next = restart
-        ? { tour_id: id, auto_start: false, eligible: true, state: await patchTour("reset", undefined, id) }
-        : (await requestJson<ApiEnvelope<ProductTourPayload>>(
-            id === "workspace" ? "/api/onboarding/product-tour" : `/api/onboarding/product-tour?tour=${id}`,
-          )).data;
+      let next = (await requestJson<ApiEnvelope<ProductTourPayload>>(
+        id === "workspace" ? "/api/onboarding/product-tour" : `/api/onboarding/product-tour?tour=${id}`,
+      )).data;
       if (requestVersion.current !== version) return;
-      if (!restart && (next.state.status === "completed" || next.state.status === "dismissed")) {
+      const policy = useCaipeTourStore.getState();
+      if (!policy.loaded) policy.receive(next);
+      if (next.enabled === false || (policy.loaded && (!policy.enabled || !policy.enabledTours.includes(id)))) return;
+      if (restart || next.state.status === "completed" || next.state.status === "dismissed") {
         next = { ...next, state: await patchTour("reset", undefined, id) };
         if (requestVersion.current !== version) return;
       }
@@ -338,28 +342,44 @@ export function ProductTourGate(): React.ReactElement | null {
   }, []);
 
   useEffect(() => {
-    if (!getConfig("setupWizardEnabled")) return;
     const version = ++requestVersion.current;
     let cancelled = false;
     void requestJson<ApiEnvelope<ProductTourPayload>>("/api/onboarding/product-tour")
       .then((response) => {
         if (cancelled || requestVersion.current !== version) return;
+        useCaipeTourStore.getState().receive(response.data);
         activeDialogVersion.current = version;
         setDialogVersion(version);
         setPayload({ ...response.data, tour_id: "workspace" });
-        setOpen(response.data.auto_start);
+        setOpen(getConfig("setupWizardEnabled") && response.data.enabled !== false && response.data.auto_start);
       })
       .catch(() => {
         // Product guidance must never block access to the application.
       });
-    return () => { cancelled = true; };
+    const refresh = () => { if (document.visibilityState !== "hidden") void useCaipeTourStore.getState().refresh(); };
+    window.addEventListener("focus", refresh);
+    const interval = window.setInterval(refresh, 60_000);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", refresh);
+      window.clearInterval(interval);
+      useCaipeTourStore.getState().reset();
+    };
   }, []);
+
+  useEffect(() => useCaipeTourStore.subscribe((policy) => {
+    if (policy.loaded && (!policy.enabled || !policy.enabledTours.includes(payload?.tour_id ?? "workspace"))) {
+      requestVersion.current++;
+      setOpen(false); setPayload(null); setError(null);
+    }
+  }), [payload]);
 
   useEffect(() => {
     const handleRequest = (event: Event) => {
       const detail = event instanceof CustomEvent ? event.detail : undefined;
       const id = detail?.tourId ?? "workspace";
-      if (isProductTourId(id)) void load(detail?.restart === true, id);
+      const policy = useCaipeTourStore.getState();
+      if (isProductTourId(id) && (!policy.loaded || (policy.enabled && policy.enabledTours.includes(id)))) void load(detail?.restart === true, id);
     };
     window.addEventListener(PRODUCT_TOUR_REQUEST_EVENT, handleRequest);
     return () => window.removeEventListener(PRODUCT_TOUR_REQUEST_EVENT, handleRequest);
@@ -367,44 +387,33 @@ export function ProductTourGate(): React.ReactElement | null {
 
   return <>
     {error && <p role="alert" className="fixed bottom-4 right-4 z-[80] max-w-sm rounded-xl border bg-card p-4 text-sm shadow-lg">{error}</p>}
-    {payload && <ProductTourDialog key={dialogVersion} initialPayload={payload} open={open} onOpenChange={(nextOpen) => { if (activeDialogVersion.current === dialogVersion) setOpen(nextOpen); }} />}
+    {payload && <ProductTourDialog key={dialogVersion} initialPayload={payload} open={open && (!tourPolicy.loaded || (tourPolicy.enabled && tourPolicy.enabledTours.includes(payload.tour_id ?? "workspace")))} onOpenChange={(nextOpen) => { if (activeDialogVersion.current === dialogVersion) setOpen(nextOpen); }} />}
   </>;
 }
 
 export function ProductTourSettings(): React.ReactElement {
-  const [payload, setPayload] = useState<ProductTourPayload | null>(null);
+  const policy = useCaipeTourStore();
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    void requestJson<ApiEnvelope<ProductTourPayload>>("/api/onboarding/product-tour")
-      .then((response) => setPayload(response.data))
-      .catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load tour status"));
-  }, []);
-
-  const status = payload?.state.status === "completed"
-    ? "Completed"
-    : payload?.state.status === "dismissed"
-      ? "Skipped"
-      : payload?.state.status === "in_progress"
-        ? "In progress"
-        : "Not started";
-
-  return (
-    <SettingsCard
-      description="Take a one-minute tour of Home, Chat, Skills, Knowledge Bases, and personal settings."
-      title={<span className="flex items-center gap-2"><GraduationCap className="h-5 w-5 text-primary" />Product tour</span>}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <p className="text-sm font-medium">Status: {status}</p>
-          <p className="mt-1 text-xs text-muted-foreground">Progress is saved to your account across browsers.</p>
-          {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
-        </div>
-        <Button type="button" variant="outline" onClick={() => requestProductTour(true)}>
-          <GraduationCap className="mr-2 h-4 w-4" />
-          {payload?.state.status === "not_started" ? "Start tour" : "Replay tour"}
-        </Button>
-      </div>
-    </SettingsCard>
-  );
+  useEffect(() => { void useCaipeTourStore.getState().refresh(); }, []);
+  const toggle = async (enabled: boolean) => {
+    setSaving(true); setError(null);
+    try {
+      const response = await requestJson<ApiEnvelope<ProductTourPayload>>("/api/onboarding/product-tour", {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "set_enabled", enabled }),
+      });
+      useCaipeTourStore.getState().receive(response.data);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save CAIPE Tour preference"); }
+    finally { setSaving(false); }
+  };
+  return <SettingsCard title={<span className="flex items-center gap-2"><GraduationCap className="h-5 w-5 text-primary" />CAIPE Tour</span>} description="Choose whether to show guided tours for your account. Your progress is saved across browsers.">
+    <div className="flex items-center justify-between gap-4">
+      <div><p className="text-sm font-medium">Enable CAIPE Tour</p><p className="mt-1 text-xs text-muted-foreground">Turn off the tour menu and guided tours. Turn it back on here whenever you like.</p></div>
+      <SettingsSwitch label="Enable CAIPE Tour" checked={policy.enabled} disabled={!policy.loaded || saving} onCheckedChange={(enabled) => void toggle(enabled)} />
+    </div>
+    {(error || policy.error) && <p role="alert" className="mt-3 text-sm text-destructive">{error || policy.error}</p>}
+    {!policy.loaded && policy.error && <Button className="mt-3" variant="outline" onClick={() => void policy.refresh()}>Retry tour settings</Button>}
+    {policy.loaded && !policy.enabledTours.includes("workspace") && <p className="mt-3 text-xs text-muted-foreground">{policy.enabledTours.length === 0 ? "Your operator has not enabled any CAIPE Tours." : "Your operator has not enabled the workspace tour."}</p>}
+    <Button className="mt-4" type="button" variant="outline" disabled={!policy.loaded || !policy.enabled || !policy.enabledTours.includes("workspace") || saving} onClick={() => requestProductTour(true)}><GraduationCap className="mr-2 h-4 w-4" />Replay CAIPE Tour</Button>
+  </SettingsCard>;
 }

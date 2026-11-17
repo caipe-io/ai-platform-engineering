@@ -1,3 +1,4 @@
+import { normalizeEnabledTours } from "@/lib/caipe-tour-policy";
 import {
   ApiError,
   successResponse,
@@ -27,12 +28,14 @@ import { NextRequest } from "next/server";
 interface PlatformConfigDocument extends Document {
   _id: string;
   setup_wizard?: unknown;
+  caipe_tour?: { enabled_tours?: unknown };
 }
 
 interface ProductTourPatchBody {
   action?: unknown;
   tour_id?: unknown;
   current_step?: unknown;
+  enabled?: unknown;
 }
 
 async function getOrCreateUserSettings(userEmail: string): Promise<UserSettings> {
@@ -77,16 +80,20 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     const id = tourId(_req.nextUrl.searchParams.get("tour"));
     const platformConfig = await getCollection<PlatformConfigDocument>("platform_config");
     const [platform, settings] = await Promise.all([
-      id === "workspace" ? platformConfig.findOne({ _id: SETUP_WIZARD_CONFIG_ID }) : Promise.resolve(null),
+      platformConfig.findOne({ _id: SETUP_WIZARD_CONFIG_ID }),
       getOrCreateUserSettings(user.email),
     ]);
-    const setupState = normalizeSetupWizardState(platform?.setup_wizard);
+    const eligible = id !== "workspace" || normalizeSetupWizardState(platform?.setup_wizard).status === "completed";
     const state = savedState(settings, id);
-    const eligible = id !== "workspace" || setupState.status === "completed";
-
+    const enabledTours = normalizeEnabledTours(platform?.caipe_tour?.enabled_tours);
+    const toursEnabled = settings.preferences?.caipe_tour_enabled !== false;
+    const enabled = toursEnabled && enabledTours.includes(id);
     return successResponse({
       tour_id: id,
-      auto_start: id === "workspace" && getServerConfig().setupWizardEnabled && eligible && (state.status === "not_started" || state.status === "in_progress"),
+      enabled,
+      tours_enabled: toursEnabled,
+      enabled_tours: enabledTours,
+      auto_start: enabled && id === "workspace" && getServerConfig().setupWizardEnabled && eligible && (state.status === "not_started" || state.status === "in_progress"),
       eligible,
       state,
     });
@@ -98,13 +105,26 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
     const body = await request.json() as ProductTourPatchBody;
     const id = tourId(body.tour_id);
     const action = body.action;
-    if (action !== "start" && action !== "progress" && action !== "dismiss" && action !== "complete" && action !== "reset") {
-      throw new ApiError("action must be start, progress, dismiss, complete, or reset", 400, "INVALID_TOUR_ACTION");
+    if (action !== "start" && action !== "progress" && action !== "dismiss" && action !== "complete" && action !== "reset" && action !== "set_enabled") {
+      throw new ApiError("action must be start, progress, dismiss, complete, reset, or set_enabled", 400, "INVALID_TOUR_ACTION");
     }
 
     const nextStep = currentStep(body.current_step, id);
+    if (action === "set_enabled" && typeof body.enabled !== "boolean") throw new ApiError("enabled must be a boolean", 400, "INVALID_TOUR_PREFERENCE");
+    const platformConfig = await getCollection<PlatformConfigDocument>("platform_config");
+    const [platform, existing] = await Promise.all([
+      platformConfig.findOne({ _id: SETUP_WIZARD_CONFIG_ID }),
+      getOrCreateUserSettings(user.email),
+    ]);
+    const enabledTours = normalizeEnabledTours(platform?.caipe_tour?.enabled_tours);
     const settings = await getCollection<UserSettings>("user_settings");
-    const existing = await getOrCreateUserSettings(user.email);
+    if (action === "set_enabled") {
+      await settings.updateOne({ user_id: user.email }, { $set: { "preferences.caipe_tour_enabled": body.enabled, updated_at: new Date() } });
+      return successResponse({ tour_id: id, enabled: body.enabled && enabledTours.includes(id), tours_enabled: body.enabled, enabled_tours: enabledTours, auto_start: false, eligible: true, state: savedState(existing, id) });
+    }
+    if (existing.preferences?.caipe_tour_enabled === false || !enabledTours.includes(id)) {
+      throw new ApiError("This CAIPE Tour is disabled", 403, "TOUR_DISABLED");
+    }
     const previous = savedState(existing, id);
     const now = new Date().toISOString();
 
@@ -145,6 +165,6 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       },
     );
 
-    return successResponse({ tour_id: id, state: next });
+    return successResponse({ tour_id: id, state: next, enabled: true, tours_enabled: true, enabled_tours: enabledTours });
   });
 });

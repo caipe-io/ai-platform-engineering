@@ -31,6 +31,7 @@ import { useMigrationStatus } from "@/hooks/use-migration-status";
 import { useReleaseUpgradePrompt } from "@/hooks/use-release-upgrade-prompt";
 import { PRODUCT_TOURS, type ProductTourId } from "@/lib/product-tour-catalog";
 import { TOUR_ICONS } from "@/components/onboarding/tour-icons";
+import { useCaipeTourStore } from "@/store/caipe-tour-store";
 import { requestProductTour } from "@/lib/product-tour";
 import { config } from "@/lib/config";
 import { pushWithNavigationProgress } from "@/lib/navigation-progress";
@@ -111,6 +112,7 @@ export function AppHeader() {
   const fallbackBreadcrumbs = getApplicationBreadcrumbs(pathname);
   const { data: session } = useSession();
   const { isAdmin, canAccessDynamicAgents } = useAdminRole();
+  const tourPolicy = useCaipeTourStore();
   const [tourMenuOpen, setTourMenuOpen] = React.useState(false);
   const {
     hasUnsavedChanges,
@@ -284,11 +286,11 @@ export function AppHeader() {
 
       {/* Status & Actions */}
       <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5 sm:shrink-0 sm:flex-nowrap">
-        <Popover open={tourMenuOpen} onOpenChange={setTourMenuOpen}>
+        {tourPolicy.loaded && tourPolicy.enabled && tourPolicy.enabledTours.length > 0 && <Popover open={tourMenuOpen} onOpenChange={setTourMenuOpen}>
           <PopoverTrigger asChild>
-            <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" aria-label="Tour">
+            <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" aria-label="CAIPE Tour">
               <Compass className="h-4 w-4" />
-              <span className="hidden sm:inline">Tour</span>
+              <span className="hidden sm:inline">CAIPE Tour</span>
             </Button>
           </PopoverTrigger>
           <PopoverContent
@@ -300,6 +302,7 @@ export function AppHeader() {
             <p className="px-3 py-2 text-xs font-medium text-muted-foreground">Explore at your pace</p>
             {(Object.entries(PRODUCT_TOURS) as [ProductTourId, typeof PRODUCT_TOURS[ProductTourId]][])
               .filter(([id, tour]) => {
+                if (!tourPolicy.enabledTours.includes(id)) return false;
                 if (tour.agentWorkspace) return config.dynamicAgentsEnabled && config.storageMode === "mongodb" && (isAdmin || canAccessDynamicAgents);
                 if (id === "credentials") return config.userConnectionsEnabled && config.storageMode === "mongodb";
                 return true;
@@ -336,7 +339,7 @@ export function AppHeader() {
               </GuardedNavigationLink>
             )}
           </PopoverContent>
-        </Popover>
+        </Popover>}
         <div className="flex items-center gap-1.5">
           {noAuthConfigured && (
             <Popover>

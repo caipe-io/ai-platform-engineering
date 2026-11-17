@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { ModelPicker } from "@/components/ui/model-picker";
 import { getConfig } from "@/lib/config";
 import { useAdminRole } from "@/hooks/use-admin-role";
+import { useCaipeTourStore } from "@/store/caipe-tour-store";
 import { requestProductTour } from "@/lib/product-tour";
 import {
   setupSelectionsMatch,
@@ -1413,6 +1414,7 @@ function SummaryItem({ label, value }: { label: string; value: string }) {
 }
 
 export function SetupWizardSettings({ readOnly = false }: { readOnly?: boolean }): React.ReactElement {
+  const tourPolicy = useCaipeTourStore();
   const [payload, setPayload] = useState<SetupWizardPayload | null>(null);
   const [open, setOpen] = useState(false);
   const [restart, setRestart] = useState(false);
@@ -1456,7 +1458,7 @@ export function SetupWizardSettings({ readOnly = false }: { readOnly?: boolean }
                     {payload.state.status === "not_started" ? "Start setup" : payload.state.status === "completed" ? "Run setup again" : "Resume setup"}
                     <ChevronRight className="ml-2 h-4 w-4" />
                   </Button>
-                  <Button variant="ghost" onClick={() => requestProductTour(true)}><Compass className="mr-2 h-4 w-4" />Take a tour</Button>
+                  {tourPolicy.loaded && tourPolicy.enabled && tourPolicy.enabledTours.includes("workspace") && <Button variant="ghost" onClick={() => requestProductTour(true)}><Compass className="mr-2 h-4 w-4" />Take CAIPE Tour</Button>}
                 </div>
                 <p className="flex items-center gap-2 text-xs text-muted-foreground"><span className="h-1.5 w-1.5 rounded-full bg-primary" />{setupStatusLabel(payload.state.status)} · Your progress is saved. Leave whenever you like.</p>
               </div>
