@@ -1,4 +1,4 @@
-"""Independent Scope export. Only explicitly selected metadata leaves this module."""
+"""Independent Scope export with attributes selected by the calling integration."""
 
 from __future__ import annotations
 

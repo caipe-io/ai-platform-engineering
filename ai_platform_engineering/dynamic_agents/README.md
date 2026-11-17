@@ -614,3 +614,27 @@ activation; it does not prove the protocol scripts ran or an agreement completed
 Protocol metric evaluation still needs script execution evidence. The flag does
 not enable cognitive-failure assessment of conversation content or grant execution
 tools to agents. Assign and approve skills through the normal agent configuration.
+
+#### Visible content for cognitive assessment
+
+Set both `SCOPE_CONTENT_CAPTURE_ENABLED=true` and a comma-separated
+`SCOPE_CONTENT_CAPTURE_AGENT_IDS` allowlist of exact root agent IDs. An empty
+allowlist or `*` selects no agents. Selected sessions include visible model
+messages, completions, tool calls/results and delegate instructions/results;
+their child specialist spans inherit the session's selection. Other sessions
+retain metadata-only capture. Langfuse configuration is independent.
+The exporter writes both flattened prompt/completion fields for Scope's UI and
+GenAI input/output message fields for its normalized cognitive trajectory.
+
+Only enable this for conversations whose contents may be stored in the configured
+Scope backend. This is content capture, not automatic secret redaction. Image,
+file and reasoning blocks are excluded. Model capture is limited to 32 messages,
+32,768 characters per message and 131,072 characters per prompt/completion; when
+there are more than 32 messages, the first two and last 30 are selected. Tool and
+delegate inputs/results are limited to 16,384 characters per direction. The
+`scope.content.*_truncated` attributes mark missing evidence; do not interpret
+an empty cognitive-failure report on incomplete evidence as validated correctness.
+
+This supports LangChain/Deep Agents callbacks, including delegated specialists.
+Canonical remote-harness tool events remain metadata-only. Capture exports actual
+runtime data; it neither creates cognitive failures nor changes agent instructions.

@@ -1,4 +1,4 @@
-"""Scope metadata callbacks with optional, restricted protocol skill evidence."""
+"""Scope callbacks with separately opted-in protocol and visible-content capture."""
 
 from __future__ import annotations
 
@@ -10,6 +10,9 @@ from uuid import UUID
 
 from agent_telemetry import current_scope_run
 from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.messages import HumanMessage
+
+from dynamic_agents.services.scope_content import capture_enabled, entity_attributes, message_attributes
 
 
 class ScopeCallbackHandler(BaseCallbackHandler):
@@ -20,6 +23,7 @@ class ScopeCallbackHandler(BaseCallbackHandler):
         self._parents: dict[str, str | None] = {}
         self._delegates: set[str] = set()
         self._protocol_paths: dict[str, str] = {}
+        self._content_runs: set[str] = set()
 
     def _protocol_catalog(self, messages: Any) -> dict[str, str]:
         """Export only protocol names and their advertised skill paths, never descriptions."""
@@ -59,7 +63,7 @@ class ScopeCallbackHandler(BaseCallbackHandler):
             candidate = inputs.get(field)
             if isinstance(candidate, str) and re.fullmatch(r"(?:l9-)?(?:accord|concord)-(?:initiator|receiver)", candidate):
                 selected = {field: candidate}
-        return {"ioa_observe.entity.input": json.dumps(selected)} if selected else {}
+        return {"ioa_observe.entity.input": json.dumps(selected), "traceloop.entity.input": json.dumps(selected)} if selected else {}
 
     def _parent_delegate(self, run_id: UUID, parent_run_id: UUID | None) -> str | None:
         key = str(run_id)
@@ -83,17 +87,29 @@ class ScopeCallbackHandler(BaseCallbackHandler):
             parent = self._parent_delegate(run_id, kwargs.get("parent_run_id"))
             params = kwargs.get("invocation_params") or {}
             model = str(params.get("model") or params.get("model_name") or params.get("model_id") or "unknown")
-            run.start(str(run_id), model, "chat", {"gen_ai.request.model": model, **self._protocol_catalog(messages)}, parent_key=parent)
+            attrs: dict[str, Any] = {"gen_ai.request.model": model, **self._protocol_catalog(messages)}
+            if capture_enabled():
+                self._content_runs.add(str(run_id))
+                batch = messages[0] if isinstance(messages, list) and messages and isinstance(messages[0], list) else []
+                # Replace the restricted catalog only when conversation capture is explicitly selected.
+                attrs.update(message_attributes(batch, "gen_ai.prompt"))
+            run.start(str(run_id), model, "chat", attrs, parent_key=parent)
 
     def on_llm_start(self, serialized: dict[str, Any], prompts: Any, *, run_id: UUID, **kwargs: Any) -> None:
-        self.on_chat_model_start(serialized, None, run_id=run_id, **kwargs)
+        messages = [[HumanMessage(content=prompt) for prompt in prompts if isinstance(prompt, str)]] if isinstance(prompts, list) else []
+        self.on_chat_model_start(serialized, messages, run_id=run_id, **kwargs)
 
     def on_llm_end(self, response: Any, *, run_id: UUID, **kwargs: Any) -> None:
         if (run := current_scope_run()) is not None:
-            attrs: dict[str, int] = {}
+            attrs: dict[str, Any] = {}
             output = response.llm_output or {}
             usage = output.get("token_usage") or output.get("usage") or {}
             generations = response.generations
+            if str(run_id) in self._content_runs:
+                self._content_runs.discard(str(run_id))
+                message = getattr(generations[0][0], "message", None) if generations and generations[0] else None
+                if message is not None:
+                    attrs.update(message_attributes([message], "gen_ai.completion"))
             if generations and generations[0]:
                 usage = getattr(getattr(generations[0][0], "message", None), "usage_metadata", None) or usage
             for target, keys in {
@@ -107,6 +123,7 @@ class ScopeCallbackHandler(BaseCallbackHandler):
             run.end(str(run_id), attributes=attrs)
 
     def on_llm_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
+        self._content_runs.discard(str(run_id))
         if (run := current_scope_run()) is not None:
             run.end(str(run_id), error=True)
 
@@ -129,13 +146,20 @@ class ScopeCallbackHandler(BaseCallbackHandler):
                     pass
             if delegate:
                 self._delegates.add(str(run_id))
-            run.start(str(run_id), delegate or name, "agent" if delegate else "tool",
-                      self._protocol_arguments(name, kwargs.get("inputs")), parent_key=parent)
+            attrs = self._protocol_arguments(name, kwargs.get("inputs"))
+            if capture_enabled():
+                self._content_runs.add(str(run_id))
+                inputs = kwargs.get("inputs")
+                attrs.update(entity_attributes(inputs if isinstance(inputs, dict) else input_str, "input"))
+            run.start(str(run_id), delegate or name, "agent" if delegate else "tool", attrs, parent_key=parent)
 
     def on_tool_end(self, output: Any, *, run_id: UUID, **kwargs: Any) -> None:
         if (run := current_scope_run()) is not None and not run.canonical_tools:
-            run.end(str(run_id), error=getattr(output, "status", None) == "error")
+            attrs = entity_attributes(output, "output") if str(run_id) in self._content_runs else {}
+            self._content_runs.discard(str(run_id))
+            run.end(str(run_id), error=getattr(output, "status", None) == "error", attributes=attrs)
 
     def on_tool_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
+        self._content_runs.discard(str(run_id))
         if (run := current_scope_run()) is not None and not run.canonical_tools:
             run.end(str(run_id), error=True)
