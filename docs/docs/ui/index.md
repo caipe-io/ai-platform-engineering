@@ -9,7 +9,7 @@ The CAIPE UI is a Next.js web application and BFF for Dynamic Agents.
 ## What It Provides
 
 - Chat with dynamic agents
-- Conversation persistence in MongoDB
+- Conversation persistence in a MongoDB-compatible DocumentDB
 - Agent Builder and Skills Gallery
 - Admin settings, health, metrics, audit logs, and RBAC surfaces
 - BFF proxy routes for Dynamic Agents, RAG, bots, and admin APIs
@@ -17,7 +17,7 @@ The CAIPE UI is a Next.js web application and BFF for Dynamic Agents.
 ## Quick Start
 
 ```bash
-COMPOSE_PROFILES=caipe-ui,dynamic-agents,caipe-mongodb docker compose -f docker-compose.dev.yaml up
+COMPOSE_PROFILES=caipe-ui,dynamic-agents,caipe-documentdb docker compose -f docker-compose.dev.yaml up
 ```
 
 Open:
@@ -33,7 +33,7 @@ flowchart LR
   Browser --> UI[Next.js UI/BFF]
   UI --> DA[Dynamic Agents]
   DA --> MCP[MCP servers]
-  UI --> Mongo[(MongoDB)]
+  UI --> Mongo[(DocumentDB / MongoDB)]
 ```
 
 The BFF calls Dynamic Agents through `DYNAMIC_AGENTS_URL` and exposes browser

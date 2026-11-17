@@ -2,11 +2,11 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
-# -- Database engine to run: mongodb (default) or documentdb.
+# -- Database engine to run: documentdb (default) or mongodb.
 # DocumentDB is the MIT-licensed, PostgreSQL-backed project from
 # https://github.com/documentdb/documentdb. Both providers expose the MongoDB
 # wire protocol, so CAIPE consumers continue to use MONGODB_URI.
-provider: mongodb
+provider: documentdb
 
 # This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
 replicaCount: 1

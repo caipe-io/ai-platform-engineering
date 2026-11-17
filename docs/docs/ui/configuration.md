@@ -9,7 +9,7 @@ sidebar_position: 3
 | Variable | Required | Purpose |
 |---|---|---|
 | `DYNAMIC_AGENTS_URL` | Yes for chat | Server-side Dynamic Agents URL |
-| `MONGODB_URI` | Yes for persistence | MongoDB connection string |
+| `MONGODB_URI` | Yes for persistence | MongoDB-compatible database connection string |
 | `MONGODB_DATABASE` | No | MongoDB database name, default `caipe` |
 | `NEXTAUTH_URL` | Yes when auth enabled | Public UI URL for auth callbacks |
 | `NEXTAUTH_SECRET` | Yes when auth enabled | Session encryption secret |
@@ -24,7 +24,7 @@ cd ui
 npm install
 
 DYNAMIC_AGENTS_URL=http://localhost:8100 \
-MONGODB_URI=mongodb://admin:changeme@localhost:27017/caipe?authSource=admin \
+MONGODB_URI=mongodb://admin:changeme@localhost:10260/caipe?tls=true&tlsAllowInvalidCertificates=true&retryWrites=false&directConnection=true \
 NEXTAUTH_URL=http://localhost:3000 \
 NEXTAUTH_SECRET=development-secret-change-me \
 SKIP_AUTH=true \
@@ -34,7 +34,7 @@ npm run dev
 ## Docker Compose
 
 ```bash
-COMPOSE_PROFILES=caipe-ui,dynamic-agents,caipe-mongodb docker compose -f docker-compose.dev.yaml up
+COMPOSE_PROFILES=caipe-ui,dynamic-agents,caipe-documentdb docker compose -f docker-compose.dev.yaml up
 ```
 
 The compose files wire `DYNAMIC_AGENTS_URL` and `MONGODB_URI` for the packaged

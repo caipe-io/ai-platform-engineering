@@ -67,7 +67,7 @@ Create the name of the service account to use
 
 {{/* Validate and expose the selected MongoDB-compatible provider. */}}
 {{- define "mongodb.provider" -}}
-{{- $provider := .Values.provider | default "mongodb" -}}
+{{- $provider := .Values.provider | default "documentdb" -}}
 {{- if not (has $provider (list "mongodb" "documentdb")) -}}
 {{- fail (printf "caipe-ui-mongodb.provider must be mongodb or documentdb, got %q" $provider) -}}
 {{- end -}}
