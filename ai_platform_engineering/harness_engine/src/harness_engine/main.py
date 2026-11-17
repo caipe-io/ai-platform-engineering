@@ -100,6 +100,9 @@ def create_app(
         session_manager,
         DefaultPromptCompiler(),
     )
+    for adapter in resolved_adapters:
+        if isinstance(adapter, DeepAgentsAdapter):
+            adapter.runtime.configure_subagent_dispatch(coordinator, resolved_repository)
 
     async def refresh_operator_profiles() -> None:
         claude_profiles = await resolved_repository.list_claude_profiles()

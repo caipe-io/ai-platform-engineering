@@ -248,7 +248,9 @@ class ClaudeCodeCLIAgent(Agent):
                 if exit_code or result is None or result.get("is_error") or result.get("subtype") != "success":
                     raise RequestError.internal_error({"message": "Claude Code CLI did not complete its turn"})
                 self.resume = True
-                return PromptResponse(stop_reason="end_turn")
+                return PromptResponse(stop_reason="end_turn", field_meta={
+                    "caipe.io/harness": {"final_content": result.get("result")},
+                })
             finally:
                 if process.returncode is None:
                     process.terminate()

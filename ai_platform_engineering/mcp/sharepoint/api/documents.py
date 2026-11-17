@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -16,10 +18,43 @@ from urllib.parse import parse_qsl, urljoin, urlsplit
 
 import httpx
 
-from api.client import GRAPH_BASE_URL, SharePointGraphClient, SharePointGraphError
+from api.client import GRAPH_BASE_URL, SharePointGraphClient, SharePointGraphError, text_file_format
+from api.pages import SITE_PAGES_LIBRARY_ID, SITE_PAGES_ROOT_ID, SharePointPages
+
+log = logging.getLogger(__name__)
 
 DocumentFormat = Literal["original", "pdf"]
-DOCUMENT_EXTENSIONS = frozenset({".pptx", ".pdf"})
+DOCUMENT_CONTENT_TYPES = {
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+    ".xls": "application/vnd.ms-excel",
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".avif": "image/avif",
+    ".svg": "image/svg+xml",
+    ".md": "text/markdown",
+    ".txt": "text/plain",
+    ".html": "text/html",
+    ".jsonl": "application/x-ndjson",
+    ".json": "application/json",
+    ".csv": "text/csv",
+    ".xml": "application/xml",
+    ".yaml": "application/yaml",
+    ".yml": "application/yaml",
+    ".log": "text/plain",
+}
+DOCUMENT_EXTENSIONS = frozenset(DOCUMENT_CONTENT_TYPES)
+VISUAL_FORMATS = frozenset({"pptx", "docx", "pdf"})
+IMAGE_FORMATS = frozenset({"png", "jpeg", "gif", "webp", "svg", "avif"})
+WORKBOOK_FORMATS = frozenset({"xlsx", "xlsm", "xls"})
+MAX_WORKBOOK_BYTES = 104_857_600
+MAX_IMAGE_BYTES = 20_971_520
 MAX_FOLDER_DOCUMENTS = 10
 MAX_FOLDER_ENTRIES = 1000
 
@@ -36,10 +71,41 @@ class SharePointDocuments:
 
     def __init__(self, client: SharePointGraphClient) -> None:
         self.client = client
+        self.pages = SharePointPages(client)
         self._drives: set[str] = set()
         self._drives_expiry = 0.0
         self._drive_lock = asyncio.Lock()
         self._stream_slot = asyncio.Semaphore(2)
+
+    @staticmethod
+    def format_for_item(metadata: dict[str, Any]) -> str | None:
+        file = metadata.get("file")
+        if "remoteItem" in metadata or not isinstance(file, dict):
+            return None
+        name = str(metadata.get("name") or "")
+        extension = PurePosixPath(name).suffix.lower()
+        if extension == ".aspx":
+            # A page's canvas, not its backing ASPX file, is the readable source.
+            return None
+        if extension.lstrip(".") in VISUAL_FORMATS | WORKBOOK_FORMATS:
+            return extension.lstrip(".")
+        image_format = "jpeg" if extension in {".jpg", ".jpeg"} else extension.lstrip(".")
+        if image_format in IMAGE_FORMATS:
+            return image_format
+        mime_type = str(file.get("mimeType") or "").split(";", 1)[0].strip().lower()
+        for candidate in IMAGE_FORMATS:
+            if DOCUMENT_CONTENT_TYPES[f".{candidate}"] == mime_type:
+                return candidate
+        return text_file_format(name, str(file.get("mimeType") or ""))
+
+    def byte_limit(self, document_format: str) -> int:
+        if document_format in WORKBOOK_FORMATS:
+            return min(self.client.config.max_document_bytes, MAX_WORKBOOK_BYTES)
+        if document_format in IMAGE_FORMATS:
+            return min(self.client.config.max_document_bytes, MAX_IMAGE_BYTES)
+        return self.client.config.max_document_bytes if document_format in VISUAL_FORMATS | {"csv"} else min(
+            self.client.config.max_document_bytes, self.client.config.max_text_document_bytes,
+        )
 
     async def _assert_drive(self, drive_id: str) -> None:
         async with self._drive_lock:
@@ -65,7 +131,12 @@ class SharePointDocuments:
         if drive_id not in self._drives:
             raise SharePointGraphError(404, "outside_configured_site", "The document library is not in the configured site.")
 
-    async def manifest(self, drive_id: str, item_id: str) -> dict[str, Any]:
+    async def manifest(
+        self, drive_id: str, item_id: str, *, header_only: bool = False, metadata_only: bool = False,
+    ) -> dict[str, Any]:
+        if drive_id == SITE_PAGES_LIBRARY_ID:
+            metadata, _ = await self.pages.read(item_id)
+            return metadata
         await self._assert_drive(drive_id)
         metadata = await self.client._request_json(
             f"/drives/{self.client._id(drive_id)}/items/{self.client._id(item_id)}",
@@ -73,11 +144,15 @@ class SharePointDocuments:
         )
         if "folder" in metadata or "remoteItem" in metadata or not isinstance(metadata.get("file"), dict):
             raise SharePointGraphError(415, "unsupported_document", "Choose a file in this site, not a folder or remote shortcut.")
-        extension = PurePosixPath(str(metadata.get("name", ""))).suffix.lower()
-        if extension not in DOCUMENT_EXTENSIONS:
-            raise SharePointGraphError(415, "unsupported_document", "Document preparation currently supports PPTX and PDF files.")
-        limit = self.client.config.max_document_bytes
-        if isinstance(metadata.get("size"), int) and metadata["size"] > limit:
+        document_format = self.format_for_item(metadata)
+        if document_format is None:
+            raise SharePointGraphError(
+                415, "unsupported_document",
+                "Choose a PDF, PPTX, DOCX, Excel workbook (XLSX, XLSM, XLS), supported text file, or image.",
+            )
+        limit = self.byte_limit(document_format)
+        inspection_only = metadata_only or (header_only and document_format == "csv")
+        if not inspection_only and isinstance(metadata.get("size"), int) and metadata["size"] > limit:
             raise SharePointGraphError(413, "document_too_large", f"The document exceeds the {limit}-byte streaming limit.")
         base = f"/documents/{self.client._id(drive_id)}/{self.client._id(item_id)}"
         return {
@@ -88,14 +163,17 @@ class SharePointDocuments:
             "web_url": metadata.get("webUrl"),
             "version": metadata.get("eTag") or metadata.get("cTag") or "",
             "last_modified": metadata.get("lastModifiedDateTime"),
-            "format": extension.lstrip("."),
+            "format": document_format,
             "original_path": f"{base}/content",
-            "pdf_path": f"{base}/content?format=pdf" if extension == ".pptx" else f"{base}/content",
+            "pdf_path": f"{base}/content?format=pdf" if document_format in {"pptx", "docx"}
+            else f"{base}/content" if document_format == "pdf" else None,
         }
 
     async def folder_snapshot(self, drive_id: str, item_id: str, *, select_files: bool = False) -> dict[str, Any]:
         """Preview direct children only; never recurse, truncate a valid set, or download files."""
         async with asyncio.timeout(40):
+            if drive_id == SITE_PAGES_LIBRARY_ID:
+                return await self._pages_snapshot(item_id, select_files=select_files)
             await self._assert_drive(drive_id)
             folder = await self.client._request_json(
                 f"/drives/{self.client._id(drive_id)}/items/{self.client._id(item_id)}",
@@ -127,8 +205,7 @@ class SharePointDocuments:
                     if "folder" in row:
                         child_folders += 1
                         continue
-                    extension = PurePosixPath(str(row.get("name", ""))).suffix.lower()
-                    if not isinstance(row.get("file"), dict) or extension not in DOCUMENT_EXTENSIONS:
+                    if self.format_for_item(row) is None:
                         unsupported += 1
                         continue
                     size = row.get("size")
@@ -163,6 +240,42 @@ class SharePointDocuments:
                 "limits": {"max_documents": MAX_FOLDER_DOCUMENTS, "max_total_bytes": self.client.config.max_document_bytes},
             }
 
+    async def _pages_snapshot(self, item_id: str, *, select_files: bool) -> dict[str, Any]:
+        if item_id != SITE_PAGES_ROOT_ID:
+            raise SharePointGraphError(404, "unsupported_folder", "Choose the Site pages collection.")
+        documents: list[dict[str, Any]] = []
+        cursor: str | None = None
+        seen: set[str] = set()
+        identities: set[str] = set()
+        scanned = 0
+        while True:
+            page = await self.pages.list(100, cursor)
+            scanned += len(page["items"])
+            if scanned > MAX_FOLDER_ENTRIES:
+                raise SharePointGraphError(413, "folder_scan_limit", "Site pages exceed the 1000-entry listing limit.")
+            for row in page["items"]:
+                if row["id"] in identities:
+                    continue
+                identities.add(row["id"])
+                documents.append({
+                    "drive_id": SITE_PAGES_LIBRARY_ID, "item_id": row["id"], "name": row["name"],
+                    "size": 0, "web_url": row.get("webUrl"), "version": row["version"],
+                })
+            if not page["has_more"]:
+                break
+            cursor = page["next_cursor"]
+            if not cursor or cursor in seen:
+                raise SharePointGraphError(502, "invalid_pagination", "Invalid site-page continuation.")
+            seen.add(cursor)
+        within_limits = len(documents) <= MAX_FOLDER_DOCUMENTS
+        return {
+            "folder": {"kind": "folder", "drive_id": SITE_PAGES_LIBRARY_ID, "item_id": SITE_PAGES_ROOT_ID, "name": "Site pages"},
+            "documents": documents if select_files or within_limits else [],
+            "document_count": len(documents), "total_size": 0, "child_folder_count": 0, "unsupported_count": 0,
+            "within_limits": within_limits,
+            "limits": {"max_documents": MAX_FOLDER_DOCUMENTS, "max_total_bytes": self.client.config.max_document_bytes},
+        }
+
     def _valid_download_url(self, url: str) -> bool:
         parsed = urlsplit(url)
         host = (parsed.hostname or "").lower()
@@ -180,12 +293,32 @@ class SharePointDocuments:
         )
 
     @asynccontextmanager
-    async def stream(self, drive_id: str, item_id: str, format: DocumentFormat = "original") -> AsyncIterator[DocumentStream]:
-        manifest = await self.manifest(drive_id, item_id)
+    async def stream(
+        self, drive_id: str, item_id: str, format: DocumentFormat = "original", *, header_only: bool = False,
+    ) -> AsyncIterator[DocumentStream]:
         if format not in {"original", "pdf"}:
             raise SharePointGraphError(400, "invalid_format", "Choose original or pdf.")
+        if drive_id == SITE_PAGES_LIBRARY_ID:
+            if header_only:
+                raise SharePointGraphError(400, "invalid_format", "Header-only streaming applies only to CSV files.")
+            if format != "original":
+                raise SharePointGraphError(415, "unsupported_document", "Site pages are ingested as text, without PDF conversion.")
+            async with self._stream_slot:
+                _, content = await self.pages.read(item_id)
+
+                async def page_chunks() -> AsyncIterator[bytes]:
+                    for first in range(0, len(content), 65_536):
+                        yield content[first:first + 65_536]
+
+                yield DocumentStream(page_chunks(), "application/json", len(content))
+            return
+        manifest = await self.manifest(drive_id, item_id, header_only=header_only)
+        if header_only and manifest["format"] != "csv":
+            raise SharePointGraphError(400, "invalid_format", "Header-only streaming applies only to CSV files.")
+        if format == "pdf" and manifest["format"] not in VISUAL_FORMATS:
+            raise SharePointGraphError(415, "unsupported_document", "Text and image documents do not require PDF conversion.")
         converted = format == "pdf" and manifest["format"] != "pdf"
-        limit = self.client.config.max_rendered_pdf_bytes if converted else self.client.config.max_document_bytes
+        limit = 65_536 if header_only else self.client.config.max_rendered_pdf_bytes if converted else self.byte_limit(manifest["format"])
         path = f"/drives/{self.client._id(drive_id)}/items/{self.client._id(item_id)}/content"
         url = f"{GRAPH_BASE_URL}{path}" + ("?format=pdf" if converted else "")
         owns_client = self.client._http_client is None
@@ -197,6 +330,8 @@ class SharePointDocuments:
                 token = await self.client._get_access_token()
                 for _ in range(5):
                     headers = {"Accept": "*/*", "Accept-Encoding": "identity"}
+                    if header_only:
+                        headers["Range"] = f"bytes=0-{limit - 1}"
                     # Graph tokens must never reach a redirected storage host.
                     if urlsplit(url).netloc == "graph.microsoft.com":
                         headers["Authorization"] = f"Bearer {token}"
@@ -217,7 +352,7 @@ class SharePointDocuments:
                 else:
                     raise SharePointGraphError(502, "redirect_limit", "Microsoft returned too many download redirects.")
 
-                if response.status_code != 200:
+                if response.status_code != 200 and not (header_only and response.status_code == 206):
                     # Stream errors are intentionally generic: response URLs may be signed.
                     raise SharePointGraphError(
                         response.status_code,
@@ -226,30 +361,53 @@ class SharePointDocuments:
                     )
                 length_header = response.headers.get("content-length")
                 length = int(length_header) if length_header and length_header.isdigit() else None
-                if length is not None and length > limit:
+                if header_only and response.status_code == 206:
+                    content_range = re.fullmatch(r"bytes 0-([0-9]+)/([0-9]+|\*)", response.headers.get("content-range", ""))
+                    if (not content_range or int(content_range[1]) >= limit
+                        or int(content_range[1]) + 1 != min(manifest["size"], limit)
+                        or content_range[2] != "*" and int(content_range[2]) != manifest["size"]
+                        or length is not None and length != int(content_range[1]) + 1):
+                        raise SharePointGraphError(502, "invalid_range", "Microsoft returned an invalid CSV header prefix.")
+                if not header_only and length is not None and length > limit:
                     raise SharePointGraphError(413, "document_too_large", f"The download exceeds the {limit}-byte limit.")
 
                 async def chunks() -> AsyncIterator[bytes]:
                     count = 0
+                    started = time.monotonic()
                     iterator = response.aiter_bytes(65_536).__aiter__()
-                    while True:
-                        try:
-                            chunk = await asyncio.wait_for(anext(iterator), max(0, deadline - time.monotonic()))
-                        except StopAsyncIteration:
-                            break
-                        count += len(chunk)
-                        if count > limit:
-                            raise SharePointGraphError(413, "document_too_large", "The document exceeded its streaming byte limit.")
-                        yield chunk
-                    if length is not None and count != length:
-                        raise SharePointGraphError(502, "incomplete_download", "Microsoft returned an incomplete document.")
+                    try:
+                        while True:
+                            try:
+                                chunk = await asyncio.wait_for(anext(iterator), max(0, deadline - time.monotonic()))
+                            except StopAsyncIteration:
+                                break
+                            count += len(chunk)
+                            if header_only:
+                                yield chunk[:max(0, limit - (count - len(chunk)))]
+                                if count >= limit:
+                                    return
+                                continue
+                            if count > limit:
+                                raise SharePointGraphError(413, "document_too_large", "The document exceeded its streaming byte limit.")
+                            yield chunk
+                        if length is not None and count != length:
+                            raise SharePointGraphError(502, "incomplete_download", "Microsoft returned an incomplete document.")
+                    except (httpx.HTTPError, TimeoutError, SharePointGraphError) as exc:
+                        # After HTTP 200, ASGI framing can mask the original cause.
+                        # Never log exception messages or signed storage URLs.
+                        log.warning(
+                            "SharePoint stream failed: drive=%s item=%s format=%s operation=content_body "
+                            "bytes_yielded=%d expected_bytes=%s elapsed=%.3fs exception=%s",
+                            drive_id, item_id, format, count, length, time.monotonic() - started, type(exc).__name__,
+                        )
+                        raise
 
                 yield DocumentStream(
                     chunks(),
                     "application/pdf"
                     if converted or manifest["format"] == "pdf"
-                    else "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                    length,
+                    else DOCUMENT_CONTENT_TYPES["." + manifest["format"]],
+                    min(length, limit) if header_only and length is not None else length,
                 )
         finally:
             if response is not None:

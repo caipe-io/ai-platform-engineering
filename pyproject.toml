@@ -19,8 +19,8 @@ dependencies = [
     "cryptography==50.0.2",
     "fastapi==0.141.1",
     "httpx==0.28.1",
-    "langchain==1.4.1",
-    "langchain-core==1.6.12",
+    "langchain==1.5.0",
+    "langchain-core==1.8.0",
     "langchain-mcp-adapters==0.3.2",
     "langfuse==3.15.0",
     "langgraph==1.2.18",
@@ -30,7 +30,7 @@ dependencies = [
     "pyjwt==2.15.1",
     "requests==2.34.2",
     # Dynamic agents are built on the upstream deepagents library.
-    "deepagents==0.6.8",
+    "deepagents==0.7.37",
     # MongoDB client for shared MongoDB collections (conversations, skills, audit)
     "pymongo==4.19.0",
     # MongoDB checkpoint saver for LangGraph persistence (dynamic agents)
@@ -89,5 +89,5 @@ url = "https://pypi.org/simple/"
 
 [tool.uv]
 # cnoe-agent-utils 0.5.0 pins a vulnerable langchain-anthropic release.
-override-dependencies = ["protobuf==6.33.5", "langchain-anthropic==1.4.6"]
+override-dependencies = ["protobuf==6.33.5", "langchain-anthropic==1.7.10"]
 constraint-dependencies = ["pypdf==6.16.2"]
