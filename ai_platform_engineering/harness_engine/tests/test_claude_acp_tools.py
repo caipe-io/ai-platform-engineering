@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 import httpx2 as httpx
+import pytest
 from acp.schema import ToolCallStart
 from fastapi import FastAPI
 from pydantic import SecretStr
@@ -17,7 +18,8 @@ from harness_engine.config import Settings
 from tests.test_claude_workers import context
 
 
-async def test_acp_mcp_capability_scope_revocation_and_caller_identity(settings: Settings) -> None:
+@pytest.mark.parametrize("limit", [None, 1])
+async def test_acp_mcp_capability_scope_revocation_and_caller_identity(settings: Settings, limit: int | None) -> None:
     calls: list[dict[str, Any]] = []
     revoked = False
 
@@ -58,7 +60,7 @@ async def test_acp_mcp_capability_scope_revocation_and_caller_identity(settings:
     bridge = ClaudeACPToolBridge(8010)
     app = FastAPI()
     app.mount("/internal/claude-tools", bridge)
-    async with bridge.bind(context(), broker) as (servers, names):
+    async with bridge.bind(context(), broker, max_calls=limit) as (servers, names):
         assert names == {"mcp__caipe__tool_0": "example.lookup"}
         server = servers[0]
         assert "caller-test-token" not in server.model_dump_json()
@@ -90,11 +92,11 @@ async def test_acp_mcp_capability_scope_revocation_and_caller_identity(settings:
             revoked = True
             denied = await client.post(server.url, headers=headers, json=request)
             assert denied.json()["result"]["isError"]
-            assert len([call for call in calls if call["operation"] == "call"]) == 2
+            assert len([call for call in calls if call["operation"] == "call"]) == (2 if limit is None else 1)
             request["params"]["name"] = "other_tool"
             rejected = await client.post(server.url, headers=headers, json=request)
             assert rejected.json()["result"]["isError"]
-            assert len(calls) == 3
+            assert len(calls) == (3 if limit is None else 2)
             assert (
                 await client.post(server.url.replace("run-example", "run-other"), headers=headers, json=request)
             ).status_code == 401

@@ -247,6 +247,30 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     expect(screen.getByLabelText("Maximum turns")).toHaveValue("80");
   });
 
+  it("shows the effective managed turn default for a saved blueprint with empty options", async () => {
+    const fetchMock = mockFetch(null, true);
+    const implementation = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url, init) => {
+      if (String(url).startsWith("/api/harness-engine/agents/")) return jsonResponse({
+        success: true, data: { record: { revision: 1 }, version: { blueprint: { harness: {
+          id: "claude_agent_sdk", profile_id: "managed-example", options: {},
+        } } } },
+      });
+      const response = await implementation(url, init);
+      if (!String(url).endsWith("/api/harness-engine/harnesses")) return response;
+      const body = await response.json();
+      Object.assign(body.data.harnesses[0].profiles[0], {
+        id: "managed-example", source: "managed", default_max_turns: 75,
+      });
+      return jsonResponse(body);
+    });
+    render(<DynamicAgentEditor agent={{ ...editAgent, execution_harness_id: "claude_agent_sdk" }} onCancel={jest.fn()} onSave={jest.fn()} />);
+    await flushAsync();
+    expect(screen.getByLabelText("Operator profile")).toHaveValue("managed-example");
+    fireEvent.click(screen.getByRole("button", { name: /Advanced/i }));
+    expect(screen.getByLabelText("Maximum turns")).toHaveValue("75");
+  });
+
   it.each([false, true])("changes profile defaults while preserving only explicit turn overrides (%s)", async explicit => {
     const fetchMock = mockFetch(null, true);
     const implementation = fetchMock.getMockImplementation()!;
