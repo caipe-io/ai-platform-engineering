@@ -17,6 +17,7 @@ import {
 import {
   WorkspaceNavigationList,
 } from "@/components/layout/WorkspaceNavigation";
+import { AreaNotificationToggle } from "@/components/notifications/AreaNotificationToggle";
 import { WorkspacePageHeader } from "@/components/layout/WorkspacePageHeader";
 import { WorkspaceShell } from "@/components/layout/WorkspaceShell";
 import { UnsavedChangesDialog } from "@/components/shared/UnsavedChangesDialog";
@@ -190,6 +191,7 @@ function DynamicAgentsPageContent() {
       <WorkspaceShell
         header={(
           <WorkspacePageHeader
+            actions={activeTab === "agents" ? <AreaNotificationToggle area="agent" /> : undefined}
             breadcrumbs={[
               { label: "Home",href: "/" },
               ...(activeTab === "agents"

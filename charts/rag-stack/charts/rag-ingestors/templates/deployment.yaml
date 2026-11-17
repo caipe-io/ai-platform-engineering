@@ -62,6 +62,20 @@ spec:
             {{- $oidc := $rag.ingestorOidc | default dict }}
             {{- $secretRef := $oidc.clientSecretRef | default dict }}
             {{- $customEnv := $ingestor.env | default dict }}
+            {{- $notifications := $global.notifications | default dict }}
+            {{- if $notifications.enabled }}
+            {{- if not (hasKey $customEnv "NOTIFICATIONS_INTERNAL_URL") }}
+            - name: NOTIFICATIONS_INTERNAL_URL
+              value: {{ required "global.notifications.internalUrl is required for RAG notification producers" $notifications.internalUrl | quote }}
+            {{- end }}
+            {{- if not (hasKey $customEnv "NOTIFICATIONS_INTERNAL_TOKEN") }}
+            - name: NOTIFICATIONS_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "global.notifications.tokenSecret.name is required when enabled" $notifications.tokenSecret.name | quote }}
+                  key: {{ $notifications.tokenSecret.key | default "token" | quote }}
+            {{- end }}
+            {{- end }}
             {{- $caipeApi := $rag.caipeApi | default dict }}
             {{- $initDelaySeconds := 60 }}
             {{- if hasKey $ingestor "initDelaySeconds" }}

@@ -344,3 +344,26 @@ def test_sync_from_config_defaults_execution_identity_to_user() -> None:
     # Persisted doc carries it explicitly.
     service.sync_from_config(workspace_id="CAIPE", dry_run=False)
     assert routes.update_calls[0][1]["$set"]["execution_identity"] == {"mode": "obo_user"}
+
+
+def test_personal_notification_uses_linked_user_dm_and_stable_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_INTEGRATION_BOT_TOKEN", "example-token")
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def post(url: str, **kwargs: Any) -> _Response:
+        calls.append((url, kwargs))
+        return _Response({"ok": True, "channel": {"id": "D012EXAMPLE"}, "ts": "example"})
+
+    monkeypatch.setattr("ai_platform_engineering.integrations.slack_bot.utils.slack_admin_api.requests.post", post)
+    service = SlackBotAdminService.__new__(SlackBotAdminService)
+    service.send_user_notification(user_id="U012EXAMPLE", text="Example update", notification_id="a" * 64)
+    assert calls[0][1]["json"] == {"users": "U012EXAMPLE"}
+    assert calls[1][1]["json"]["channel"] == "D012EXAMPLE"
+    assert calls[1][1]["json"]["mrkdwn"] is False
+    assert calls[1][1]["json"]["client_msg_id"] == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+
+def test_personal_notification_rejects_a_channel_as_user() -> None:
+    service = SlackBotAdminService.__new__(SlackBotAdminService)
+    with pytest.raises(ValueError):
+        service.send_user_notification(user_id="C012EXAMPLE", text="Example", notification_id="a" * 64)

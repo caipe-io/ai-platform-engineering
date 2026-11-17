@@ -1,5 +1,6 @@
 // MongoDB collection type definitions
 
+import type { NotificationPreferences } from "@/lib/notifications/preferences";
 import type { StreamEvent } from "@/lib/streaming/types";
 import type { ProductTourId } from "@/lib/product-tour-catalog";
 import type { ProductTourState } from "@/lib/product-tour";
@@ -303,6 +304,10 @@ export interface UserSettings {
     // this off never changes or resolves the underlying platform incident.
     platform_health: boolean;
   };
+  /** Per-category and per-event overrides for event notifications. Missing keys use catalog defaults. */
+  notification_preferences?: NotificationPreferences;
+  /** Increments on every write. Guards concurrent preference edits. */
+  notification_preferences_rev?: number;
   defaults: {
     default_model: string;
     default_agent_mode: string;

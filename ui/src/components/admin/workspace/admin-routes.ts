@@ -38,6 +38,7 @@ export type AdminDestinationId =
   | "setup-wizard"
   | "tour"
   | "announcements"
+  | "notification-events"
   | "agents"
   | "autonomous"
   | "mcp"
@@ -129,6 +130,14 @@ export const ADMIN_CATEGORIES: AdminCategoryDefinition[] = [
         label: "Defaults",
         description: "Set fallback behavior for people who have not made a personal choice.",
         icon: SlidersHorizontal,
+        gateKey: "platform_settings",
+      },
+      {
+        id: "notification-events",
+        href: "/admin/configuration/notification-events",
+        label: "Notification events",
+        description: "Manage event registration, audiences and permitted delivery channels.",
+        icon: Megaphone,
         gateKey: "platform_settings",
       },
       {

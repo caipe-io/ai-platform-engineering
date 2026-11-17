@@ -127,7 +127,7 @@ async function safeCreateIndex(
   db: Db,
   collectionName: string,
   keys: Record<string, 1 | -1>,
-  options?: { unique?: boolean; expireAfterSeconds?: number },
+  options?: { unique?: boolean; expireAfterSeconds?: number; sparse?: boolean },
 ): Promise<boolean> {
   try {
     await withIndexBuildRetry(() => db.collection(collectionName).createIndex(keys, options ?? {}));
@@ -217,6 +217,7 @@ type BootstrapIndex = {
   key: Record<string, 1 | -1>;
   unique?: boolean;
   expireAfterSeconds?: number;
+  sparse?: boolean;
 };
 
 // Bound per-process index DDL so simultaneous replicas leave database connections
@@ -241,7 +242,7 @@ async function createIndexes(db: Db): Promise<void> {
   const defineIndex = (
     collectionName: string,
     key: Record<string, 1 | -1>,
-    options?: { unique?: boolean; expireAfterSeconds?: number },
+    options?: Omit<BootstrapIndex, "key">,
   ): { collectionName: string; index: BootstrapIndex } => ({ collectionName, index: { key, ...options } });
 
   const definitions = [
@@ -401,10 +402,25 @@ async function createIndexes(db: Db): Promise<void> {
     defineIndex('publication_requests', { 'resource.kind': 1, 'requested_state.channel_defaults.channel_id': 1, status: 1 }),
     defineIndex('publication_requests', { 'resource.kind': 1, 'requested_state.space_id': 1, status: 1 }),
 
+    // Notification delivery is a separate durable queue for each recipient/channel.
+    defineIndex('notification_jobs', { expanded: 1, createdAt: 1 }),
+    defineIndex('notification_jobs', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    defineIndex('notification_deliveries', { status: 1, availableAt: 1 }),
+    defineIndex('notification_deliveries', { status: 1, leaseUntil: 1 }),
+    defineIndex('notification_deliveries', { 'recipient.subject': 1, createdAt: -1 }),
+    defineIndex('notification_deliveries', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    defineIndex('notification_push_devices', { subject: 1 }),
+    defineIndex('notification_push_devices', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    defineIndex('notification_subscriptions', { subject: 1 }),
+    defineIndex('notification_publish_limits', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    defineIndex('notification_test_limits', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+
     // Durable header notifications. Direct, team, organization-admin, and
     // global platform audiences share the feed while read state remains
     // personal to each viewer.
     defineIndex('in_app_notifications', { event_key: 1 }, { unique: true }),
+    defineIndex('in_app_notifications', { callback_marker: 1 }, { sparse: true }),
+    defineIndex('in_app_notifications', { expires_at: 1 }, { expireAfterSeconds: 0 }),
     defineIndex('in_app_notifications', { recipient_user_subjects: 1, created_at: -1 }),
     defineIndex('in_app_notifications', { recipient_team_slugs: 1, created_at: -1 }),
     defineIndex('in_app_notifications', { recipient_organization_admins: 1, created_at: -1 }),

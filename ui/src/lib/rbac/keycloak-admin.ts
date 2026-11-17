@@ -423,11 +423,12 @@ export async function listRealmUsersPage(
 }
 
 export async function listRealmRoleMappingsForUser(
-  userId: string
+  userId: string,
+  effective = false
 ): Promise<KeycloakRole[]> {
   const enc = encodeURIComponent(userId);
   const response = await adminFetch(
-    `/users/${enc}/role-mappings/realm`,
+    `/users/${enc}/role-mappings/realm${effective ? "/composite" : ""}`,
     { method: "GET" }
   );
   await assertOk(response, "listRealmRoleMappingsForUser");

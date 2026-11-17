@@ -42,7 +42,7 @@ describe("admin route registry", () => {
 
   it("alphabetizes the Platform configuration destinations", () => {
     expect(ADMIN_CATEGORIES.find((category) => category.id === "configuration")?.destinations.map((destination) => destination.label)).toEqual([
-      "Announcements", "Defaults", "Setup Wizard", "Tour",
+      "Announcements", "Defaults", "Notification events", "Setup Wizard", "Tour",
     ]);
   });
 

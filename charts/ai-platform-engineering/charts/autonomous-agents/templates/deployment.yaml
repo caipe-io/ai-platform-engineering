@@ -53,8 +53,19 @@ spec:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
-          {{- if .Values.dynamicAgentsAuth.enabled }}
+          {{- $notifications := (default dict .Values.global).notifications | default dict }}
+          {{- if or .Values.dynamicAgentsAuth.enabled $notifications.enabled }}
           env:
+            {{- if $notifications.enabled }}
+            - name: NOTIFICATIONS_INTERNAL_URL
+              value: {{ $notifications.internalUrl | default (printf "http://%s-caipe-ui:3000" .Release.Name) | quote }}
+            - name: NOTIFICATIONS_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "global.notifications.tokenSecret.name is required when enabled" $notifications.tokenSecret.name | quote }}
+                  key: {{ $notifications.tokenSecret.key | default "token" | quote }}
+            {{- end }}
+            {{- if .Values.dynamicAgentsAuth.enabled }}
             - name: DYNAMIC_AGENTS_OAUTH2_TOKEN_URL
               value: {{ include "autonomous-agents.dynamicAgentsTokenUrl" . | quote }}
             - name: DYNAMIC_AGENTS_OAUTH2_CLIENT_ID
@@ -70,6 +81,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "autonomous-agents.dynamicAgentsClientSecretName" . | quote }}
                   key: {{ required "dynamicAgentsAuth.clientSecretRef.key is required when dynamicAgentsAuth.enabled=true" .Values.dynamicAgentsAuth.clientSecretRef.key | quote }}
+            {{- end }}
           {{- else }}
           env: []
           {{- end }}

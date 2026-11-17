@@ -51,3 +51,11 @@ def test_non_pending_statuses_are_never_stale():
         JobStatus.FAILED,
     ):
         assert is_stale_pending_job(_job(status, age_seconds=99999)) is False
+
+
+def test_job_actor_identity_is_internal_only():
+    job = JobInfo(job_id="example-job", status=JobStatus.PENDING, created_at=0,
+                  triggered_by_subject="test-user", triggered_by_email="test-user@example.test")
+    assert "triggered_by_subject" not in job.model_dump()
+    assert "triggered_by_email" not in job.model_dump()
+    assert "test-user@example.test" not in repr(job)

@@ -692,3 +692,16 @@ def test_identity_confirmation_rejects_unknown_bot() -> None:
     service = WebexBotAdminService(config=_config(), resolver=_Resolver())
     with pytest.raises(ValueError, match="Unknown Webex bot"):
         service.notify_identity_linked(bot_id="missing", webex_user_id="person1234")
+
+def test_personal_notification_uses_linked_person_and_plain_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WEBEX_INTEGRATION_BOT_ACCESS_TOKEN", "example-token")
+    monkeypatch.setattr("ai_platform_engineering.integrations.webex_bot.utils.webex_admin_api.configured_webex_bots", lambda: [])
+    response = MagicMock()
+    response.json.return_value = {"id": "example-message"}
+    post = MagicMock(return_value=response)
+    monkeypatch.setattr("ai_platform_engineering.integrations.webex_bot.utils.webex_admin_api.requests.post", post)
+    service = WebexBotAdminService.__new__(WebexBotAdminService)
+    service.send_notification(person_id="example-person", markdown="Example update")
+    assert post.call_args.kwargs["json"] == {"toPersonId": "example-person", "text": "Example update"}
+    with pytest.raises(ValueError):
+        service.send_notification(person_id="example-person", space_id="example-space", markdown="Example")
