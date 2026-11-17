@@ -102,8 +102,10 @@ global:
 ```
 
 - This setting works with both the parent chart and standalone `mcp-server` installs.
-- `global.externalSecrets.apiVersion` takes precedence over the legacy
-  `global.llmSecrets.externalSecrets.apiVersion` setting.
+- The primary parameter is empty by default, so the legacy
+  `global.llmSecrets.externalSecrets.apiVersion: v1` setting also works on its own.
+- A nonempty `global.externalSecrets.apiVersion` takes precedence over the legacy
+  setting, including an explicit `v1beta1` override.
 - Keep `apiVersion: v1beta1` for clusters that require that version.
 
 For an existing Helm release, switch to `v1` while the cluster still serves
