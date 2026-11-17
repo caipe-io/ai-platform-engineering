@@ -5,7 +5,8 @@ import asyncio
 import base64
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from typing import Any, Callable
 
 import httpx
@@ -78,6 +79,165 @@ async def test_series_discovers_missed_actual_id_without_a_device_or_chat_decryp
 
 
 @pytest.mark.asyncio
+async def test_series_without_an_associated_space_finishes_without_a_retry() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/wbxappapi/v1/meetingInfo"
+        return httpx.Response(200, json={
+            "meetingId": SERIES, "meetingSeriesId": SERIES,
+            "unifiedSpaceMeeting": False, "webexScheduled": True,
+        })
+
+    result = await discover(handler, meeting_series_id=SERIES)
+    assert result["items"] == []
+    assert result["complete"] is True
+    assert result["warnings"] == []
+    assert result["has_more"] is False
+    assert result["next_continuation"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [
+    {},
+    {"meetingSeriesId": SERIES, "unifiedSpaceMeeting": True},
+    {"meetingSeriesId": OTHER_SERIES, "unifiedSpaceMeeting": False},
+    {"meetingSeriesId": SERIES, "unifiedSpaceMeeting": "false"},
+    {"meetingSeriesId": SERIES, "unifiedSpaceMeeting": False, "conversationUrl": 0},
+])
+async def test_missing_space_metadata_is_not_mistaken_for_a_confirmed_absent_space(payload: dict[str, Any]) -> None:
+    result = await discover(lambda _: httpx.Response(200, json=payload), meeting_series_id=SERIES)
+    assert result["complete"] is False
+    assert result["warnings"]
+    assert result["has_more"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [403, 429, 500])
+async def test_failed_series_metadata_remains_retryable(status: int) -> None:
+    result = await discover(lambda _: httpx.Response(status), meeting_series_id=SERIES)
+    assert result["complete"] is False
+    assert result["has_more"] is True
+
+
+@pytest.mark.parametrize(("header", "expected"), [
+    ("0", 0), (" 2 ", 2), (None, 1), ("invalid", 1), ("-1", 1),
+    ("inf", 1), ("1.5", 1), ("9" * 129, 1), ("١", 1),
+])
+def test_rate_limit_delay_parsing(header: str | None, expected: float) -> None:
+    assert spaces._retry_after_seconds(header) == expected
+
+
+def test_rate_limit_delay_accepts_http_dates_and_past_dates() -> None:
+    now = datetime.now(timezone.utc)
+    assert 28 <= spaces._retry_after_seconds(format_datetime(now + timedelta(seconds=30), usegmt=True)) <= 30
+    assert spaces._retry_after_seconds(format_datetime(now - timedelta(seconds=30), usegmt=True)) == 0
+
+
+@pytest.mark.asyncio
+async def test_catalog_retries_rate_limit_without_marking_recovered_results_incomplete() -> None:
+    catalog_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal catalog_calls
+        if request.url.path == "/u2c/api/v1/catalog":
+            return httpx.Response(200, json={"serviceLinks": {"conversation": "https://conv-primary.wbx2.com/conversation/api/v1"}})
+        catalog_calls += 1
+        return httpx.Response(429, headers={"Retry-After": "0"}) if catalog_calls == 1 else httpx.Response(200, json={"items": []})
+
+    result = await discover(handler)
+    assert catalog_calls == 2
+    assert result["complete"] is True and result["warnings"] == []
+    assert result["has_more"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("budget", [None, 2])
+async def test_exhausted_rate_limit_retains_pending_catalog_for_resume(monkeypatch: pytest.MonkeyPatch, budget: int | None) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(429, headers={"Retry-After": "0"})
+
+    if budget is not None:
+        monkeypatch.setattr(spaces, "MAX_REQUESTS", budget)
+    catalog = "https://conv-primary.wbx2.com/conversation/api/v1/conversations"
+    result = await discover(handler, catalog_urls=[catalog])
+    assert calls == (budget or spaces.MAX_REQUEST_ATTEMPTS)
+    assert result["complete"] is False and any("HTTP 429" in item for item in result["warnings"])
+    assert result["has_more"] is True
+    resumed = await discover(lambda _: httpx.Response(200, json={"items": []}), continuation=result["next_continuation"])
+    assert resumed["complete"] is True and resumed["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_shared_rate_limit_gate_admits_one_probe_then_restores_parallel_workers() -> None:
+    probe_started, release_probe = asyncio.Event(), asyncio.Event()
+    normals_started, release_normals = asyncio.Event(), asyncio.Event()
+    calls = 0
+    normal_count = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls, normal_count
+        calls += 1
+        if calls == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"})
+        if calls == 2:
+            probe_started.set()
+            await release_probe.wait()
+        else:
+            normal_count += 1
+            if normal_count == spaces.ACTIVITY_WORKERS - 1:
+                normals_started.set()
+            await release_normals.wait()
+        return httpx.Response(200, json={"items": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        state = spaces._Discovery(client, "Bearer example-user-token", LOWER, UPPER, "https://primary.webex.com", None, 200)
+        first = asyncio.create_task(state.request(CONVERSATION + "/activities", "activities", "Activities"))
+        await asyncio.wait_for(probe_started.wait(), timeout=1)
+        started = [asyncio.Event() for _ in range(spaces.ACTIVITY_WORKERS - 1)]
+
+        async def queued(event: asyncio.Event) -> Any:
+            event.set()
+            return await state.request(CONVERSATION + "/activities", "activities", "Activities")
+
+        others = [asyncio.create_task(queued(event)) for event in started]
+        await asyncio.gather(*(event.wait() for event in started))
+        assert calls == state.requests == 2
+        release_probe.set()
+        await asyncio.wait_for(normals_started.wait(), timeout=1)
+        release_normals.set()
+        assert all(await asyncio.gather(first, *others))
+        assert state.requests == spaces.ACTIVITY_WORKERS + 1
+        assert state.retry_until == 0 and state.warnings == []
+
+
+@pytest.mark.asyncio
+async def test_waiting_rate_limit_is_cancelled_without_losing_pending_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(spaces, "DISCOVERY_TIMEOUT", 0.01)
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(429, headers={"Retry-After": "3600"})
+
+    result = await discover(handler, conversation_urls=[CONVERSATION, SECONDARY])
+    assert calls == 1
+    assert result["complete"] is False and result["has_more"] is True
+    visited: set[str] = set()
+
+    def resumed(request: httpx.Request) -> httpx.Response:
+        visited.add(str(request.url).split("?")[0].removesuffix("/activities"))
+        return httpx.Response(200, json={"items": []})
+
+    result = await discover(resumed, continuation=result["next_continuation"])
+    assert result["complete"] is True and result["has_more"] is False
+    assert visited == {CONVERSATION, SECONDARY}
+
+
+@pytest.mark.asyncio
 async def test_share_does_not_invent_an_end_time_or_recording_availability() -> None:
     calls = 0
 
@@ -94,9 +254,36 @@ async def test_share_does_not_invent_an_end_time_or_recording_availability() -> 
 
 
 @pytest.mark.asyncio
+async def test_manual_catalog_reads_recaps_shared_in_one_to_one_conversations() -> None:
+    activity_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal activity_calls
+        if request.url.path == "/u2c/api/v1/catalog":
+            return httpx.Response(200, json={"serviceLinks": {"conversation": "https://conv-primary.wbx2.com/conversation/api/v1"}})
+        if request.url.path.endswith("/conversations"):
+            return httpx.Response(200, json={"items": [
+                {"url": CONVERSATION, "tags": ["ONE_ON_ONE"], "lastReadableActivityDate": "2026-01-05T18:00:00Z"},
+                {"url": SECONDARY, "tags": ["ONE_ON_ONE"], "lastReadableActivityDate": "2026-01-01T18:00:00Z"},
+            ]})
+        assert str(request.url).startswith(CONVERSATION + "/activities")
+        activity_calls += 1
+        return httpx.Response(200, json={"items": [activity(summary=False)] if activity_calls == 1 else []})
+
+    result = await discover(handler)
+    assert result["complete"] is True
+    assert result["has_more"] is False
+    assert [item["id"] for item in result["items"]] == [ACTUAL]
+    assert activity_calls == 2
+    assert "private" not in str(result)
+    assert "encrypted" not in str(result)
+
+
+@pytest.mark.asyncio
 async def test_manual_catalog_follows_next_page_and_federation_then_reads_actual_occurrences() -> None:
     visited: list[str] = []
     activity_calls: set[str] = set()
+    next_url = "https://conv-primary.wbx2.com/conversation/api/v1/conversations?cursor=next&sinceDate=1767571200000&conversationsLimit=100"
 
     def handler(request: httpx.Request) -> httpx.Response:
         visited.append(str(request.url))
@@ -106,14 +293,17 @@ async def test_manual_catalog_follows_next_page_and_federation_then_reads_actual
             return httpx.Response(200, json={"serviceLinks": {"conversation": "https://conv-primary.wbx2.com/conversation/api/v1"}})
         if request.url.path.endswith("/conversations"):
             if request.url.params.get("cursor"):
+                assert str(request.url) == next_url
                 return httpx.Response(200, json={"items": [{"url": CONVERSATION}]})
             assert request.url.params["membershipsType"] == "memberships"
             assert request.url.params["paginate"] == "true"
+            assert request.url.params["conversationsLimit"] == "100"
+            assert request.url.params["sinceDate"] == str(int(LOWER.timestamp() * 1000))
             if request.url.host == "conv-secondary.wbx2.com":
                 return httpx.Response(200, json={"items": [{"url": SECONDARY}]})
             return httpx.Response(200, json={
                 "items": [], "additionalUrls": ["https://conv-secondary.wbx2.com/conversation/api/v1"],
-            }, headers={"Link": '<https://conv-primary.wbx2.com/conversation/api/v1/conversations?cursor=next>; rel="next"'})
+            }, headers={"Link": f'<{next_url}>; rel="next"'})
         assert request.url.path.endswith("/activities")
         first = request.url.host not in activity_calls
         activity_calls.add(request.url.host)
@@ -178,7 +368,7 @@ async def test_one_slow_space_does_not_block_spaces_beyond_the_first_four() -> N
 
 
 @pytest.mark.asyncio
-async def test_catalog_truncation_keeps_queued_results_and_never_claims_complete(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_catalog_page_boundary_keeps_queued_results_and_marks_remaining_work(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(spaces, "MAX_CATALOG_PAGES", 1)
     activity_requests = 0
 
@@ -195,8 +385,35 @@ async def test_catalog_truncation_keeps_queued_results_and_never_claims_complete
 
     result = await discover(handler)
     assert result["items"][0]["id"] == ACTUAL
-    assert result["complete"] is False
-    assert any("page limit" in warning for warning in result["warnings"])
+    assert result["complete"] is True
+    assert result["has_more"] is True
+    assert result["next_continuation"]
+    assert result["warnings"] == []
+
+
+@pytest.mark.asyncio
+async def test_activity_page_boundary_resumes_without_a_false_failure_or_lost_meetings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(spaces, "MAX_ACTIVITY_PAGES", 1)
+    first_time = int(datetime(2026, 1, 5, 18, tzinfo=timezone.utc).timestamp() * 1000)
+    second_time = first_time - 3_600_000
+    visited: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        cursor = int(request.url.params["maxDate"])
+        visited.append(cursor)
+        rows = [activity()] if cursor >= first_time else [activity(
+            actual=f"{SERIES}_I_2", activity_id="second", published="2026-01-05T17:00:00Z",
+        )] if cursor >= second_time else []
+        return httpx.Response(200, json={"items": rows})
+
+    first = await discover(handler, conversation_urls=[CONVERSATION])
+    second = await discover(handler, continuation=first["next_continuation"])
+    last = await discover(handler, continuation=second["next_continuation"])
+    assert all(page["complete"] and page["warnings"] == [] for page in [first, second, last])
+    assert first["has_more"] and second["has_more"]
+    assert last["has_more"] is False and last["next_continuation"] is None
+    assert [row["id"] for page in [first, second, last] for row in page["items"]] == [ACTUAL, f"{SERIES}_I_2"]
+    assert visited[1:] == [first_time - 1, second_time - 1]
 
 
 @pytest.mark.asyncio
@@ -435,7 +652,7 @@ async def test_overall_timeout_returns_partial_status_and_limits_parallel_reques
 
     urls = [CONVERSATION.replace("11111111-1111-4111-8111-111111111111", f"{index:08x}-1111-4111-8111-111111111111") for index in range(20)]
     result = await asyncio.wait_for(discover(handler, conversation_urls=urls), timeout=1)
-    assert maximum == 4
+    assert maximum == 8
     assert active == 0
     assert result["complete"] is False
     assert any("time limit" in warning for warning in result["warnings"])
@@ -450,6 +667,8 @@ async def test_tool_only_marks_transcript_verified_after_exact_privilege_metadat
         return {"items": [{"id": ACTUAL}], "complete": True, "warnings": []}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/v1/meetings/{SERIES}":
+            return httpx.Response(403)
         assert request.url.path == mcp_server.RECORDING_PRIVILEGE_PATH
         assert request.url.params["meetingInstanceId"] == ACTUAL
         if privilege == "denied":
@@ -524,6 +743,44 @@ async def test_result_resume_keeps_unread_queued_spaces_and_the_next_catalog_pag
     assert [item["id"] for page in pages for item in page["items"]] == [f"{SERIES}_I_{index}" for index in range(7)]
     assert len(catalog_requests) == 2
     assert all(page["complete"] for page in pages)
+
+
+@pytest.mark.asyncio
+async def test_request_budget_yields_healthy_pages_without_losing_queued_or_catalog_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(spaces, "MAX_REQUESTS", 4)
+    urls = [CONVERSATION.replace("11111111-1111-4111-8111-111111111111", f"{index:08x}-1111-4111-8111-111111111111") for index in range(14)]
+    next_url = "https://conv-primary.wbx2.com/conversation/api/v1/conversations?cursor=next"
+    requests = 0
+    catalog_requests = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requests, catalog_requests
+        requests += 1
+        if request.url.path == "/u2c/api/v1/catalog":
+            return httpx.Response(200, json={"serviceLinks": {"conversation": "https://conv-primary.wbx2.com/conversation/api/v1"}})
+        if request.url.path.endswith("/conversations"):
+            catalog_requests += 1
+            selected = urls[7:] if request.url.params.get("cursor") else urls[:7]
+            return httpx.Response(200, json={"items": [{"url": url} for url in selected]},
+                                  headers={} if request.url.params.get("cursor") else {"Link": f'<{next_url}>; rel="next"'})
+        url = str(request.url).split("?")[0].removesuffix("/activities")
+        index = urls.index(url)
+        cursor = int(request.url.params["maxDate"])
+        return httpx.Response(200, json={"items": [activity(actual=f"{SERIES}_I_{index}", activity_id=f"event-{index}")] if cursor >= 1767636000000 else []})
+
+    pages = [await discover(handler)]
+    assert requests <= 4
+    while pages[-1]["has_more"]:
+        assert len(pages) < 20
+        requests = 0
+        pages.append(await discover(handler, continuation=pages[-1]["next_continuation"]))
+        assert requests <= 4
+    assert len(pages) > 1
+    assert all(page["complete"] and page["warnings"] == [] for page in pages)
+    ids = [row["id"] for page in pages for row in page["items"]]
+    assert len(ids) == len(set(ids)) == 14
+    assert set(ids) == {f"{SERIES}_I_{index}" for index in range(14)}
+    assert catalog_requests == 2
 
 
 @pytest.mark.asyncio
@@ -703,3 +960,272 @@ async def test_exclusion_output_bound_is_enforced_even_without_a_continuation(mo
 
     with pytest.raises(ValueError, match="bounded work limit"):
         await discover(handler, conversation_urls=[CONVERSATION])
+
+
+@pytest.mark.parametrize("workers", [4, 8])
+@pytest.mark.asyncio
+async def test_activity_parallelism_preserves_all_occurrences_across_multiple_waves(
+    monkeypatch: pytest.MonkeyPatch, workers: int,
+) -> None:
+    monkeypatch.setattr(spaces, "ACTIVITY_WORKERS", workers)
+    urls = [CONVERSATION.replace("11111111-1111-4111-8111-111111111111", f"{index:08x}-1111-4111-8111-111111111111") for index in range(20)]
+    active = 0
+    maximum = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal active, maximum
+        active += 1
+        maximum = max(maximum, active)
+        try:
+            await asyncio.sleep(0.001)
+            url = str(request.url).split("?")[0].removesuffix("/activities")
+            index = urls.index(url)
+            rows = [activity(actual=f"{SERIES}_I_{index}", activity_id=f"event-{index}")] if int(request.url.params["maxDate"]) >= 1767636000000 else []
+            return httpx.Response(200, json={"items": rows})
+        finally:
+            active -= 1
+
+    result = await discover(handler, conversation_urls=urls)
+    assert maximum == workers and active == 0
+    assert result["complete"] and not result["has_more"]
+    assert {item["id"] for item in result["items"]} == {f"{SERIES}_I_{index}" for index in range(20)}
+
+
+@pytest.mark.asyncio
+async def test_recap_metadata_enrichment_uses_eight_bounded_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    active = 0
+    maximum = 0
+    first_wave = asyncio.Event()
+
+    async def occurrences(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"items": [{"id": f"{SERIES}_I_{index}"} for index in range(12)], "complete": True, "warnings": []}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal active, maximum
+        if request.url.path == f"/v1/meetings/{SERIES}":
+            return httpx.Response(403)
+        assert request.url.path == mcp_server.RECORDING_PRIVILEGE_PATH
+        active += 1
+        maximum = max(maximum, active)
+        if active == 8:
+            first_wave.set()
+        try:
+            await first_wave.wait()
+            return httpx.Response(200, json={"privileges": []})
+        finally:
+            active -= 1
+
+    client_class = httpx.AsyncClient
+    monkeypatch.setattr(mcp_server.httpx, "AsyncClient", lambda **kwargs: client_class(transport=httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr(mcp_server, "_bearer_from_request", lambda: "Bearer example-user-token")
+    monkeypatch.setattr(mcp_server, "list_space_meeting_occurrences", occurrences)
+    registry = ToolRegistry()
+    mcp_server.register_tools(registry)
+    result = await asyncio.wait_for(registry.tools["webex_space_meeting_occurrences"](mcp_server.SpaceMeetingOccurrences(
+        from_iso=LOWER.isoformat(), to_iso=UPPER.isoformat(), site_url="primary.webex.com",
+    )), timeout=1)
+    assert maximum == 8 and active == 0
+    assert result["complete"] and len(result["items"]) == 12
+    assert all("transcriptVerified" not in row for row in result["items"])
+
+
+@pytest.mark.parametrize("failure", ["http", "timeout", "invalid-json", "invalid-shape"])
+@pytest.mark.parametrize("continuation", [None, "original-input-page"])
+@pytest.mark.asyncio
+async def test_failed_enrichment_preserves_discovery_and_successes_and_can_retry_the_same_page(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+    failure: str, continuation: str | None,
+) -> None:
+    recovered = False
+    inputs: list[str | None] = []
+    originals = [{"id": f"{SERIES}_I_{index}", "title": "Existing title", "hasSummary": True} for index in range(3)]
+    originals[1]["transcriptVerified"] = True
+
+    async def occurrences(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        inputs.append(kwargs["continuation"])
+        return {"items": [dict(item) for item in originals], "complete": True, "warnings": [],
+                "has_more": False, "next_continuation": None}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == mcp_server.RECORDING_PRIVILEGE_PATH
+        actual = request.url.params["meetingInstanceId"]
+        if not recovered and actual != originals[0]["id"]:
+            if failure == "http":
+                return httpx.Response(503, text="example-secret")
+            if failure == "timeout":
+                raise httpx.ReadTimeout("example-secret", request=request)
+            if failure == "invalid-json":
+                return httpx.Response(200, content=b"not json: example-secret")
+            return httpx.Response(200, json={"invalid": "example-secret"})
+        return httpx.Response(200, json={"privileges": [{
+            "meetingInstanceId": actual, "recordUUID": f"recording-{actual}",
+            "recordName": "Verified title", "transcriptURL": "https://media.webex.com/transcript.vtt?token=example-secret",
+        }]})
+
+    client_class = httpx.AsyncClient
+    monkeypatch.setattr(mcp_server.httpx, "AsyncClient", lambda **kwargs: client_class(transport=httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr(mcp_server, "_bearer_from_request", lambda: "Bearer example-user-token")
+    monkeypatch.setattr(mcp_server, "list_space_meeting_occurrences", occurrences)
+    registry = ToolRegistry()
+    mcp_server.register_tools(registry)
+    args = mcp_server.SpaceMeetingOccurrences(
+        from_iso=LOWER.isoformat(), to_iso=UPPER.isoformat(), site_url="primary.webex.com", continuation=continuation,
+    )
+    result = await registry.tools["webex_space_meeting_occurrences"](args)
+    assert result["complete"] is True and result["warnings"] == []
+    assert result["has_more"] is False and result["next_continuation"] is None
+    assert result["enrichment_complete"] is False
+    assert result["enrichment_warnings"] == ["Some meeting recording details could not be verified."]
+    assert result["items"][0] == {**originals[0], "title": "Verified title", "hasRecording": True, "transcriptVerified": True}
+    assert result["items"][1:] == originals[1:]
+    assert "example-secret" not in str(result) + caplog.text
+    assert "example-user-token" not in caplog.text
+    assert "Meeting recording metadata lookup failed" in caplog.text
+
+    recovered = True
+    retried = await registry.tools["webex_space_meeting_occurrences"](args)
+    assert inputs == [continuation, continuation]
+    assert retried["complete"] is True and retried["warnings"] == []
+    assert retried["enrichment_complete"] is True and retried["enrichment_warnings"] == []
+    assert [item["id"] for item in retried["items"]] == [item["id"] for item in originals]
+    assert all(item["hasSummary"] and item["hasRecording"] and item["transcriptVerified"] for item in retried["items"])
+
+
+@pytest.mark.parametrize("discovery_complete", [True, False])
+@pytest.mark.asyncio
+async def test_enrichment_deadline_keeps_discovery_state_and_known_content(
+    monkeypatch: pytest.MonkeyPatch, discovery_complete: bool,
+) -> None:
+    slow = f"{SERIES}_I_42"
+    blocked = asyncio.Event()
+    cancelled = asyncio.Event()
+    warnings = [] if discovery_complete else ["Discovery provider failed."]
+
+    async def occurrences(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"items": [{"id": ACTUAL, "title": "Existing title"},
+                          {"id": slow, "title": "Summary title", "hasSummary": True}],
+                "complete": discovery_complete, "warnings": list(warnings),
+                "has_more": True, "next_continuation": "next-discovery-page"}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == mcp_server.RECORDING_PRIVILEGE_PATH
+        if request.url.params["meetingInstanceId"] == slow:
+            try:
+                await blocked.wait()
+            finally:
+                cancelled.set()
+        return httpx.Response(200, json={"privileges": [{
+            "meetingInstanceId": ACTUAL, "recordUUID": "recording", "recordName": "Verified title",
+            "transcriptURL": "https://media.webex.com/transcript.vtt",
+        }]})
+
+    client_class = httpx.AsyncClient
+    original_timeout = asyncio.timeout
+    monkeypatch.setattr(mcp_server.asyncio, "timeout", lambda seconds: original_timeout(0.01))
+    monkeypatch.setattr(mcp_server.httpx, "AsyncClient", lambda **kwargs: client_class(transport=httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr(mcp_server, "_bearer_from_request", lambda: "Bearer example-user-token")
+    monkeypatch.setattr(mcp_server, "list_space_meeting_occurrences", occurrences)
+    registry = ToolRegistry()
+    mcp_server.register_tools(registry)
+    result = await registry.tools["webex_space_meeting_occurrences"](mcp_server.SpaceMeetingOccurrences(
+        from_iso=LOWER.isoformat(), to_iso=UPPER.isoformat(), site_url="primary.webex.com",
+    ))
+    assert cancelled.is_set()
+    assert result["complete"] is discovery_complete and result["warnings"] == warnings
+    assert result["has_more"] is True and result["next_continuation"] == "next-discovery-page"
+    assert result["enrichment_complete"] is False
+    assert result["enrichment_warnings"] == ["Some meeting metadata could not be verified before the time limit."]
+    assert result["items"] == [
+        {"id": ACTUAL, "title": "Verified title", "hasRecording": True, "transcriptVerified": True},
+        {"id": slow, "title": "Summary title", "hasSummary": True},
+    ]
+
+
+@pytest.mark.parametrize("metadata", ["valid", "denied", "different-series", "wrong-type", "blank", "malformed", "invalid-json", "timeout"])
+@pytest.mark.asyncio
+async def test_summary_only_recaps_recover_only_the_exact_parent_title(
+    monkeypatch: pytest.MonkeyPatch, metadata: str, caplog: pytest.LogCaptureFixture,
+) -> None:
+    original = {
+        "id": ACTUAL, "meetingSeriesId": SERIES, "meetingType": "meeting",
+        "start": "2026-01-05T17:00:00Z", "end": "2026-01-05T18:00:00Z",
+        "source": "space_activity", "state": "ended",
+    }
+    requests: list[str] = []
+
+    async def occurrences(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"items": [dict(original)], "complete": True, "warnings": []}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        assert request.headers["Authorization"] == "Bearer example-user-token"
+        if request.url.path == mcp_server.RECORDING_PRIVILEGE_PATH:
+            return httpx.Response(200, json={"privileges": []})
+        assert request.url.path == f"/v1/meetings/{SERIES}"
+        if metadata == "denied":
+            return httpx.Response(403)
+        if metadata == "invalid-json":
+            return httpx.Response(200, content=b"not json: example-secret")
+        if metadata == "timeout":
+            raise httpx.ReadTimeout("example-secret", request=request)
+        if metadata == "malformed":
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json={
+            "id": OTHER_SERIES if metadata == "different-series" else SERIES,
+            "meetingType": "meeting" if metadata == "wrong-type" else "meetingSeries",
+            "title": " " if metadata == "blank" else " Weekly forum ",
+            "start": "2026-01-12T17:00:00Z", "hasRecording": True,
+            "password": "example-secret", "hostKey": "example-secret",
+        })
+
+    client_class = httpx.AsyncClient
+    monkeypatch.setattr(mcp_server.httpx, "AsyncClient", lambda **kwargs: client_class(transport=httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr(mcp_server, "_bearer_from_request", lambda: "Bearer example-user-token")
+    monkeypatch.setattr(mcp_server, "list_space_meeting_occurrences", occurrences)
+    registry = ToolRegistry()
+    mcp_server.register_tools(registry)
+    result = await registry.tools["webex_space_meeting_occurrences"](mcp_server.SpaceMeetingOccurrences(
+        from_iso=LOWER.isoformat(), to_iso=UPPER.isoformat(), site_url="primary.webex.com",
+    ))
+    assert result["items"] == [{**original, **({"title": "Weekly forum"} if metadata == "valid" else {})}]
+    assert requests.count(f"/v1/meetings/{SERIES}") == 1
+    assert result["complete"] is True
+    assert "example-secret" not in str(result)
+    assert "example-secret" not in caplog.text
+    assert "example-user-token" not in caplog.text
+    if metadata not in {"valid", "blank"}:
+        assert SERIES in caplog.text
+        assert "Parent-series title lookup" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_parent_titles_are_reused_per_series_without_overwriting_recording_titles(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[str] = []
+
+    async def occurrences(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"items": [{"id": f"{SERIES}_I_{i}"} for i in range(4)], "complete": True, "warnings": []}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path == mcp_server.RECORDING_PRIVILEGE_PATH:
+            actual = request.url.params["meetingInstanceId"]
+            return httpx.Response(200, json={"privileges": [{
+                "meetingInstanceId": actual, "recordUUID": "recording", "recordName": "Original occurrence title",
+                "transcriptURL": "https://media.webex.com/transcript.vtt",
+            }] if actual.endswith("_0") else []})
+        assert request.url.path == f"/v1/meetings/{SERIES}"
+        return httpx.Response(200, json={"id": SERIES, "meetingType": "meetingSeries", "title": "Current series title"})
+
+    client_class = httpx.AsyncClient
+    monkeypatch.setattr(mcp_server.httpx, "AsyncClient", lambda **kwargs: client_class(transport=httpx.MockTransport(handler), **kwargs))
+    monkeypatch.setattr(mcp_server, "_bearer_from_request", lambda: "Bearer example-user-token")
+    monkeypatch.setattr(mcp_server, "list_space_meeting_occurrences", occurrences)
+    registry = ToolRegistry()
+    mcp_server.register_tools(registry)
+    result = await registry.tools["webex_space_meeting_occurrences"](mcp_server.SpaceMeetingOccurrences(
+        from_iso=LOWER.isoformat(), to_iso=UPPER.isoformat(), site_url="primary.webex.com",
+    ))
+    assert requests.count(f"/v1/meetings/{SERIES}") == 1
+    assert result["items"][0] == {"id": f"{SERIES}_I_0", "title": "Original occurrence title", "hasRecording": True, "transcriptVerified": True}
+    assert [row["title"] for row in result["items"][1:]] == ["Current series title"] * 3
+    assert all("hasRecording" not in row and "transcriptVerified" not in row for row in result["items"][1:])
