@@ -1,9 +1,10 @@
+import { deleteAllConversationRelationshipTuples } from '@/lib/rbac/openfga-owned-resources-reconcile';
 import { getCollection } from '@/lib/mongodb';
 import type { Conversation } from '@/types/mongodb';
 
 /**
  * Hard-delete one or more conversations and all associated data
- * (messages + Dynamic Agent checkpoint records).
+ * (authorization grants, sharing records, messages, and agent checkpoints).
  */
 export async function deleteConversationsPermanently(
   items: Pick<Conversation, '_id' | 'participants'>[]
@@ -12,8 +13,13 @@ export async function deleteConversationsPermanently(
 
   const ids = items.map((c) => c._id);
 
-  const conversations = await getCollection<Conversation>('conversations');
-  await conversations.deleteMany({ _id: { $in: ids } });
+  // Keep the owning records available for retry if grant or child-data cleanup fails.
+  for (const id of ids) {
+    await deleteAllConversationRelationshipTuples(id);
+  }
+
+  const sharingAccess = await getCollection('sharing_access');
+  await sharingAccess.deleteMany({ conversation_id: { $in: ids } });
 
   const messages = await getCollection('messages');
   await messages.deleteMany({ conversation_id: { $in: ids } });
@@ -28,4 +34,6 @@ export async function deleteConversationsPermanently(
     await checkpoints.deleteMany({ thread_id: { $in: agentIds } });
     await checkpointWrites.deleteMany({ thread_id: { $in: agentIds } });
   }
+  const conversations = await getCollection<Conversation>('conversations');
+  await conversations.deleteMany({ _id: { $in: ids } });
 }

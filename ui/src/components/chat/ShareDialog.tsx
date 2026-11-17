@@ -452,18 +452,7 @@ export function ShareDialog({
     const targetKey = target.email ? `user:${target.email}` : `team:${target.team_id}`;
     setPendingAccessAction(`remove:${targetKey}`);
     try {
-      const response = await fetch(`/api/chat/conversations/${conversationId}/share`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(target),
-      });
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
-        throw new Error(errorData?.error || errorData?.message || response.statusText || 'Failed to remove access');
-      }
-
-      const responseData = await response.json();
-      const updatedConversation = responseData.data;
+      const updatedConversation = await apiClient.revokeConversationShare(conversationId, target);
       if (target.email) {
         setSharedWith((prev) => prev.filter((email) => email !== target.email));
         setUserPermissions((prev) => {

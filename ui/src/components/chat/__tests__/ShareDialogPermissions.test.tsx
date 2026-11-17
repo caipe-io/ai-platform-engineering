@@ -1,4 +1,3 @@
-// assisted-by Codex Codex-sonnet-4-6
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 

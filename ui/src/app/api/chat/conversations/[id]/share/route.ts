@@ -13,7 +13,8 @@ withErrorHandler
 } from '@/lib/api-middleware';
 import { getCollection } from '@/lib/mongodb';
 import { requireConversationResourcePermission } from '@/lib/rbac/conversation-implicit-authz';
-import { writeOpenFgaTuples,type OpenFgaTupleKey } from '@/lib/rbac/openfga';
+import { reconcileTupleDiff } from '@/lib/authz';
+import type { OpenFgaTupleKey } from '@/lib/rbac/openfga';
 import {
 stableKeycloakSubject,
 type ShareableUserDocument,
@@ -116,7 +117,7 @@ async function writeUserConversationGrantTuples(
 ): Promise<void> {
   const diff = userConversationGrantDiff(conversationId, resolvedUsers, permission);
   if (diff.writes.length === 0 && diff.deletes.length === 0) return;
-  await writeOpenFgaTuples(diff);
+  await reconcileTupleDiff(diff);
 }
 
 function teamLookupFilter(teamRef: string): Record<string, unknown> {
@@ -142,7 +143,6 @@ async function resolveTeamShares(teamRefs: string[]): Promise<ResolvedTeamShare[
 
     const id = team._id !== undefined && team._id !== null ? String(team._id) : rawRef;
     const slug = typeof team.slug === 'string' ? team.slug.trim() : '';
-    // assisted-by Codex Codex-sonnet-4-6
     // Store canonical slugs for new team shares, while accepting legacy Mongo _id refs.
     const shareRef = slug || id;
 
@@ -205,18 +205,14 @@ function teamConversationGrantDiff(
   return { writes, deletes };
 }
 
-async function writeTeamConversationGrantTuplesBestEffort(
+async function writeTeamConversationGrantTuples(
   conversationId: string,
   resolvedTeams: ResolvedTeamShare[],
   permission: SharePermission,
 ): Promise<void> {
   const diff = teamConversationGrantDiff(conversationId, resolvedTeams, permission);
   if (diff.writes.length === 0 && diff.deletes.length === 0) return;
-  try {
-    await writeOpenFgaTuples(diff);
-  } catch (err) {
-    console.warn('[chat/share] Team conversation grant write failed (best-effort):', err);
-  }
+  await reconcileTupleDiff(diff);
 }
 
 // GET /api/chat/conversations/[id]/share
@@ -268,7 +264,6 @@ export const POST = withErrorHandler(async (
       throw new ApiError('Invalid conversation ID format', 400);
     }
 
-    // assisted-by Codex Codex-sonnet-4-6
     // Public conversation sharing is retired; keep only a cleanup path for legacy state.
     if (body.is_public === true || body.public_permission !== undefined) {
       throw new ApiError(
@@ -335,7 +330,7 @@ export const POST = withErrorHandler(async (
       if (grantDiff.writes.length > 0 || grantDiff.deletes.length > 0) {
         // Authorization is the real access gate. Do not persist a successful
         // share unless every requested recipient has a usable OpenFGA grant.
-        await writeOpenFgaTuples(grantDiff);
+        await reconcileTupleDiff(grantDiff);
       }
     }
 
@@ -386,7 +381,7 @@ export const POST = withErrorHandler(async (
         permission,
       );
 
-      await writeTeamConversationGrantTuplesBestEffort(conversationId, resolvedTeams, permission);
+      await writeTeamConversationGrantTuples(conversationId, resolvedTeams, permission);
     }
 
     if (disablesPublicSharing) {
@@ -467,11 +462,11 @@ export const PATCH = withErrorHandler(async (
         resolvedTeams,
         permission,
       );
+      await writeTeamConversationGrantTuples(conversationId, resolvedTeams, permission);
       await conversations.updateOne(
         { _id: conversationId },
         { $set: { 'sharing.team_permissions': teamPerms } }
       );
-      await writeTeamConversationGrantTuplesBestEffort(conversationId, resolvedTeams, permission);
     }
 
     const updated = await conversations.findOne({ _id: conversationId });
@@ -489,7 +484,7 @@ export const DELETE = withErrorHandler(async (
     const conversationId = params.id;
     const body = await request.json();
 
-    if (!validateUUID(conversationId)) {
+    if (!validateConversationId(conversationId)) {
       throw new ApiError('Invalid conversation ID format', 400);
     }
 
@@ -518,7 +513,7 @@ export const DELETE = withErrorHandler(async (
       const resolvedUsers = await lookupUserShares([email]);
       if (resolvedUsers.length > 0) {
         const tupleDiff = userConversationGrantDiff(conversationId, resolvedUsers, 'comment');
-        await writeOpenFgaTuples({
+        await reconcileTupleDiff({
           writes: [],
           deletes: tupleDiff.writes,
         });
@@ -563,7 +558,7 @@ export const DELETE = withErrorHandler(async (
           { user: tupleUser, relation: 'writer', object },
         ];
       });
-      await writeOpenFgaTuples({ writes: [], deletes: revokeTuples });
+      await reconcileTupleDiff({ writes: [], deletes: revokeTuples });
 
       const nextSharedWithTeams = (conversation.sharing?.shared_with_teams || [])
         .filter((ref) => !aliases.has(String(ref).trim()));

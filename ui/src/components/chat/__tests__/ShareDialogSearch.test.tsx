@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
+jest.mock('next/navigation', () => ({ useRouter: () => ({ push: jest.fn() }) }));
+
 const mockUpdateConversationSharing = jest.fn();
 const mockSearchUsers = jest.fn();
+const mockRevokeConversationShare = jest.fn();
 
 jest.mock('@/store/chat-store', () => ({
   useChatStore: (selector: unknown) => selector({
@@ -14,6 +17,7 @@ jest.mock('@/lib/api-client', () => ({
   apiClient: {
     searchUsers: (...args: unknown[]) => mockSearchUsers(...args),
     shareConversation: jest.fn(),
+    revokeConversationShare: (...args: unknown[]) => mockRevokeConversationShare(...args),
   },
 }));
 
@@ -204,15 +208,10 @@ describe('ShareDialog access management', () => {
     });
     await waitFor(() => expect(permission).toHaveValue('comment'));
 
+    mockRevokeConversationShare.mockResolvedValue({ sharing: { ...initialSharing, shared_with: [] } });
     fireEvent.click(screen.getByRole('button', { name: `Remove access for ${recipient}` }));
     await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith(
-        '/api/chat/conversations/conversation-1/share',
-        expect.objectContaining({
-          method: 'DELETE',
-          body: JSON.stringify({ email: recipient }),
-        }),
-      );
+      expect(mockRevokeConversationShare).toHaveBeenCalledWith('conversation-1', { email: recipient });
       expect(screen.queryByText(recipient)).not.toBeInTheDocument();
     });
   });

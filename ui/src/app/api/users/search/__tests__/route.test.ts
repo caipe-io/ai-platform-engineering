@@ -33,8 +33,8 @@ describe("GET /api/users/search", () => {
   it("queries only users with a stable Keycloak subject", async () => {
     const toArray = jest.fn().mockResolvedValue([
       {
-        email: "shridhsh@cisco.com",
-        name: "Sridhar Shah",
+        email: "test-user@example.com",
+        name: "Test User",
         avatar_url: "avatar.png",
         keycloak_sub: "keycloak-user-1",
       },
@@ -44,7 +44,7 @@ describe("GET /api/users/search", () => {
     mockGetCollection.mockResolvedValue({ find });
 
     const { GET } = await import("../route");
-    const response = await GET(new NextRequest("http://localhost/api/users/search?q=Shri"));
+    const response = await GET(new NextRequest("http://localhost/api/users/search?q=Test"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -52,8 +52,8 @@ describe("GET /api/users/search", () => {
       $and: [
         {
           $or: [
-            { email: { $regex: "Shri", $options: "i" } },
-            { name: { $regex: "Shri", $options: "i" } },
+            { email: { $regex: "Test", $options: "i" } },
+            { name: { $regex: "Test", $options: "i" } },
           ],
         },
         {
@@ -67,9 +67,10 @@ describe("GET /api/users/search", () => {
     expect(limit).toHaveBeenCalledWith(10);
     expect(body.data).toEqual([
       {
-        email: "shridhsh@cisco.com",
-        name: "Sridhar Shah",
+        email: "test-user@example.com",
+        name: "Test User",
         avatar_url: "avatar.png",
+        subject: "keycloak-user-1",
       },
     ]);
   });
@@ -83,8 +84,8 @@ describe("GET /api/users/search", () => {
     mockGetCollection.mockResolvedValue({ find });
 
     const { GET } = await import("../route");
-    await GET(new NextRequest("http://localhost/api/users/search?q=shri.*"));
+    await GET(new NextRequest("http://localhost/api/users/search?q=test.*"));
 
-    expect(find.mock.calls[0][0].$and[0].$or[0].email.$regex).toBe("shri\\.\\*");
+    expect(find.mock.calls[0][0].$and[0].$or[0].email.$regex).toBe("test\\.\\*");
   });
 });

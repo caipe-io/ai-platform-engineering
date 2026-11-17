@@ -4,6 +4,11 @@
 
 import { NextRequest } from "next/server";
 
+jest.mock("@/lib/authz", () => ({
+  ...jest.requireActual("@/lib/authz"),
+  reconcileTupleDiff: jest.fn().mockResolvedValue({ enabled: true, writes: 1, deletes: 0 }),
+}));
+
 const mockGetCollection = jest.fn();
 const mockGetUserTeamIds = jest.fn();
 const mockRequireOwnership = jest.fn();
