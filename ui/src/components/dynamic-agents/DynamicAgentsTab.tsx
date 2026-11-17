@@ -272,7 +272,7 @@ export function DynamicAgentsTab({
   };
 
   const handleStartChat = async (agent: DynamicAgentConfigWithPermissions) => {
-    if (!agent.enabled || startingChatAgentId) return;
+    if (!agent.enabled || agent.execution_readiness?.ready === false || startingChatAgentId) return;
     setStartingChatAgentId(agent._id);
     clearRowActionError(agent._id);
     try {
@@ -586,8 +586,8 @@ export function DynamicAgentsTab({
                     className="h-8 w-8"
                     onClick={() => void handleStartChat(agent)}
                     aria-label={`Chat with ${agent.name}`}
-                    title={agent.enabled ? `Chat with ${agent.name}` : "This agent is disabled"}
-                    disabled={!agent.enabled || startingChatAgentId !== null}
+                    title={agent.execution_readiness?.ready === false ? agent.execution_readiness.message : agent.enabled ? `Chat with ${agent.name}` : "This agent is disabled"}
+                    disabled={!agent.enabled || agent.execution_readiness?.ready === false || startingChatAgentId !== null}
                   >
                     {startingChatAgentId === agent._id ? (
                       <Loader2 className="h-4 w-4 animate-spin" />

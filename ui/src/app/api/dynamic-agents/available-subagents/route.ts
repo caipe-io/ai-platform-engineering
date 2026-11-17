@@ -14,6 +14,8 @@ import { filterResourcesByPermission,requireAgentPermission } from "@/lib/rbac/r
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { NextRequest } from "next/server";
 
+import { getHarnessToolReadiness } from "@/lib/harness-tool-readiness";
+
 const COLLECTION_NAME = "dynamic_agents";
 
 /**
@@ -61,7 +63,12 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
         // App-owned assistants require their app's execution path; they cannot
         // be reconstructed as local graphs or dispatched as Harness children.
         if (findAgenticAppAssistantStream(String(agent._id))) return false;
-      } catch { return false; } // Unavailable/ambiguous app bindings fail closed.
+      } catch (error) {
+        const category = error instanceof Error && error.message === "Assistant app is unavailable" ? "app_unavailable"
+          : error instanceof Error && error.message === "Multiple installed apps claim the assistant" ? "ambiguous_binding" : "routing_snapshot_error";
+        console.warn("[available-subagents] App binding excluded", { agentId: String(agent._id), category });
+        return false;
+      } // Unavailable/ambiguous app bindings fail closed.
       return true;
     });
 
@@ -71,9 +78,11 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       id: (agent) => String(agent._id),
     });
 
+    const readiness = await getHarnessToolReadiness(usableCandidates);
     const available = usableCandidates
       .map((agent) => ({
         id: agent._id,
+        ...(readiness.has(agent._id) && { execution_readiness: readiness.get(agent._id) }),
         execution_harness_id: agent.execution_harness_id || "dynamic_agents",
         name: agent.name,
         description: agent.description,

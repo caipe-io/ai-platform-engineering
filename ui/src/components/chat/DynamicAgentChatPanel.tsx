@@ -22,7 +22,7 @@ import { useAgentTimeline } from "@/hooks/useDynamicAgentTimeline";
 import { apiClient,APIClientError } from "@/lib/api-client";
 import { authErrorToastTitle,type AuthError } from "@/lib/auth-error";
 import { getDeterministicAgentThemeId } from "@/lib/agent-theme";
-import { interruptedAuthReason,interruptedTurnFallbackText } from "@/lib/chat-interrupt";
+import { interruptedAuthReason,interruptedTurnFallbackText,isAgentReadinessError } from "@/lib/chat-interrupt";
 import { getConfig } from "@/lib/config";
 import { captureChatFeedbackContext } from "@/lib/chat-feedback";
 import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
@@ -1610,6 +1610,7 @@ export function ChatPanel({
       updateMessage(convId!, assistantMsgId, {
         turnStatus: "interrupted" as TurnStatus,
         ...(authInterruptedReason ? { error: authInterruptedReason } : {}),
+        ...(isAgentReadinessError(error) ? { error: "HARNESS_AGENT_NOT_READY", isFinal: true } : {}),
       });
       setConversationStreaming(convId, null);
     }
@@ -2603,7 +2604,12 @@ export function ChatPanel({
 
                       // Queued user bubbles share one turnId and produce one response.
                       // Regenerate the whole batch; older messages may lack that binding.
+                      const turnResponse = msg.role === "assistant" ? msg
+                        : (msg.turnId ? arr.findLast(message => message.role === "assistant" && message.turnId === msg.turnId) : undefined)
+                          ?? (arr[index + 1]?.role === "assistant" ? arr[index + 1] : undefined);
+                      const configurationBlockedTurn = turnResponse?.error === "HARNESS_AGENT_NOT_READY";
                       const canRetryMessage = !panelReadOnly &&
+                        !configurationBlockedTurn &&
                         !isAutonomousHistory &&
                         !isThisConversationStreaming &&
                         !isRemoteResponse &&
@@ -3424,6 +3430,7 @@ const ChatMessage = React.memo(function ChatMessage({
   autonomousFollowUp,
 }: ChatMessageProps) {
   const isUser = message.role === "user";
+  const configurationBlocked = message.error === "HARNESS_AGENT_NOT_READY";
   const [isHovered, setIsHovered] = useState(false);
   const displayContent = message.content;
 
@@ -3686,9 +3693,10 @@ const ChatMessage = React.memo(function ChatMessage({
                   <>
                     <Activity className="h-4 w-4 shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">Response was interrupted</p>
+                      <p className="text-sm font-medium">{configurationBlocked ? "Agent configuration needs attention" : "Response was interrupted"}</p>
+                      {configurationBlocked && agentId && <a className="text-sm underline" href={`/dynamic-agents?tab=agents&agent=${encodeURIComponent(agentId)}`}>Open agent settings</a>}
                     </div>
-                    {onRetry && (
+                    {onRetry && !configurationBlocked && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -3739,7 +3747,7 @@ const ChatMessage = React.memo(function ChatMessage({
                 animate={{ opacity: isHovered ? 1 : 0.8 }}
                 className="flex items-center gap-1 mt-2"
               >
-                {onRetry && (
+                {onRetry && !configurationBlocked && (
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>

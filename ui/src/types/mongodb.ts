@@ -177,6 +177,7 @@ export interface Message {
     kind?: string;
     execution_context_id?: string;
     parent_run_id?: string;
+    execution_error_code?: "HARNESS_AGENT_NOT_READY";
     turn_status?: string;
     is_interrupted?: boolean;
     // Integration linking metadata supports scoped stats and source deep links.
@@ -447,6 +448,7 @@ export interface AddMessageRequest {
     // same label. Ignored when agent_name is provided directly.
     agent_id?: string;
     is_final?: boolean;
+    execution_error_code?: "HARNESS_AGENT_NOT_READY";
     turn_status?: string; // "done" | "interrupted" | "waiting_for_input" | "cancelled"
     is_interrupted?: boolean;
     task_id?: string;

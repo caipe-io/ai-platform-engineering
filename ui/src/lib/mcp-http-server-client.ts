@@ -140,10 +140,11 @@ export async function revokeDiagnosticAgentAccess(
   }
 }
 
-async function readJsonOrSse(response: Response): Promise<unknown> {
+async function readJsonOrSse(response: Response, allowEmpty = false): Promise<unknown> {
   const contentType = response.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) return response.json();
   const text = await response.text();
+  if (allowEmpty && !text.trim()) return null;
+  if (contentType.includes("application/json")) return JSON.parse(text);
   const sseJson = contentType.includes("text/event-stream") ? parseSseJson(text) : null;
   if (sseJson) return sseJson;
   try {
@@ -159,13 +160,14 @@ async function mcpJsonRpc(input: {
   headers: Record<string, string>;
   sessionId?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<{ ok: boolean; status: number; payload: unknown; sessionId?: string }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? 15_000);
   try {
     const response = await fetch(input.endpoint, {
       method: "POST",
-      signal: controller.signal,
+      signal: input.signal ? AbortSignal.any([controller.signal, input.signal]) : controller.signal,
       headers: {
         accept: "application/json, text/event-stream;q=0.9, */*;q=0.1",
         "content-type": "application/json",
@@ -180,7 +182,7 @@ async function mcpJsonRpc(input: {
     return {
       ok: response.ok,
       status: response.status,
-      payload: await readJsonOrSse(response),
+      payload: await readJsonOrSse(response, response.ok && typeof input.payload.method === "string" && input.payload.method.startsWith("notifications/")),
       sessionId: response.headers.get("mcp-session-id") ?? input.sessionId,
     };
   } finally {
@@ -268,6 +270,7 @@ export async function listHttpMcpTools(input: {
   server: MCPServerConfig & { endpoint: string };
   serverId: string;
   agentId?: string;
+  signal?: AbortSignal;
 }): Promise<{ tools: MCPToolInfo[]; sessionId?: string }> {
   const viaAgentGateway = isAgentGatewayEndpoint(input.server);
   const diagnosticAgent = diagnosticAgentId(input.serverId, input.session);
@@ -285,6 +288,32 @@ export async function listHttpMcpTools(input: {
       agentId: input.agentId,
     });
 
+    async function collectPages(first: Awaited<ReturnType<typeof mcpJsonRpc>>, initialTools: MCPToolInfo[]): Promise<{ tools: MCPToolInfo[]; sessionId?: string }> {
+      const tools = [...initialTools];
+      const cursors = new Set<string>();
+      let page = first;
+      while (true) {
+        const payload = page.payload as { result?: { nextCursor?: unknown }; nextCursor?: unknown } | null;
+        const cursor = payload?.result?.nextCursor ?? payload?.nextCursor;
+        if (cursor === undefined || cursor === null || cursor === "") return { tools, sessionId: page.sessionId };
+        // Reject looping/unbounded catalogs instead of returning a partial list.
+        if (typeof cursor !== "string" || cursors.has(cursor) || cursors.size >= 99) {
+          throw new ApiError("MCP tools/list pagination is invalid or exceeds 100 pages", 502, "MCP_LIST_INVALID");
+        }
+        cursors.add(cursor);
+        page = await mcpJsonRpc({
+          endpoint: input.server.endpoint, headers, sessionId: page.sessionId,
+          payload: { jsonrpc: "2.0", id: `tools-list-${Date.now()}`, method: "tools/list", params: { cursor } },
+          timeoutMs: 5_000, signal: input.signal,
+        });
+        rejectMcpAuthorization(page.status);
+        if (!page.ok) throw new ApiError(`MCP tools/list failed with HTTP ${page.status}`, 502, "MCP_LIST_FAILED");
+        const nextTools = extractTools(page.payload);
+        if (!nextTools) throw new ApiError("MCP tools/list returned an unexpected payload", 502, "MCP_LIST_INVALID");
+        tools.push(...nextTools);
+      }
+    }
+
     const first = await mcpJsonRpc({
       endpoint: input.server.endpoint,
       headers,
@@ -295,11 +324,12 @@ export async function listHttpMcpTools(input: {
         params: {},
       },
       timeoutMs: 5_000,
+      signal: input.signal,
     });
     rejectMcpAuthorization(first.status);
     if (first.ok) {
       const tools = extractTools(first.payload);
-      if (tools) return { tools, sessionId: first.sessionId };
+      if (tools) return await collectPages(first, tools);
     }
 
     const initialized = await mcpJsonRpc({
@@ -316,10 +346,21 @@ export async function listHttpMcpTools(input: {
         },
       },
       timeoutMs: 5_000,
+      signal: input.signal,
     });
     rejectMcpAuthorization(initialized.status);
-    if (!initialized.ok || !initialized.sessionId) {
+    if (!initialized.ok || !initialized.sessionId || (initialized.payload as { error?: unknown } | null)?.error) {
       throw new ApiError(`MCP initialize failed with HTTP ${initialized.status}`, 502, "MCP_INIT_FAILED");
+    }
+
+    const ready = await mcpJsonRpc({
+      endpoint: input.server.endpoint, headers, sessionId: initialized.sessionId,
+      payload: { jsonrpc: "2.0", method: "notifications/initialized" },
+      timeoutMs: 5_000, signal: input.signal,
+    });
+    rejectMcpAuthorization(ready.status);
+    if (!ready.ok || (ready.payload as { error?: unknown } | null)?.error) {
+      throw new ApiError(`MCP initialized notification failed with HTTP ${ready.status}`, 502, "MCP_INIT_FAILED");
     }
 
     const listed = await mcpJsonRpc({
@@ -333,6 +374,7 @@ export async function listHttpMcpTools(input: {
         params: {},
       },
       timeoutMs: 5_000,
+      signal: input.signal,
     });
     rejectMcpAuthorization(listed.status);
     if (!listed.ok) {
@@ -342,7 +384,7 @@ export async function listHttpMcpTools(input: {
     if (!tools) {
       throw new ApiError("MCP tools/list returned an unexpected payload", 502, "MCP_LIST_INVALID");
     }
-    return { tools, sessionId: initialized.sessionId };
+    return await collectPages(listed, tools);
   } finally {
     await revokeDiagnosticAgentAccess(diagnosticTuples, "mcp-http-server-client");
   }

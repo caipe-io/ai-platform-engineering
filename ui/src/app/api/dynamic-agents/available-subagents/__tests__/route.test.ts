@@ -1,6 +1,7 @@
 /** @jest-environment node */
 import { NextRequest } from "next/server";
 
+jest.mock("@/lib/harness-tool-readiness", () => ({ getHarnessToolReadiness: async () => new Map() }));
 const mockAuth = jest.fn();
 const mockCollection = jest.fn();
 const mockPermission = jest.fn();
@@ -66,4 +67,21 @@ it("requires authentication before loading any candidates", async () => {
   mockAuth.mockRejectedValue(new Error("Unauthorized"));
   await expect(GET(new NextRequest("https://example.test/api/dynamic-agents/available-subagents?create=true"))).rejects.toThrow("Unauthorized");
   expect(mockCollection).not.toHaveBeenCalled();
+});
+
+it.each([
+  ["Assistant app is unavailable", "app_unavailable"],
+  ["Multiple installed apps claim the assistant", "ambiguous_binding"],
+  ["private snapshot credential detail", "routing_snapshot_error"],
+])("excludes app-binding failures with safe diagnostics (%s)", async (message, category) => {
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    const items = [{ _id: "broken", name: "Broken" }, { _id: "available", name: "Available" }];
+    mockCollection.mockResolvedValue({ find: () => ({ toArray: async () => items }) });
+    mockAppStream.mockImplementation(id => { if (id === "broken") throw new Error(message); return null; });
+    const result = await GET(new NextRequest("https://example.test/api/dynamic-agents/available-subagents?create=true"));
+    expect((await result.json()).data.agents.map((agent: { id: string }) => agent.id)).toEqual(["available"]);
+    expect(warn).toHaveBeenCalledWith("[available-subagents] App binding excluded", { agentId: "broken", category });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("private snapshot credential detail");
+  } finally { warn.mockRestore(); }
 });

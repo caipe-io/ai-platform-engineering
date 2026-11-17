@@ -765,3 +765,28 @@ describe("retry is unavailable when it would be unsafe", () => {
     expectNoRetry();
   });
 });
+
+it("shows a configuration action instead of Retry for a rejected admission", () => {
+  setConversation([message("user", "user", "what is your harness?"), message("assistant", "assistant", "MCP server disabled. Nothing was executed.", { isFinal: true, turnStatus: "interrupted", error: "HARNESS_AGENT_NOT_READY" })]);
+  render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+  expect(screen.getByText("Agent configuration needs attention")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open agent settings" })).toHaveAttribute("href", "/dynamic-agents?tab=agents&agent=example-agent");
+  expect(screen.queryByRole("button", { name: "Retry", exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Regenerate response" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Retry this prompt" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Response was interrupted")).not.toBeInTheDocument();
+});
+
+it("hides retry for every user bubble in a rejected batch while retaining other turns", () => {
+  setConversation([
+    message("healthy-user", "user", "Earlier request", { turnId: "healthy-turn" }),
+    message("healthy-answer", "assistant", "Completed response", { turnId: "healthy-turn", isFinal: true }),
+    message("blocked-user-one", "user", "First queued prompt", { turnId: "blocked-turn" }),
+    message("blocked-user-two", "user", "Second queued prompt", { turnId: "blocked-turn" }),
+    message("blocked-answer", "assistant", "MCP connection needs repair", { turnId: "blocked-turn", isFinal: true, turnStatus: "interrupted", error: "HARNESS_AGENT_NOT_READY" }),
+  ]);
+  render(<ChatPanel agentId="example-agent" conversationId="chat-1" />);
+  expect(screen.getAllByRole("button", { name: "Retry this prompt" })).toHaveLength(1);
+  expect(screen.getByRole("link", { name: "Open agent settings" })).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "Regenerate response" })).toHaveLength(1);
+});

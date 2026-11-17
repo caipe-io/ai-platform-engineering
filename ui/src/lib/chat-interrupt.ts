@@ -30,3 +30,8 @@ export function interruptedAuthReason(error: unknown): AuthFailureReason | undef
   }
   return undefined;
 }
+
+/** A rejected admission is not a broken stream and cannot heal by retrying. */
+export function isAgentReadinessError(error: unknown): boolean {
+  return (error instanceof StreamError || error instanceof APIClientError) && error.code === "HARNESS_AGENT_NOT_READY";
+}

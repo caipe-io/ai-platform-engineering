@@ -2664,3 +2664,15 @@ describe('chat-store', () => {
   });
 
 });
+
+it("persists and reloads the configuration block without losing its recovery action", async () => {
+  const conv = makeConversation({ id: "readiness-chat", agent_id: "example" });
+  conv.messages = [makeMessage({ id: "readiness-message", role: "assistant", content: "Nothing was executed.", isFinal: true, turnStatus: "interrupted", error: "HARNESS_AGENT_NOT_READY" })];
+  useChatStore.setState({ conversations: [conv], activeConversationId: conv.id, streamingConversations: new Map() });
+  await useChatStore.getState().saveMessagesToServer(conv.id);
+  expect(mockApiClient.addMessage).toHaveBeenCalledWith(conv.id, expect.objectContaining({ metadata: expect.objectContaining({ execution_error_code: "HARNESS_AGENT_NOT_READY" }) }));
+  mockApiClient.getMessages.mockResolvedValueOnce({ items: [{ _id: "saved", message_id: "readiness-message", conversation_id: conv.id, role: "assistant", content: "Nothing was executed.", created_at: new Date(), metadata: { is_final: true, turn_status: "interrupted", execution_error_code: "HARNESS_AGENT_NOT_READY" } }], total: 1, page: 1, page_size: 100, has_more: false } as never);
+  useChatStore.setState({ conversations: [{ ...conv, messages: [] }], loadingConversations: new Set() } as never);
+  await useChatStore.getState().loadMessagesFromServer(conv.id, { force: true });
+  expect(useChatStore.getState().getActiveConversation()?.messages[0].error).toBe("HARNESS_AGENT_NOT_READY");
+});

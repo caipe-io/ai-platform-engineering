@@ -20,7 +20,7 @@ export function ConfiguredAcpAgentCard({ agent }: { agent: AvailableSubagent }) 
   const pending = React.useRef(false);
   const [error, setError] = React.useState<string | null>(null);
   async function chat() {
-    if (pending.current) return;
+    if (pending.current || agent.execution_readiness?.ready === false) return;
     pending.current = true;
     setStarting(true);
     setError(null);
@@ -39,9 +39,10 @@ export function ConfiguredAcpAgentCard({ agent }: { agent: AvailableSubagent }) 
     {agent.description && <p className="text-xs text-muted-foreground">{agent.description}</p>}
     <p className="text-xs text-muted-foreground">Uses its saved operator profile and conversation session. Add it in Agent Builder under Subagents.</p>
     <div className="flex gap-2">
-      <Button type="button" size="sm" disabled={starting} onClick={() => void chat()} aria-label={`Chat with ${agent.name}`}>{starting ? "Starting…" : "Chat"}</Button>
+      <Button type="button" size="sm" disabled={starting || agent.execution_readiness?.ready === false} onClick={() => void chat()} aria-label={`Chat with ${agent.name}`}>{starting ? "Starting…" : "Chat"}</Button>
       <Button type="button" size="sm" variant="outline" asChild><Link href={`/dynamic-agents?tab=agents&agent=${encodeURIComponent(agent.id)}`}>Open agent</Link></Button>
     </div>
+    {agent.execution_readiness?.ready === false && <p role="status" className="text-sm text-amber-600">Needs attention: {agent.execution_readiness.message}</p>}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
   </article>;
 }
