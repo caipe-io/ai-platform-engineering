@@ -236,6 +236,8 @@ export async function createModelConnection(
   );
   const existing = await connections.findOne({ _id: id });
   if (existing) {
+    if (existing.owner_subject === subject && existing.state === "failed")
+      throw new ApiError("The previous operation failed; retry with a new operation", 409, "MODEL_CONNECTION_OPERATION_FAILED");
     if (existing.owner_subject !== subject || existing.state !== "ready")
       throw new ApiError(
         "Connection operation is already in progress; retry with a new operation",
@@ -345,6 +347,15 @@ export async function createModelConnection(
       throw new ApiError("Connection could not be published", 409);
     return { connection: { ...connection, state: "ready" as const }, models };
   } catch (error) {
+    // Publication may have committed even when its acknowledgement was lost.
+    // Confirm that the whole group is unavailable before destroying any resource.
+    try {
+      const fenced = await connections.updateOne({ _id: id }, { $set: { state: "failed" } });
+      if (fenced.matchedCount !== 1) throw new Error("Connection recovery fence missing");
+    } catch {
+      console.error("Model connection publication outcome needs repair", { connection_id: id });
+      throw new ApiError("The publication outcome is uncertain. Retry this operation before creating another connection.", 503, "MODEL_CONNECTION_RECOVERY_PENDING");
+    }
     // Roll back only resources created by this operation; never rotate/delete reused credentials.
     const cleanup = await Promise.allSettled([
       modelCollection.deleteMany({ connection_id: id }),
@@ -355,19 +366,18 @@ export async function createModelConnection(
         secretService!.deleteSecret({ session: actor.session, secretId }),
       ),
     ]);
-    if (cleanup.every((entry) => entry.status === "fulfilled"))
-      await connections.deleteOne({ _id: id, state: "pending" });
-    else {
-      await connections.updateOne({ _id: id }, { $set: { state: "failed" } });
-      console.error("Model connection rollback needs repair", {
-        connection_id: id,
-      });
+    let cleanupComplete = cleanup.every((entry) => entry.status === "fulfilled");
+    if (cleanupComplete) {
+      try { await connections.deleteOne({ _id: id, state: "failed" }); }
+      catch { cleanupComplete = false; }
     }
+    if (!cleanupComplete) console.error("Model connection rollback needs repair", { connection_id: id });
     // Provider values can be present in upstream errors; never return/log those errors to the browser.
-    if (error instanceof ApiError) throw error;
+    if (error instanceof ApiError) throw new ApiError(error.message, error.statusCode, "MODEL_CONNECTION_OPERATION_FAILED");
     throw new ApiError(
       "The connection could not be created. Existing credentials were preserved; retry the operation.",
       500,
+      "MODEL_CONNECTION_OPERATION_FAILED",
     );
   }
 }

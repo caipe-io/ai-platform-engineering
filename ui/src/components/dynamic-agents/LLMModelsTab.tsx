@@ -246,7 +246,7 @@ function LLMModelEditor({
 
         <ModelConnectionTest
           request={
-            model
+            model && (connectionId || provider === model.provider)
               ? { model_id: model._id }
               : connectionId
                 ? { connection_id: connectionId, upstream_model_id: modelId }
@@ -528,7 +528,7 @@ export function LLMModelsTab({
           </Button>
         </div>
       </WorkspacePageActions>
-      <Card className="rounded-none border-0 bg-transparent shadow-none">
+      <Card data-tour="model-catalog" className="rounded-none border-0 bg-transparent shadow-none">
         <CardContent className="px-0 pt-0">
           {loading ? (
             <div className="flex items-center justify-center py-12">

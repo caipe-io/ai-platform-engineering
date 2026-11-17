@@ -1,6 +1,12 @@
 import { providerBindingsWithLegacySecrets } from "../llm-provider-credentials";
 
 describe("legacy provider references", () => {
+  it("does not invent deployment choices and preserves explicitly saved empty bindings", () => {
+    expect(providerBindingsWithLegacySecrets({}, [])).toEqual({});
+    expect(providerBindingsWithLegacySecrets({ "aws-bedrock": {} }, [
+      { id: "legacy", name: "llm:aws-bedrock:region", type: "custom" },
+    ])).toEqual({ "aws-bedrock": {} });
+  });
   it("uses a unique named secret without copying its value", () => {
     expect(
       providerBindingsWithLegacySecrets({}, [
@@ -13,7 +19,7 @@ describe("legacy provider references", () => {
       { id: "primary", name: "llm:openai:api_key", type: "api_key" },
       { id: "secondary", name: "llm:openai:api_key", type: "api_key" },
     ];
-    expect(providerBindingsWithLegacySecrets({}, secrets).openai).toEqual({});
+    expect(providerBindingsWithLegacySecrets({}, secrets).openai).toBeUndefined();
     expect(
       providerBindingsWithLegacySecrets(
         { openai: { api_key: "chosen" } },

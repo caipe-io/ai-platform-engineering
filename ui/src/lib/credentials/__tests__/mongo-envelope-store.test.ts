@@ -262,3 +262,27 @@ describe("MongoEnvelopeCredentialStore", () => {
     await expect(store.getMaskedPreview("secret-1")).resolves.toBe("gith...alue");
   });
 });
+
+
+it("changes the runtime revision after a payload rotation even when metadata acknowledgement fails", async () => {
+  const { SecretService } = await import("../secret-service");
+  const payloadCollection = new MemoryPayloadCollection();
+  const store = new MongoEnvelopeCredentialStore({ payloadCollection, keyWrapper: createDevLocalKeyWrapper({ masterKey: "example-test-wrapping-key", nodeEnv: "test" }) });
+  let reference: import("../secret-service").SecretRefDocument | null = null;
+  const refs = {
+    insertOne: async (doc: import("../secret-service").SecretRefDocument) => { reference = doc; },
+    findOne: async () => reference,
+    find: () => ({ sort: () => ({ toArray: async () => reference ? [reference] : [] }) }),
+    updateOne: jest.fn(async () => { throw new Error("metadata unavailable"); }),
+    deleteOne: async () => ({ deletedCount: 0 }),
+  };
+  const service = new SecretService({ secretRefsCollection: refs, payloadStore: store, authorize: async () => {}, idGenerator: () => "example-secret", now: () => new Date("2026-01-01") });
+  const session = { sub: "test-user" };
+  await service.createSecret({ session, owner: { type: "user", id: "test-user" }, name: "Example", type: "api_key", plaintext: "first-private-value" });
+  const first = await service.getSecretRevisionForUse({ session, secretId: "example-secret" });
+  await expect(service.rotateSecret({ session, secretId: "example-secret", plaintext: "second-private-value" })).rejects.toThrow("metadata unavailable");
+  const second = await service.getSecretRevisionForUse({ session, secretId: "example-secret" });
+  expect(first).not.toBe(second);
+  expect(second).not.toContain("private-value");
+  expect(await store.getSecret("example-secret")).toBe("second-private-value");
+});

@@ -86,12 +86,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     }
 
     const { page, pageSize } = getPaginationParams(request);
-    const total = await collection.countDocuments();
     const items = await collection
       .find({})
       .sort({ name: 1 })
-      .skip((page - 1) * pageSize)
-      .limit(pageSize)
       .toArray();
     const visibleItems = await filterResourcesByPermission(session, await publishedModels(items), {
       type: "llm_model",
@@ -100,8 +97,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     });
 
     return paginatedResponse(
-      visibleItems,
-      visibleItems.length < items.length ? visibleItems.length : total,
+      visibleItems.slice((page - 1) * pageSize, page * pageSize),
+      visibleItems.length,
       page,
       pageSize,
     );

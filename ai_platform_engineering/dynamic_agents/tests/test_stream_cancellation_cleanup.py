@@ -20,6 +20,7 @@ def _runtime(graph: Any) -> AgentRuntime:
     runtime._initialized = True
     runtime._graph = graph
     runtime.config = SimpleNamespace(id="example-agent", name="example-agent", model=SimpleNamespace(id="example-model"))
+    runtime._resolved_model_id = runtime.config.model.id
     runtime.settings = SimpleNamespace(max_input_file_bytes=1024, max_input_turn_bytes=1024, max_input_files=1)
     runtime.tracing = SimpleNamespace(create_config=lambda thread: {"configurable": {"thread_id": thread}}, get_trace_id=lambda: None)
     runtime._active_stream_count = 0

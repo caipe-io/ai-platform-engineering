@@ -79,6 +79,28 @@ describe("admin platform-config route", () => {
     mockWriteOpenFgaTuples.mockResolvedValue({ enabled: true, writes: 1, deletes: 0 });
   });
 
+  it("saves an explicit empty tour selection without touching other config", async () => {
+    const { PATCH } = await import("../route");
+    const col = { updateOne: jest.fn().mockResolvedValue({ acknowledged: true }) };
+    mockGetCollection.mockResolvedValue(col);
+    const response = await PATCH(request("/api/admin/platform-config", { method: "PATCH", body: JSON.stringify({ caipe_tour: { enabled_tours: [] } }) }));
+    expect((await response.json()).data.caipe_tour.enabled_tours).toEqual([]);
+    expect(col.updateOne).toHaveBeenCalledWith({ _id: "platform_settings" }, { $set: { "caipe_tour.enabled_tours": [], updated_at: expect.any(Date), updated_by: "admin@example.com" } }, { upsert: true });
+  });
+
+  it.each([null, {}, { enabled_tours: ["unknown"] }, { enabled_tours: ["__proto__"] }])("rejects an invalid tour policy: %p", async (policy) => {
+    const { PATCH } = await import("../route");
+    await expect(PATCH(request("/api/admin/platform-config", { method: "PATCH", body: JSON.stringify({ caipe_tour: policy }) }))).rejects.toMatchObject({ statusCode: 400 });
+    expect(mockGetCollection).not.toHaveBeenCalled();
+  });
+
+  it("requires admin permission before changing tour availability", async () => {
+    mockRequireAdmin.mockRejectedValueOnce(new Error("admin required"));
+    const { PATCH } = await import("../route");
+    await expect(PATCH(request("/api/admin/platform-config", { method: "PATCH", body: JSON.stringify({ caipe_tour: { enabled_tours: [] } }) }))).rejects.toThrow("admin required");
+    expect(mockGetCollection).not.toHaveBeenCalled();
+  });
+
   it("requires system_config read access before returning platform config", async () => {
     const { GET } = await import("../route");
 

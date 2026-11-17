@@ -16,10 +16,12 @@ import { Label } from "@/components/ui/label";
 import { ModelPicker } from "@/components/ui/model-picker";
 import { getConfig } from "@/lib/config";
 import { useAdminRole } from "@/hooks/use-admin-role";
+import { useCaipeTourStore } from "@/store/caipe-tour-store";
 import { requestProductTour } from "@/lib/product-tour";
-import type {
-  SetupWizardPayload,
-  SetupWizardSelection,
+import {
+  setupSelectionsMatch,
+  type SetupWizardPayload,
+  type SetupWizardSelection,
 } from "@/lib/setup-wizard";
 import { cn } from "@/lib/utils";
 import {
@@ -53,8 +55,8 @@ import {
   Workflow,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 interface ModelOption {
   _id: string;
@@ -310,7 +312,6 @@ function recipeAgent(recipe: SetupWizardSelection["recipe_id"], model: ModelOpti
   const allowedTools = Object.fromEntries(mcpIds.map((id) => [id, true]));
   if (recipe === "hello-world") {
     return {
-      id: "agent-hello-world-starter",
       body: {
         name: "Hello World Starter",
         description: "A small validation agent created by the first-time setup wizard.",
@@ -327,7 +328,6 @@ function recipeAgent(recipe: SetupWizardSelection["recipe_id"], model: ModelOpti
   }
   if (recipe === "blank") {
     return {
-      id: "agent-starter-agent",
       body: {
         name: "Starter Agent",
         description: "A minimal agent created by the first-time setup wizard.",
@@ -343,7 +343,6 @@ function recipeAgent(recipe: SetupWizardSelection["recipe_id"], model: ModelOpti
     };
   }
   return {
-    id: "agent-sre-starter",
     body: {
       name: "SRE Starter",
       description: "Starter site reliability agent created by the first-time setup wizard.",
@@ -395,6 +394,8 @@ export function SetupWizardDialog({
   const [expanded, setExpanded] = useState(false);
   const [contextSection, setContextSection] = useState("accounts");
   const [catalogWarning, setCatalogWarning] = useState<string | null>(null);
+  const createdStarter = useRef<{ key: string; id: string } | null>(null);
+  const [starterNotice, setStarterNotice] = useState<string | null>(null);
 
   useEffect(() => {
     setTestResult(null);
@@ -412,7 +413,7 @@ export function SetupWizardDialog({
     setSaving(true);
     setError(null);
     try {
-      const state = await patchState({ action: payload?.state.status === "completed" ? "complete" : "progress", current_step: step, selection });
+      const state = await patchState({ action: payload.state.status === "completed" && setupSelectionsMatch(selection, payload.state.selection) ? "complete" : "progress", current_step: step, selection });
       const savedPayload = { ...payload, state };
       onStateChange?.(savedPayload);
       window.dispatchEvent(new Event("caipe:platform-features-updated"));
@@ -473,6 +474,8 @@ export function SetupWizardDialog({
   }, []);
 
   const load = useCallback(async () => {
+    createdStarter.current = null;
+    setStarterNotice(null);
     setLoading(true);
     setError(null);
     setTestResult(null);
@@ -511,9 +514,9 @@ export function SetupWizardDialog({
         recipe_id: saved?.recipe_id ?? "sre",
         model_id: defaultModel?._id,
         model_provider: defaultModel?.provider,
-        mcp_server_ids: saved?.mcp_server_ids ?? defaultMcpServerIds,
-        enable_knowledge_base: saved?.enable_knowledge_base
-          ?? defaults.includes("knowledge-base"),
+        mcp_server_ids: (saved?.mcp_server_ids ?? defaultMcpServerIds).filter((id) => id !== "knowledge-base" && defaults.includes(id)),
+        enable_knowledge_base: defaults.includes("knowledge-base")
+          && (saved?.enable_knowledge_base ?? true),
         enabled_features: {
           ...defaultFeatures,
           ...(saved?.enabled_features ?? {}),
@@ -651,27 +654,40 @@ export function SetupWizardDialog({
     setTestResult(null);
     try {
       const selectedMcp = [...new Set([
-        ...(selection.mcp_server_ids ?? []).filter((serverId) => serverId !== "knowledge-base"),
+        ...(selection.mcp_server_ids ?? []).filter((serverId) => serverId !== "knowledge-base" && mcpServers.some((server) => server._id === serverId)),
         ...(selection.enable_knowledge_base && mcpServers.some((server) => server._id === "knowledge-base")
           ? ["knowledge-base"]
           : []),
       ])];
       const agent = recipeAgent(selection.recipe_id ?? "sre", selectedModel, selectedMcp);
-      let agentId = agent.id;
-      if (agent.body) {
-        const createResponse = await fetch("/api/dynamic-agents", {
+      const key = JSON.stringify(agent.body);
+      let agentId = createdStarter.current?.key === key ? createdStarter.current.id : undefined;
+      if (!agentId) {
+        const create = (body: typeof agent.body) => fetch("/api/dynamic-agents", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(agent.body),
+          body: JSON.stringify(body),
         });
-        const createPayload = await createResponse.json().catch(() => null);
-        if (createResponse.status === 409) {
-          throw new Error("A starter agent with this name already exists. Review it in Custom Agents; it was not changed or tested with this setup selection.");
+        let createResponse = await create(agent.body);
+        const separateStarter = createResponse.status === 409;
+        if (separateStarter) {
+          // A repeat setup must never overwrite or silently test an existing agent.
+          // Create a separate agent from these exact choices; bound collision retries.
+          createResponse = await create({ ...agent.body, name: `${agent.body.name} (${crypto.randomUUID().slice(0, 8)})` });
         }
-        if (!createResponse.ok) {
+        const createPayload = await createResponse.json().catch(() => null);
+        if (!createResponse.ok || createPayload?.success !== true) {
           throw new Error(messageFromPayload(createPayload, "Could not create the starter agent"));
         }
-        if (createResponse.ok && createPayload?.data?._id) agentId = createPayload.data._id;
+        const createdId = createPayload?.data?._id;
+        if (typeof createdId !== "string" || !createdId.trim()) {
+          throw new Error("The starter agent was not confirmed. Reload setup before trying again.");
+        }
+        agentId = createdId;
+        if (separateStarter) setStarterNotice("Your existing starter was kept. This test uses a separately named starter agent.");
+        // Retry an interrupted test with only the agent this dialog just created,
+        // and only while its complete configuration still matches the choices.
+        createdStarter.current = { key, id: agentId };
       }
 
       const conversationPayload = await jsonRequest<ApiEnvelope<{
@@ -698,9 +714,10 @@ export function SetupWizardDialog({
       if (invokePayload.success === false) {
         throw new Error(messageFromPayload(invokePayload, "The starter agent test failed"));
       }
-      const content = typeof invokePayload.content === "string"
-        ? invokePayload.content
-        : "The agent returned a successful response.";
+      const content = typeof invokePayload.content === "string" ? invokePayload.content : "";
+      if (!content.trim()) {
+        throw new Error("The starter agent test returned no reply");
+      }
       await patchState({
         action: "complete",
         current_step: 5,
@@ -1252,6 +1269,7 @@ export function SetupWizardDialog({
 
                   {step === 5 && (
                     <div className="space-y-4">
+                      {starterNotice && <p role="status" className="text-sm text-muted-foreground">{starterNotice}</p>}
                       <div className="rounded-xl border bg-muted/20 p-5">
                         <p className="font-semibold">{testResult ? "Your starter configuration" : "Ready for your first conversation?"}</p>
                         {!testResult && <p className="mt-1 text-sm text-muted-foreground">We’ll create a shared starter agent and send “Reply with a brief confirmation that the starter agent is ready.” The response confirms the AI connection works; it does not verify every optional tool. This test may use your provider’s paid quota.</p>}
@@ -1396,6 +1414,7 @@ function SummaryItem({ label, value }: { label: string; value: string }) {
 }
 
 export function SetupWizardSettings({ readOnly = false }: { readOnly?: boolean }): React.ReactElement {
+  const tourPolicy = useCaipeTourStore();
   const [payload, setPayload] = useState<SetupWizardPayload | null>(null);
   const [open, setOpen] = useState(false);
   const [restart, setRestart] = useState(false);
@@ -1439,7 +1458,7 @@ export function SetupWizardSettings({ readOnly = false }: { readOnly?: boolean }
                     {payload.state.status === "not_started" ? "Start setup" : payload.state.status === "completed" ? "Run setup again" : "Resume setup"}
                     <ChevronRight className="ml-2 h-4 w-4" />
                   </Button>
-                  <Button variant="ghost" onClick={() => requestProductTour(true)}><Compass className="mr-2 h-4 w-4" />Take a tour</Button>
+                  {tourPolicy.loaded && tourPolicy.enabled && tourPolicy.enabledTours.includes("workspace") && <Button variant="ghost" onClick={() => requestProductTour(true)}><Compass className="mr-2 h-4 w-4" />Take CAIPE Tour</Button>}
                 </div>
                 <p className="flex items-center gap-2 text-xs text-muted-foreground"><span className="h-1.5 w-1.5 rounded-full bg-primary" />{setupStatusLabel(payload.state.status)} · Your progress is saved. Leave whenever you like.</p>
               </div>
@@ -1497,6 +1516,8 @@ export function SetupWizardSettings({ readOnly = false }: { readOnly?: boolean }
 export function SetupWizardGate(): React.ReactElement | null {
   const { isAdmin, loading } = useAdminRole();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const readOnly = ["simulate_type", "simulate_id", "simulate_relation"].some((key) => Boolean(searchParams?.get(key)));
   const [payload, setPayload] = useState<SetupWizardPayload | null>(null);
   const [open, setOpen] = useState(false);
   const [restart, setRestart] = useState(false);
@@ -1530,7 +1551,7 @@ export function SetupWizardGate(): React.ReactElement | null {
   }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (loading || !isAdmin || !getConfig("setupWizardEnabled")) return;
+    if (readOnly || loading || !isAdmin || !getConfig("setupWizardEnabled")) return;
     let cancelled = false;
     void jsonRequest<ApiEnvelope<SetupWizardPayload>>("/api/admin/setup-wizard")
       .then((response) => {
@@ -1546,7 +1567,7 @@ export function SetupWizardGate(): React.ReactElement | null {
         // global error. The permanent Admin card exposes actionable failures.
       });
     return () => { cancelled = true; };
-  }, [isAdmin, loading]);
+  }, [isAdmin, loading, readOnly]);
 
   const refreshPayload = () => {
     void jsonRequest<ApiEnvelope<SetupWizardPayload>>("/api/admin/setup-wizard")
@@ -1555,12 +1576,14 @@ export function SetupWizardGate(): React.ReactElement | null {
   };
 
   const openWizard = (shouldRestart = false) => {
+    if (readOnly) return;
     setRestart(shouldRestart);
     setChecklistOpen(false);
     setOpen(true);
   };
 
   const restartSetup = async () => {
+    if (readOnly) return;
     try {
       await jsonRequest<ApiEnvelope<{ state: SetupWizardPayload["state"] }>>("/api/admin/setup-wizard", {
         method: "PATCH",
@@ -1575,6 +1598,7 @@ export function SetupWizardGate(): React.ReactElement | null {
   };
 
   const hideChecklist = async () => {
+    if (readOnly) return;
     setHidingChecklist(true);
     try {
       await jsonRequest<ApiEnvelope<{ state: SetupWizardPayload["state"] }>>("/api/admin/setup-wizard", {
@@ -1589,7 +1613,7 @@ export function SetupWizardGate(): React.ReactElement | null {
     }
   };
 
-  if (pathname === "/admin/configuration/setup-wizard" || !payload || checklistHidden || payload.state.status === "dismissed" || (!resumeAvailable && (payload.state.checklist_hidden || payload.state.status === "completed" || !payload.auto_start))) return null;
+  if (readOnly || pathname === "/admin/configuration/setup-wizard" || !payload || checklistHidden || payload.state.status === "dismissed" || (!resumeAvailable && (payload.state.checklist_hidden || payload.state.status === "completed" || !payload.auto_start))) return null;
 
   const checklistItems: Array<{
     label: string;
@@ -1609,10 +1633,10 @@ export function SetupWizardGate(): React.ReactElement | null {
 
   return (
     <>
-      <div className={cn("fixed bottom-4 right-4 z-[60] max-w-[calc(100vw-2rem)]", open && "invisible pointer-events-none")}>
+      <div className={cn("relative z-[60] shrink-0 border-t bg-card px-4 py-2", open && "hidden")}>
         {resumePulse > 0 && !checklistOpen && <p role="status" className="mb-2 max-w-64 rounded-xl border bg-card p-3 text-xs text-muted-foreground shadow-lg">Your place is saved. Resume setup here when you’re ready.</p>}
         {checklistOpen && (
-          <div className="mb-2 max-h-[min(36rem,calc(100vh-6rem))] w-[min(22rem,calc(100vw-2rem))] animate-slide-in overflow-y-auto rounded-2xl border bg-card/95 p-4 shadow-2xl shadow-primary/10 backdrop-blur-xl [scrollbar-width:thin]">
+          <div className="absolute bottom-full right-4 mb-2 max-h-[min(36rem,calc(100dvh-6rem))] w-[min(22rem,calc(100vw-2rem))] animate-slide-in overflow-y-auto rounded-2xl border bg-card/95 p-4 shadow-2xl shadow-primary/10 backdrop-blur-xl [scrollbar-width:thin]">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="flex items-center gap-2 text-sm font-semibold"><ListChecks className="h-4 w-4 text-primary" /> Setup checklist</p>

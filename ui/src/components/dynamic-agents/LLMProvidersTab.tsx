@@ -40,14 +40,19 @@ import {
   type SavedProviderSecret,
 } from "@/lib/llm-provider-credentials";
 
+class ModelConnectionRequestError extends Error {
+  constructor(message: string, public code?: string) { super(message); }
+}
+
 async function parseData<T>(response: Response): Promise<T> {
   const payload = (await response.json()) as {
     data?: T;
     success?: boolean;
     error?: string;
+    code?: string;
   };
   if (!response.ok || payload.success === false)
-    throw new Error(payload.error || "Request failed");
+    throw new ModelConnectionRequestError(payload.error || "Request failed", payload.code);
   return payload.data as T;
 }
 
@@ -162,6 +167,9 @@ function ProviderCredentialDialog({
       onSaved();
       onClose();
     } catch (reason) {
+      if (reason instanceof ModelConnectionRequestError && reason.code === "MODEL_CONNECTION_OPERATION_FAILED") {
+        operation.current = crypto.randomUUID();
+      }
       setError(
         reason instanceof Error
           ? reason.message

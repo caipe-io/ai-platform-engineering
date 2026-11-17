@@ -284,6 +284,8 @@ export interface UserSettings {
     favorite_agentic_apps?: string[];
     /** Server-backed progress for the post-install end-user product tour. */
     product_tour?: ProductTourState;
+    /** Personal opt-out; operator availability is enforced separately. */
+    caipe_tour_enabled?: boolean;
     llm_provider_secrets?: import("@/lib/llm-provider-credentials").ProviderSecretBindings;
     task_tours?: Partial<Record<Exclude<ProductTourId, "workspace">, ProductTourState>>;
   };

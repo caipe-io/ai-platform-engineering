@@ -1,7 +1,17 @@
 import { PRODUCT_TOURS, isProductTourId } from "@/lib/product-tour-catalog";
+import { PERSONAL_SETTINGS_ROUTES } from "@/components/settings/settings-routes";
 import { normalizeProductTourState } from "@/lib/product-tour";
 
 describe("product tour state", () => {
+  it("uses a registered personal settings destination", () => {
+    for (const tour of Object.values(PRODUCT_TOURS)) {
+      for (const step of tour.steps) {
+        if (step.href?.startsWith("/settings/")) {
+          expect(PERSONAL_SETTINGS_ROUTES.map((route) => route.href)).toContain(step.href);
+        }
+      }
+    }
+  });
   it("normalizes saved progress and clamps the current step", () => {
     expect(normalizeProductTourState({
       status: "in_progress",
@@ -43,4 +53,14 @@ describe("product tour state", () => {
     expect(isProductTourId("__proto__")).toBe(false);
   });
 
+});
+
+
+it("guides users from saving a connection to inspecting its already-registered models", () => {
+  const steps = PRODUCT_TOURS["add-model"].steps;
+  expect(steps[0].points?.join(" ")).toContain("Save Connection");
+  expect(steps[1].description).toContain("registered by Save Connection");
+  expect(steps[2].points?.join(" ")).toContain("no duplicate registration");
+  expect(steps[1].target).toBe('[data-tour="model-catalog"]');
+  expect(steps[2].target).toBe('[data-tour="model-catalog"]');
 });

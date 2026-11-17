@@ -185,6 +185,7 @@ async def test_cli_uses_the_official_acp_stdio_transport(settings: Settings, tmp
     adapter = ClaudeACPAdapter(settings.model_copy(update={
         "claude_acp_command": [sys.executable, str(Path(__file__).parents[1] / "src/harness_engine/claude_cli_acp.py")],
         "claude_acp_runtime": "claude_code_cli_acp",
+        "claude_cli_isolation": "disabled",  # Transport fixture; Linux enforcement is tested separately.
     }))
     ctx = context()
     ctx.blueprint.tools.bindings = []

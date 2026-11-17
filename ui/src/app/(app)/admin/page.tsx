@@ -14,6 +14,7 @@ import { AsyncStatsCard } from "@/components/admin/insights/AsyncStatsCard";
 import { AppUsageCard } from "@/components/admin/insights/AppUsageCard";
 import { AutonomousTeamAccessPanel } from "@/components/admin/autonomous/AutonomousTeamAccessPanel";
 import { ReviewConfigsTab } from "@/components/admin/settings/ReviewConfigsTab";
+import { CaipeTourSettings } from "@/components/admin/settings/CaipeTourSettings";
 import { SetupWizardSettings } from "@/components/admin/settings/SetupWizard";
 import {
   AdminNavigation,
@@ -1687,6 +1688,12 @@ function AdminPage() {
               {tabGateValues.platform_settings && (
                 <TabsContent value="setup-wizard" className="space-y-4">
                   <SetupWizardSettings readOnly={isSimulationActive} />
+                </TabsContent>
+              )}
+
+              {tabGateValues.platform_settings && (
+                <TabsContent value="tour" className="space-y-4">
+                  <CaipeTourSettings readOnly={isSimulationActive} />
                 </TabsContent>
               )}
 

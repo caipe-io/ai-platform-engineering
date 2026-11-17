@@ -35,6 +35,7 @@ def runtime_for(graph: Any) -> AgentRuntime:
         system_prompt="Help",
         model={"id": "test-model", "provider": "openai"},
     )
+    runtime._resolved_model_id = runtime.config.model.id
     runtime._graph = graph
     runtime._initialized = True
     runtime._active_stream_count = 0

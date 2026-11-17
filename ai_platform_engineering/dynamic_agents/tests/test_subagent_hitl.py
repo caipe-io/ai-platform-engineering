@@ -1,6 +1,7 @@
 """Regression tests for human-in-the-loop configuration on subagents."""
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -85,6 +86,10 @@ def test_resolved_subagent_includes_its_request_user_input_interrupt(
     runtime._subagent_models = {}
     runtime._mongo_service = MagicMock()
     runtime._mongo_service.get_agent.return_value = child_config
+    runtime._mongo_service.get_llm_model.return_value = None
+    runtime.settings = SimpleNamespace()
+    runtime._user = None
+    runtime._model_connection_revisions = {}
 
     request_input_tool = MagicMock()
     request_input_tool.name = "request_user_input"

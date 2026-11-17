@@ -23,6 +23,23 @@ export interface SetupWizardSelection {
   enabled_features?: SetupWizardFeatureFlags;
 }
 
+/** Compare effective choices so ordering and the dedicated KB toggle do not invalidate evidence. */
+export function setupSelectionsMatch(a?: SetupWizardSelection, b?: SetupWizardSelection): boolean {
+  const key = (value?: SetupWizardSelection) => JSON.stringify({
+    model_id: value?.model_id ?? "",
+    model_provider: value?.model_provider ?? "",
+    recipe_id: value?.recipe_id ?? "sre",
+    mcp_server_ids: [...new Set([
+      ...(value?.mcp_server_ids ?? []),
+      ...(value?.enable_knowledge_base ? ["knowledge-base"] : []),
+    ])].sort(),
+    enabled_features: ["workflows", "schedules", "autonomous_agents", "apps"].map(
+      (name) => value?.enabled_features?.[name as keyof SetupWizardFeatureFlags] ?? false,
+    ),
+  });
+  return key(a) === key(b);
+}
+
 export interface SetupWizardState {
   version: number;
   status: SetupWizardStatus;

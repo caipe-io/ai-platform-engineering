@@ -71,7 +71,12 @@ async def resolve_registered_model(settings: Settings, user: UserContext | None,
         if connection_id:
             raise LLMConfigError("The saved model registry is unavailable.")
         return None
-    record = await asyncio.to_thread(mongo.get_llm_model, model_id)
+    try:
+        record = await asyncio.to_thread(mongo.get_llm_model, model_id)
+    except RuntimeError:
+        if connection_id:
+            raise LLMConfigError("The saved model registry is unavailable.") from None
+        return None
     if not isinstance(record, dict) or not record.get("connection_id"):
         if connection_id:
             raise LLMConfigError("The saved model connection was removed or is unavailable.")

@@ -40,13 +40,15 @@ export function AppLayoutClient({
           <ApplicationNavigationRail />
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-clip">
             <AppHeader />
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-clip">
-              {children}
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-clip xl:flex-row">
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-clip">
+                {children}
+              </div>
+              <ProductTourGate />
             </div>
+            <SetupWizardGate />
           </div>
           <ApplicationNavigationDrawer />
-          <SetupWizardGate />
-          <ProductTourGate />
         </div>
       </HeaderBreadcrumbSlotProvider>
     </ApplicationNavigationProvider>

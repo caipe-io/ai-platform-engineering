@@ -78,6 +78,7 @@ interface SecretRefsCollection {
 interface PayloadStore {
   putSecret(input: { secretRefId: string; plaintext: string; maskedPreview?: string }): Promise<void>;
   getSecret?(secretRefId: string): Promise<string>;
+  getSecretRevision?(secretRefId: string): Promise<string>;
   getMaskedPreview(secretRefId: string): Promise<string>;
   deleteSecret?(secretRefId: string): Promise<void>;
 }
@@ -286,12 +287,24 @@ export class SecretService {
     };
 
     await this.payloadStore.putSecret({ secretRefId: id, plaintext, maskedPreview });
-    await this.reconcileOwnerRelationships({
-      secretId: id,
-      owner: input.owner,
-      ownerSubject: typeof input.session.sub === "string" ? input.session.sub : null,
-    });
-    await this.secretRefsCollection.insertOne(doc);
+    try {
+      await this.reconcileOwnerRelationships({
+        secretId: id,
+        owner: input.owner,
+        ownerSubject: typeof input.session.sub === "string" ? input.session.sub : null,
+      });
+      await this.secretRefsCollection.insertOne(doc);
+    } catch (error) {
+      const cleanup = await Promise.allSettled([
+        this.payloadStore.deleteSecret?.(id),
+        this.deleteAllRelationships(id),
+        this.secretRefsCollection.deleteOne({ id }),
+      ]);
+      if (cleanup.some(result => result.status === "rejected")) {
+        console.error("Secret creation cleanup needs repair", { secretId: id });
+      }
+      throw error;
+    }
     writeCredentialAuditEvent({
       action: "credential.create",
       actor: { type: "user", id: String(input.session.sub ?? "unknown") },
@@ -484,7 +497,8 @@ export class SecretService {
   async getSecretRevisionForUse(input: SecretByIdInput): Promise<string> {
     await this.authorize(input.session, { type: "secret_ref", id: input.secretId, action: "use" });
     const doc = await this.getSecretRef(input.secretId);
-    return doc.updatedAt.toISOString();
+    const payloadRevision = await this.payloadStore.getSecretRevision?.(input.secretId);
+    return `${doc.updatedAt.toISOString()}${payloadRevision ? `:${payloadRevision}` : ""}`;
   }
 
   async getSecretMetadata(input: SecretByIdInput): Promise<SecretMetadata> {

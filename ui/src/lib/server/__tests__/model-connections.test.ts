@@ -355,3 +355,43 @@ it.each([
     ).toEqual(expected);
   },
 );
+
+
+it.each([false, true])("fences an acknowledged-or-uncertain publication before cleanup (fence unavailable=%s)", async fenceUnavailable => {
+  const connections = collection(connectionRows);
+  const models = collection(modelRows);
+  (getCollection as jest.Mock).mockImplementation(async name => name === "llm_models" ? models : connections);
+  const update = connections.updateOne.getMockImplementation()!;
+  connections.updateOne.mockImplementation(async (query, change) => {
+    if (change.$set.state === "failed" && fenceUnavailable) throw new Error("fence unavailable");
+    const result = await update(query, change);
+    if (change.$set.state === "ready") throw new Error("publication acknowledgement lost");
+    return result;
+  });
+  const remove = models.deleteMany.getMockImplementation()!;
+  models.deleteMany.mockImplementation(async query => {
+    expect(connectionRows[0].state).toBe("failed");
+    return remove(query);
+  });
+  const input = { ...draft, name: "Example", models: ["example-model"], operation_id: "00000000-0000-4000-8000-000000000012" };
+  await expect(createModelConnection(actor, input)).rejects.toMatchObject({ code: fenceUnavailable ? "MODEL_CONNECTION_RECOVERY_PENDING" : "MODEL_CONNECTION_OPERATION_FAILED" });
+  if (fenceUnavailable) {
+    expect(models.deleteMany).not.toHaveBeenCalled();
+    expect(modelRows).toHaveLength(1);
+    expect(connectionRows[0].state).toBe("ready");
+    await expect(createModelConnection(actor, input)).resolves.toMatchObject({ models: [expect.objectContaining({ upstream_model_id: "example-model" })] });
+  } else {
+    expect(models.deleteMany).toHaveBeenCalled();
+    expect(modelRows).toHaveLength(0);
+    expect(connectionRows).toHaveLength(0);
+  }
+});
+
+it("returns a terminal failure code for an incomplete rollback and its same-operation retry", async () => {
+  failInsert = true;
+  secretService.deleteSecret.mockRejectedValue(new Error("cleanup unavailable"));
+  const input = { ...draft, fields: { api_key: "key-ref" }, values: { endpoint: "https://example.test" }, name: "Example", models: ["example-model"], operation_id: "00000000-0000-4000-8000-000000000013" };
+  await expect(createModelConnection(actor, input)).rejects.toMatchObject({ code: "MODEL_CONNECTION_OPERATION_FAILED" });
+  expect(connectionRows[0].state).toBe("failed");
+  await expect(createModelConnection(actor, input)).rejects.toMatchObject({ code: "MODEL_CONNECTION_OPERATION_FAILED", statusCode: 409 });
+});

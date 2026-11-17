@@ -172,3 +172,27 @@ async def test_removed_registered_connection_never_falls_back_to_environment() -
     mongo = SimpleNamespace(get_llm_model=Mock(return_value=None))
     with pytest.raises(model_connections.LLMConfigError, match="removed"):
         await model_connections.resolve_registered_model(SimpleNamespace(), None, mongo, registry_id)
+
+
+@pytest.mark.parametrize("later", ["first", "rotated"])
+async def test_initialization_cannot_hide_mixed_revisions_of_the_same_model(later: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime = object.__new__(AgentRuntime)
+    runtime._model_connection_revisions = {}
+    runtime.settings, runtime._mongo_service, runtime._user = SimpleNamespace(), object(), None
+    resolver = AsyncMock(side_effect=[ResolvedModel("model", "openai", "first"), ResolvedModel("model", "openai", later)])
+    monkeypatch.setattr("dynamic_agents.services.agent_runtime.resolve_registered_model", resolver)
+    assert (await runtime._resolve_model_connection("registry")).revision == "first"
+    if later == "first":
+        assert (await runtime._resolve_model_connection("registry")).revision == "first"
+    else:
+        with pytest.raises(model_connections.LLMConfigError, match="changed while building"):
+            await runtime._resolve_model_connection("registry")
+    assert runtime._model_connection_revisions == {"registry": "first"}
+
+
+async def test_disconnected_registry_preserves_legacy_models_but_not_saved_connections() -> None:
+    mongo = SimpleNamespace(get_llm_model=Mock(side_effect=RuntimeError("MongoDB is not connected")))
+    assert await model_connections.resolve_registered_model(SimpleNamespace(), None, mongo, "example-model") is None
+    registered = "00000000-0000-4000-8000-000000000001-0000000000000001"
+    with pytest.raises(model_connections.LLMConfigError, match="registry is unavailable"):
+        await model_connections.resolve_registered_model(SimpleNamespace(), None, mongo, registered)

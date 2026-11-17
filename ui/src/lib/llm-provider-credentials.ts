@@ -183,7 +183,7 @@ export function providerBindingsWithLegacySecrets(
       );
       if (matches.length === 1) fields[field.id] = matches[0].id;
     }
-    result[provider.id] = fields;
+    if (Object.keys(fields).length > 0) result[provider.id] = fields;
   }
   return result;
 }

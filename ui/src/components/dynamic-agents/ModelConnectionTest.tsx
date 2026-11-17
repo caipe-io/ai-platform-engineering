@@ -25,7 +25,13 @@ export function ModelConnectionTest({
   const [running, setRunning] = React.useState(false);
   const [result, setResult] = React.useState<ModelTestResult | null>(null);
   const signature = JSON.stringify(request);
-  React.useEffect(() => setResult(null), [signature]);
+  const generation = React.useRef(0);
+  React.useEffect(() => {
+    generation.current += 1;
+    setResult(null);
+    setRunning(false);
+    return () => { generation.current += 1; };
+  }, [signature]);
   const description = result
     ? `${result.success ? "Connected" : "Connection failed"} · ${result.elapsed_ms} ms`
     : "";
@@ -49,6 +55,7 @@ export function ModelConnectionTest({
         className={compact ? "h-8 w-36 shrink-0" : undefined}
         disabled={disabled || running}
         onClick={async () => {
+          const started = ++generation.current;
           setRunning(true);
           setResult(null);
           try {
@@ -62,10 +69,12 @@ export function ModelConnectionTest({
               throw new Error(
                 payload.error || "Connection test could not run.",
               );
+            if (generation.current !== started) return;
             const outcome = (payload.data ?? payload) as ModelTestResult;
             setResult(outcome);
             if (outcome.success) onSuccess?.();
           } catch (error) {
+            if (generation.current !== started) return;
             setResult({
               success: false,
               category: "configuration",
@@ -76,7 +85,7 @@ export function ModelConnectionTest({
                   : "Connection test could not run.",
             });
           } finally {
-            setRunning(false);
+            if (generation.current === started) setRunning(false);
           }
         }}
       >

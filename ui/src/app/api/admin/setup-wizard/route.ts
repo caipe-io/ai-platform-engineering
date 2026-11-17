@@ -7,6 +7,7 @@ import {
 } from "@/lib/api-middleware";
 import { getServerConfig } from "@/lib/config";
 import { getCollection } from "@/lib/mongodb";
+import { parseAdminSimulation } from "@/lib/rbac/admin-simulator";
 import { requireResourcePermission } from "@/lib/rbac/resource-authz";
 import {
   DEFAULT_SETUP_WIZARD_STATE,
@@ -14,6 +15,7 @@ import {
   normalizeSetupWizardState,
   SETUP_WIZARD_CONFIG_ID,
   SETUP_WIZARD_VERSION,
+  setupSelectionsMatch,
   type SetupWizardInventory,
   type SetupWizardSelection,
   type SetupWizardState,
@@ -183,6 +185,9 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
 export const PATCH = withErrorHandler(async (request: NextRequest) => {
   return withAuth(request, async (_req, user, session) => {
     await requireSetupAdmin(session, "admin");
+    if (parseAdminSimulation(request.nextUrl.searchParams).active) {
+      throw new ApiError("View as previews are read-only", 403, "SIMULATION_READ_ONLY");
+    }
     const body = await request.json() as SetupWizardPatchBody;
     const action = body.action;
     if (action !== "start" && action !== "progress" && action !== "dismiss" && action !== "complete" && action !== "reset" && action !== "hide_checklist") {
@@ -235,6 +240,18 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       };
     }
 
+    const selectionChanged = selection !== undefined && !setupSelectionsMatch(previous.selection, selection);
+    if (selectionChanged && action !== "reset") {
+      delete next.created_agent_id;
+      delete next.last_smoke_test;
+      if (action !== "complete") {
+        delete next.completed_at;
+        next.completed_steps = next.completed_steps.filter((step) => step !== 5);
+        if (next.status === "completed") next.status = "in_progress";
+      }
+      if (action === "complete") next.created_agent_id = createdAgentId;
+    }
+
     if (body.smoke_test !== undefined) {
       const smoke = body.smoke_test;
       if (!smoke || typeof smoke !== "object" || Array.isArray(smoke)) {
@@ -251,6 +268,12 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
           : {}),
         tested_at: now,
       };
+    }
+
+    if (action === "complete") {
+      if (!next.created_agent_id || next.last_smoke_test?.status !== "passed" || !next.last_smoke_test.detail?.trim()) {
+        throw new ApiError("Run a successful starter agent test for this selection before completing setup", 400, "SETUP_TEST_REQUIRED");
+      }
     }
 
     // Compare the state we read so another admin's newer progress is never replaced.

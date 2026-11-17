@@ -163,3 +163,30 @@ it("shows a failure diagnostic with details instead of losing the provider expla
   expect(await screen.findByText(/Connection failed/)).toBeInTheDocument();
   expect(screen.getByText("Provider rejected credentials")).toBeInTheDocument();
 });
+
+
+it.each(["terminal", "network", "uncertain"])("uses safe operation identity recovery after a %s save failure", async failure => {
+  const user = await open();
+  for (const [label, name] of [["API Key", "Primary key"], ["OpenAI Endpoint URL", "Primary endpoint"]]) {
+    await user.click(screen.getByRole("combobox", { name: label, exact: true }));
+    await user.click(screen.getByRole("option", { name: new RegExp(name) }));
+  }
+  const fallback = (global.fetch as jest.Mock).getMockImplementation()!;
+  const attempts: Record<string, unknown>[] = [];
+  (global.fetch as jest.Mock).mockImplementation(async (url, init) => {
+    if (String(url) === "/api/llm-models/connections" && init?.method === "POST") {
+      attempts.push(JSON.parse(String(init.body)));
+      if (attempts.length === 1) {
+        if (failure === "network") throw new Error("Network unavailable");
+        return { ok: false, json: async () => ({ success: false, code: failure === "uncertain" ? "MODEL_CONNECTION_RECOVERY_PENDING" : "MODEL_CONNECTION_OPERATION_FAILED", error: "Previous operation failed" }) };
+      }
+      return response({ connection: {}, models: [] });
+    }
+    return fallback(url, init);
+  });
+  await user.click(screen.getByRole("button", { name: "Save Connection" }));
+  await screen.findByText(failure === "network" ? "Network unavailable" : "Previous operation failed");
+  await user.click(screen.getByRole("button", { name: "Save Connection" }));
+  await waitFor(() => expect(attempts).toHaveLength(2));
+  expect(Boolean(attempts[0].operation_id === attempts[1].operation_id)).toBe(failure !== "terminal");
+});

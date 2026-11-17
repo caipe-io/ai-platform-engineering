@@ -7,7 +7,7 @@ trap 'rm -rf "$WORK"' EXIT
 python - "$ROOT/setup-caipe.sh" "$WORK/helpers.sh" <<'PY'
 import re, sys
 s = open(sys.argv[1]).read()
-names = ['_browser_ui_url', '_browser_oidc_issuer', 'choose_features', 'detect_deployed_features', 'update_keycloak_client_urls', 'provision_caipe_ui_audience_mapper']
+names = ['_browser_ui_url', '_browser_oidc_issuer', '_internal_oidc_issuer', '_discover_gateway_embedding_model', 'choose_features', 'detect_deployed_features', 'update_keycloak_client_urls', 'provision_caipe_ui_audience_mapper']
 parts = [re.search(r'^' + re.escape(name) + r'\(\) \{\n.*?^\}', s, re.M | re.S)[0] for name in names]
 parts += re.findall(r'^_(?:ui_public_url|idp_public_url)\(\).*$', s, re.M)
 a = s.index('  # Match the issuer Keycloak advertises')
@@ -19,6 +19,12 @@ parts.append('no_ingress_values() {\nlocal helm_args=()\n' + s[a:b] + '\nfi\npri
 a = s.index('    if [[ -z "$da_oidc_issuer" ]] && $ENABLE_INGRESS')
 b = s.index('    if [[ -z "$da_oidc_client_id"', a)
 parts.append('dynamic_issuer() {\nlocal da_oidc_issuer=""\n' + s[a:b] + '\nprintf "%s" "$da_oidc_issuer"\n}')
+a = s.index('  kubectl create secret generic rag-ingestor-secret')
+b = s.index('  log "RAG ingestor client: credentials stored', a)
+parts.append('ingestor_secret() {\nlocal issuer="$(_browser_oidc_issuer)" client_id=example-ingestor client_secret=example-secret\n' + s[a:b] + '\n}')
+a = s.index('    if [[ "${RAG_INGESTOR_SECRET_READY:-false}" == "true" ]]; then')
+b = s.index('      log "RAG web-ingestor: Keycloak OIDC credentials wired', a)
+parts.append('ingestor_values() {\nlocal helm_args=()\n' + s[a:b] + '\nfi\nprintf "%s\\n" "${helm_args[@]}"\n}')
 open(sys.argv[2], 'w').write('\n'.join(parts))
 PY
 (
@@ -32,6 +38,19 @@ PY
   _internal_oidc_issuer() { echo http://example-keycloak:8080/realms/caipe; }
   no_ingress_values > "$WORK/values"
   grep -q 'rag-stack.rag-server.env.OIDC_ISSUER=http://localhost:7080/realms/caipe' "$WORK/values"
+  grep -q 'rag-stack.rag-server.env.OIDC_DISCOVERY_URL=http://example-keycloak:8080/realms/caipe' "$WORK/values"
+  grep -q 'rag-stack.rag-server.env.OIDC_JWKS_URL=http://example-keycloak:8080/realms/caipe/protocol/openid-connect/certs' "$WORK/values"
+  kubectl() {
+    if [[ "$1" == create ]]; then printf '%s\n' "$@" > "$WORK/secret-args"; else cat >/dev/null; fi
+  }
+  log() { :; }
+  ingestor_secret
+  grep -q -- '--from-literal=INGESTOR_OIDC_ISSUER=http://localhost:7080/realms/caipe' "$WORK/secret-args"
+  grep -q -- '--from-literal=INGESTOR_OIDC_DISCOVERY_URL=http://example-keycloak:8080/realms/caipe/.well-known/openid-configuration$' "$WORK/secret-args"
+  RAG_INGESTOR_SECRET_READY=true RAG_INGESTOR_OIDC_ISSUER="$(_browser_oidc_issuer)" RAG_INGESTOR_OIDC_CLIENT_ID=example-ingestor
+  ingestor_values > "$WORK/ingestor-values"
+  grep -q 'rag-stack.rag-server.env.INGESTOR_OIDC_DISCOVERY_URL=http://example-keycloak:8080/realms/caipe' "$WORK/ingestor-values"
+  grep -q 'rag-stack.rag-server.env.INGESTOR_OIDC_JWKS_URL=http://example-keycloak:8080/realms/caipe/protocol/openid-connect/certs' "$WORK/ingestor-values"
   # Verify both no-domain guards reach the actual authentication path.
   CAIPE_DOMAIN=
   called=false
@@ -66,4 +85,28 @@ PY
   choose_features
   [[ -s "$WORK/discovery" ]]
 )
-echo 'PASS: saved-domain no-ingress values, RAG opt-out, and unattended model discovery'
+(
+  set +u
+  source "$WORK/helpers.sh"
+  log() { :; }
+  EMBEDDINGS_PROVIDER=openai EMBEDDINGS_MODEL=embedding-v2 OPENAI_API_KEY=example-key OPENAI_ENDPOINT=https://gateway.example.test/v1
+  curl() { printf '{"data":[{"id":"embedding-v1"},{"id":"embedding-v2"}]}'; }
+  ENABLE_RAG=true DATABASE_PROVIDER=mongodb CAIPE_CHART_VERSION=example _RAG_FORCED=on
+  SELECTED_AGENTS=(example) HELM_AGENT_ARGS=(example)
+  helm() {
+    [[ "$1 $2" == "get values" ]] || return 1
+    printf '{"rag-stack":{"rag-server":{"env":{"EMBEDDINGS_PROVIDER":"openai","EMBEDDINGS_MODEL":"embedding-v2"}}}}'
+  }
+  kubectl() { return 1; }
+  EMBEDDINGS_MODEL=text-embedding-3-large
+  detect_deployed_features
+  _discover_gateway_embedding_model
+  [[ "$EMBEDDINGS_MODEL" == embedding-v2 ]]
+  _EMBEDDINGS_MODEL_DEPLOYED= _EMBEDDINGS_MODEL_EXPLICIT=set EMBEDDINGS_MODEL=explicit-embedding
+  _discover_gateway_embedding_model
+  [[ "$EMBEDDINGS_MODEL" == explicit-embedding ]]
+  _EMBEDDINGS_MODEL_EXPLICIT= EMBEDDINGS_MODEL=text-embedding-3-large
+  _discover_gateway_embedding_model
+  [[ "$EMBEDDINGS_MODEL" == embedding-v1 ]]
+)
+echo 'PASS: no-ingress discovery/JWKS and ingestor secret, RAG opt-out, and embedding discovery preservation'

@@ -180,6 +180,74 @@ describe("admin setup wizard route", () => {
       .rejects.toMatchObject({ statusCode: 409, code: "SETUP_CONFLICT" });
   });
 
+  it("rejects setup writes with View as parameters before reading or changing state", async () => {
+    const { PATCH } = await import("../route");
+    await expect(PATCH(new NextRequest("http://example.test/api/admin/setup-wizard?simulate_type=user&simulate_id=example-user", {
+      method: "PATCH", body: JSON.stringify({ action: "reset" }),
+    }))).rejects.toMatchObject({ statusCode: 403, code: "SIMULATION_READ_ONLY" });
+    expect(platformConfig.updateOne).not.toHaveBeenCalled();
+  });
+
+  it("clears completion evidence when a saved selection changes", async () => {
+    platformConfig.findOne.mockResolvedValue({ setup_wizard: {
+      status: "completed", current_step: 5, completed_steps: [1, 2, 3, 4, 5],
+      selection: { model_id: "model-primary" }, created_agent_id: "example-agent",
+      completed_at: "2026-01-01T00:00:00Z",
+      last_smoke_test: { status: "passed", detail: "Ready", tested_at: "2026-01-01T00:00:00Z" },
+    } });
+    platformConfig.updateOne.mockResolvedValueOnce({ matchedCount: 1 });
+    const { PATCH } = await import("../route");
+    const body = await (await PATCH(request({ method: "PATCH", body: JSON.stringify({
+      action: "progress", selection: { model_id: "model-secondary" },
+    }) }))).json();
+    expect(body.data.state.status).toBe("in_progress");
+    expect(body.data.state.completed_steps).not.toContain(5);
+    for (const key of ["created_agent_id", "last_smoke_test", "completed_at"]) expect(body.data.state[key]).toBeUndefined();
+  });
+
+  it("rejects completion that reuses another selection's evidence", async () => {
+    platformConfig.findOne.mockResolvedValue({ setup_wizard: {
+      status: "completed", selection: { model_id: "model-primary" }, created_agent_id: "example-agent",
+      last_smoke_test: { status: "passed", detail: "Ready", tested_at: "2026-01-01T00:00:00Z" },
+    } });
+    const { PATCH } = await import("../route");
+    await expect(PATCH(request({ method: "PATCH", body: JSON.stringify({
+      action: "complete", selection: { model_id: "model-secondary" },
+    }) }))).rejects.toMatchObject({ statusCode: 400, code: "SETUP_TEST_REQUIRED" });
+    expect(platformConfig.updateOne).not.toHaveBeenCalled();
+  });
+
+  it("accepts fresh evidence for a changed selection and retains its completion timestamp", async () => {
+    platformConfig.findOne.mockResolvedValue({ setup_wizard: {
+      status: "completed", selection: { model_id: "model-primary" }, created_agent_id: "old-agent",
+      last_smoke_test: { status: "passed", detail: "Old reply", tested_at: "2026-01-01T00:00:00Z" },
+    } });
+    platformConfig.updateOne.mockResolvedValueOnce({ matchedCount: 1 });
+    const { PATCH } = await import("../route");
+    const body = await (await PATCH(request({ method: "PATCH", body: JSON.stringify({
+      action: "complete", selection: { model_id: "model-secondary" }, completed_steps: [1, 2, 3, 4, 5],
+      created_agent_id: "new-agent", smoke_test: { status: "passed", detail: "New reply" },
+    }) }))).json();
+    expect(body.data.state).toMatchObject({ status: "completed", created_agent_id: "new-agent", last_smoke_test: { status: "passed", detail: "New reply" } });
+    expect(body.data.state.completed_at).toEqual(expect.any(String));
+    expect(body.data.state.completed_steps).toContain(5);
+  });
+
+  it("preserves evidence when only tool ordering or KB representation changes", async () => {
+    platformConfig.findOne.mockResolvedValue({ setup_wizard: {
+      status: "completed", selection: { model_id: "example-model", mcp_server_ids: ["secondary", "knowledge-base", "primary"] },
+      created_agent_id: "example-agent", completed_steps: [1, 2, 3, 4, 5],
+      last_smoke_test: { status: "passed", detail: "Ready", tested_at: "2026-01-01T00:00:00Z" },
+    } });
+    platformConfig.updateOne.mockResolvedValueOnce({ matchedCount: 1 });
+    const { PATCH } = await import("../route");
+    const body = await (await PATCH(request({ method: "PATCH", body: JSON.stringify({
+      action: "complete", selection: { model_id: "example-model", mcp_server_ids: ["primary", "secondary"], enable_knowledge_base: true },
+    }) }))).json();
+    expect(body.data.state).toMatchObject({ status: "completed", created_agent_id: "example-agent", last_smoke_test: { status: "passed" } });
+    expect(body.data.state.completed_steps).toContain(5);
+  });
+
   it("persists completion and smoke-test evidence", async () => {
     platformConfig.findOne.mockResolvedValue({
       _id: "platform_settings",

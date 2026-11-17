@@ -2,6 +2,7 @@ import { PRODUCT_TOURS, type ProductTourId } from "@/lib/product-tour-catalog";
 
 export const PRODUCT_TOUR_VERSION = 1;
 export const PRODUCT_TOUR_REQUEST_EVENT = "caipe:product-tour-request";
+export const PRODUCT_TOUR_AGENT_CREATED_EVENT = "caipe:product-tour-agent-created";
 
 export type ProductTourStatus =
   | "not_started"
@@ -22,6 +23,9 @@ export interface ProductTourState {
 
 export interface ProductTourPayload {
   tour_id?: ProductTourId;
+  enabled?: boolean;
+  tours_enabled?: boolean;
+  enabled_tours?: ProductTourId[];
   auto_start: boolean;
   eligible: boolean;
   state: ProductTourState;

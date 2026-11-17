@@ -43,6 +43,8 @@ export const PRODUCT_TOURS: Record<ProductTourId, ProductTourDefinition> = {
     steps: [
       {
         eyebrow: "Welcome",
+        href: "/",
+        action: "Explore Home",
         target: '[aria-label="Application navigation"]',
         title: "Your workspace is ready",
         description:
@@ -102,7 +104,7 @@ export const PRODUCT_TOURS: Record<ProductTourId, ProductTourDefinition> = {
       {
         eyebrow: "You are all set",
         target: 'button[aria-label^="User menu"]',
-        href: "/settings/chat",
+        href: "/settings/chat-and-agents",
         action: "Personalize your workspace",
         title: "Make the workspace yours",
         description:
@@ -133,37 +135,37 @@ export const PRODUCT_TOURS: Record<ProductTourId, ProductTourDefinition> = {
           "Choose your provider and select saved credentials or save new encrypted values.",
         points: [
           "Name the connection and enter one or more model IDs.",
-          "Test Connection runs a short completion using these exact settings.",
+          "Test Connection runs a short completion using these exact settings; then choose Save Connection to register the connection and its models.",
         ],
         expected: "Your connection and models are available to agent builders.",
       },
       {
         eyebrow: "Model catalog",
         icon: "model",
-        title: "Register an available model",
-        target: '[data-tour="add-model"]',
+        title: "Find your registered model",
+        target: '[data-tour="model-catalog"]',
         href: "/dynamic-agents?tab=llm-models",
         action: "Open LLM Models",
         description:
-          "Choose Add Model to make a provider model available to agent builders.",
+          "Find the model registered by Save Connection in the previous step.",
         points: [
-          "Check the list first to avoid a duplicate.",
-          "Registration requires permission to manage models.",
+          "Each saved connection registers the model IDs you entered.",
+          "Use Add Model only to register a different provider model later.",
         ],
-        expected: "The model form opens.",
+        expected: "Your registered model is listed in LLM Models.",
       },
       {
         eyebrow: "Model details",
         icon: "model",
-        title: "Match the provider identifiers",
-        target: "#model-id",
+        title: "Inspect the registered model",
+        target: '[data-tour="model-catalog"]',
         description:
-          "Enter the provider’s exact Model ID, a display name, and its configured Provider name.",
+          "Check the registered model’s provider ID and connection before using it in an agent.",
         points: [
-          "Use the identifier your provider actually serves.",
-          "Choose Add Model to save the entry.",
+          "The provider ID matches the identifier your provider serves.",
+          "The saved connection supplies its endpoint and credentials; no duplicate registration is needed.",
         ],
-        expected: "The new model appears in LLM Models.",
+        expected: "The model is ready to test and select in Agent Builder.",
       },
       {
         eyebrow: "Try it",
@@ -291,12 +293,12 @@ export const PRODUCT_TOURS: Record<ProductTourId, ProductTourDefinition> = {
         expected: "The prompt describes the agent’s purpose and limits.",
       },
       {
-        eyebrow: "Tools",
+        eyebrow: "Tools & context",
         icon: "server",
-        title: "Select only the tools it needs",
-        target: '[data-tour="agent-tools"]',
+        title: "Review tools and optional context",
+        target: '[data-tour-agent-step] h3',
         description:
-          "Under MCP Tool Access, select the servers needed for the job, then choose Create Agent.",
+          "Select the tools needed for the job. Knowledge, Skills, and Advanced settings are optional. Review the configuration, then choose Create Agent.",
         points: [
           "A model-only agent can start without extra tools.",
           "Review the configuration before saving.",

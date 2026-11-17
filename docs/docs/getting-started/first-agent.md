@@ -14,7 +14,7 @@ connected accounts, and automation can be added later.
   or custom agents, and at most one user), or while saved setup is in progress.
 - The full wizard opens when the admin chooses to start or resume it.
 - Completed, dismissed, or hidden setup does not prompt automatically.
-- **Tour → Setup experience** in the top-right bar opens the setup page for
+- **CAIPE Tour → Setup experience** in the top-right bar opens the setup page for
   admins. Choose **Start setup**, **Resume setup**, or **Run setup again** there.
 - `SETUP_WIZARD_ENABLED=false` suppresses automatic onboarding. Manual setup
   and workspace tour replay remain available.
@@ -41,6 +41,8 @@ connected accounts, and automation can be added later.
 5. **Try your agent:** review the selection and run the test. Success means the
    agent returned a response. If it fails, check provider access and platform
    health, then retry. **Test later** saves your place without claiming success.
+   If a starter with that name already exists, setup creates a separately named
+   starter from your current choices and keeps the existing agent unchanged.
 
 ## Provider credentials
 
@@ -133,11 +135,15 @@ Manual setup in Admin and tour replay in Settings remain available.
 
 ## Explore the workspace
 
-Choose **Tour → Workspace tour** in the top-right application header, or
-**Take a tour** on the Setup Wizard page.
-The guide highlights the navigation while you keep using the workspace. Use
-**Next** and **Back** to explore Home, Chat, Skills, and personal settings; links
-open the related workspace using the usual unsaved-change protection.
+Choose **CAIPE Tour → Workspace tour** in the top-right application header, or
+**Take CAIPE Tour** on the Setup Wizard page.
+The guide docks beside the workspace on wide screens and below it on smaller
+screens, leaving the workspace controls available. It highlights navigation while
+you keep using the workspace. Use
+**Next** and **Back** to explore Home, Chat, Skills, and personal settings.
+The tour opens each step’s page automatically, including the correct workspace
+tab. Existing chats and forms on that page stay open. Unsaved drafts use the
+usual discard confirmation; canceling leaves the draft in place.
 
 Minimize the guide to a **Resume tour** button, or close it whenever you like.
 Progress is saved to your account. Replay it from the header or Settings.
@@ -146,7 +152,7 @@ you request them; setup keeps the next decision in focus.
 
 ## Task tours
 
-The top-right **Tour** menu includes short guides for:
+The top-right **CAIPE Tour** menu includes short guides for:
 
 - **Add a model:** connect its provider, register identifiers, and verify with chat.
 - **Add an MCP server:** configure the endpoint and authentication, then test a tool.
@@ -156,8 +162,24 @@ The top-right **Tour** menu includes short guides for:
 
 Each task tour saves its own progress to your account and starts only when requested.
 Choosing an unfinished task resumes it; choosing a completed or skipped task starts
-it again. Use **Next** after performing each action. **Finish tour** records guide
-completion; it does not verify or create the resource. Model, MCP, and agent guides
+it again. The agent guide follows the builder automatically: use the form’s
+**Next**, **Previous**, and **Create Agent** buttons. Other tours use the guide’s
+**Next** after each action. **Finish tour** records guide completion and offers
+**Back to Home** or **Stay here**. Returning Home also respects unsaved drafts.
+Finishing a tour does not verify or create the resource. Model, MCP, and agent guides
 appear when the agent workspace is enabled and your account has access. Connected
 credentials guidance appears when account connections and persistent storage are enabled.
 The underlying screens enforce the permissions required for each action.
+
+## CAIPE Tour controls
+
+- **Settings → Chat & agents → CAIPE Tour:** turn **Enable CAIPE Tour** off to
+  hide the menu and stop guided tours for your account across browsers. Turn it
+  back on there; saved progress is retained.
+- **Admin → Platform configuration → Tour → CAIPE Tour:** check the tours
+  users may see, then choose **Save tours**. Uncheck every tour to hide the menu
+  for everyone. Permissions and deployed features still limit available tours.
+- Existing deployments show all tours until an operator saves a selection.
+  Preferences and the operator selection are stored in MongoDB; no redeploy is needed.
+- Policy changes apply immediately to API requests. Other browser sessions update
+  on focus or within a minute. An operator change cannot re-enable a user’s opt-out.

@@ -74,7 +74,7 @@ from dynamic_agents.services.builtin_tools import (
 )
 from dynamic_agents.services.credential_exchange import CredentialExchangeClient
 from dynamic_agents.services.gridfs_store import MongoDBGridFSStore
-from dynamic_agents.services.llm_clients import close_model_transports, get_llm
+from dynamic_agents.services.llm_clients import LLMConfigError, close_model_transports, get_llm
 from dynamic_agents.services.mcp_client import (
     McpCredentialUnavailableError,
     build_mcp_connections,
@@ -853,7 +853,9 @@ class AgentRuntime:
     async def _resolve_model_connection(self, model_id: str) -> ResolvedModel | None:
         plan = await resolve_registered_model(self.settings, self._user, self._mongo_service, model_id)
         if plan is not None:
-            self._model_connection_revisions[model_id] = plan.revision
+            previous = self._model_connection_revisions.setdefault(model_id, plan.revision)
+            if previous != plan.revision:
+                raise LLMConfigError("Model credentials changed while building this agent; retry initialization.")
         return plan
 
     async def model_credentials_current(self, user: UserContext | None) -> bool:
