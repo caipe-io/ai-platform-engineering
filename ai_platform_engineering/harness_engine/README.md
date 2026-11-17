@@ -696,9 +696,11 @@ a completion marker. Agent spans, reported tools, and Deep Agents model callback
 use the span names and attributes expected by Scope's normalizer.
 
 Export is asynchronous and best-effort, using a private tracer provider that does
-not replace Langfuse's global provider. Scope captures identifiers, timing,
-outcomes, model names and available token usage. It does **not** capture prompts,
-responses, reasoning, tool arguments/results, skill contents or exception text.
-Topology and timing analysis are available; evaluations requiring captured content
-need a separate content-capture design. Scope and Langfuse traces need not be
-identical: they retain their own instrumentation and exporter behavior.
+not replace Langfuse's global provider. By default Scope captures identifiers,
+timing, outcomes, model names and available token usage, excluding prompts,
+responses, reasoning, tool arguments/results, skill contents and exception text.
+In-process Deep Agents can separately opt into
+[selected visible content capture](../dynamic_agents/README.md#visible-content-for-cognitive-assessment)
+for content-based assessment. Remote canonical tool events remain metadata-only.
+Scope and Langfuse traces need not be identical: they retain their own
+instrumentation and exporter behavior.
