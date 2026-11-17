@@ -1,0 +1,40 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+:root {
+  color-scheme: light dark;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px 40px;
+}
+
+section {
+  margin-top: 24px;
+}
+
+label {
+  display: block;
+  margin: 8px 0;
+}
+
+.hint {
+  font-size: 0.875rem;
+  opacity: 0.75;
+}
+
+pre {
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid rgb(148 163 184 / 40%);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

@@ -1,0 +1,93 @@
+# Catalog for the message actions demo app. Point AGENTIC_APPS_CONFIG_PATH at this file.
+agentic_apps:
+  packages:
+    - package_id: actions-demo
+      source: example
+      manifest:
+        id: actions-demo
+        displayName: Actions Demo
+        description: Test app for message actions in the host assistant.
+        apiVersion: "2.0"
+        version: "1.0.0"
+        ui:
+          profiles:
+            - id: hosted
+              mode: iframe
+          routes:
+            - id: home
+              path: /apps/actions-demo
+          assistant:
+            agentId: actions-demo-assistant
+            label: Ask Demo
+            name: Actions Demo Assistant
+            overlay: host
+            streamPath: /api/assistant/stream
+            supportedClients: [webui]
+            hostOptions:
+              version: "1.0"
+              requireConfiguration: true
+              messageActions:
+                - id: flag-answer
+                  label: Flag answer
+                  icon: flag
+                  path: /api/assistant/actions/flag
+                  dialog:
+                    title: Flag this answer
+                    description: Edit the text to give a corrected answer.
+                    submitLabel: Submit
+                    field:
+                      label: Corrected answer
+                      prefill: message
+                      optional: true
+                      maxLength: 60000
+                - id: mark
+                  label: Mark answer
+                  icon: check
+                  path: /api/assistant/actions/mark
+        api:
+          mounts: []
+        auth:
+          mode: app-scoped-token
+        runtime:
+          kind: proxied-next-zone
+          mountPath: /apps/actions-demo
+        surfaces:
+          showInHub: true
+        access:
+          requiredRoles: [user]
+          tokenScopes: [actions-demo:read, actions-demo:write]
+          policyActions:
+            - action: proxy:GET
+              defaultEffect: allow
+              requiredScopes: [actions-demo:read]
+            - action: stream
+              method: POST
+              path: /api/assistant/stream
+              defaultEffect: allow
+              requiredScopes: [actions-demo:write]
+            - action: flag
+              method: POST
+              path: /api/assistant/actions/flag
+              defaultEffect: allow
+              requiredScopes: [actions-demo:write]
+            - action: mark
+              method: POST
+              path: /api/assistant/actions/mark
+              defaultEffect: allow
+              requiredScopes: [actions-demo:write]
+        provides:
+          mcp: []
+          agents: []
+          workflows: []
+        consumes:
+          platformApis: []
+        requestedPermissions: []
+  installations:
+    - app_id: actions-demo
+      package_id: actions-demo
+      installed: true
+      enabled: true
+      visible: true
+      selected_ui_profile: hosted
+      # The demo app listens on loopback; the host proxies to it.
+      runtime_origin_override: http://127.0.0.1:3021

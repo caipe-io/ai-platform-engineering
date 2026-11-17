@@ -51,6 +51,8 @@ import React,{ useCallback,useEffect,useMemo,useRef,useState } from "react";
 import TextareaAutosize from "react-textarea-autosize";
 import { AgentTimeline,type SubagentLookupInfo } from "./DynamicAgentTimeline";
 import { Feedback,FeedbackButton } from "./FeedbackButton";
+import { MessageActionButtons } from "./MessageActionButtons";
+import type { MessageActionDeclaration } from "../../../app-sdk/assistant-options.mjs";
 import { MetadataInputForm,type InputField,type UserInputMetadata } from "./MetadataInputForm";
 import { AttachmentChips,type PendingAttachment } from "./AttachmentChips";
 import { MessageAttachments } from "./MessageAttachments";
@@ -133,6 +135,8 @@ interface ChatPanelProps {
   showAuditNotice?: boolean;
   /** App-owned copy for the host correction form; omitted for the standard disclaimer. */
   feedbackPrompt?: { message: string; actionLabel: string; trailingText?: string };
+  /** Actions the host app declared and enabled for this user; shown on finished assistant answers. */
+  messageActions?: MessageActionDeclaration[];
 }
 
 export function ChatPanel({
@@ -146,7 +150,7 @@ export function ChatPanel({
   clientContext: suppliedClientContext,
   composerDraft,
   onComposerDraftApplied,
-  requestOptions, composerHeader, suggestedPrompts, placeholder, emptyStateTitle, showAgentHeader = true, showAuditNotice = true, feedbackPrompt,
+  requestOptions, composerHeader, suggestedPrompts, placeholder, emptyStateTitle, showAgentHeader = true, showAuditNotice = true, feedbackPrompt, messageActions,
 }: ChatPanelProps) {
   // Derive display values from agent object
   const agentGradient = agent?.ui?.gradient_theme ?? null;
@@ -2683,6 +2687,7 @@ export function ChatPanel({
                           onFeedbackChange={(feedback) => handleFeedbackChange(msg.id, feedback)}
                           isRecovering={recoveringMessageId === msg.id}
                           conversationId={conversationId}
+                          messageActions={messageActions}
                           userDisplayName={userDisplayName}
                           showTimestamp={showTimestamps}
                           agentGradient={agentGradient}
@@ -3365,6 +3370,7 @@ interface ChatMessageProps {
   feedback?: Feedback;
   onFeedbackChange?: (feedback: Feedback) => void;
   conversationId?: string;
+  messageActions?: MessageActionDeclaration[];
   isRecovering?: boolean;
   userDisplayName?: string;
   showTimestamp?: boolean;
@@ -3407,6 +3413,7 @@ const ChatMessage = React.memo(function ChatMessage({
   feedback,
   onFeedbackChange,
   conversationId,
+  messageActions,
   isRecovering = false,
   userDisplayName = "You",
   showTimestamp = false,
@@ -3443,6 +3450,9 @@ const ChatMessage = React.memo(function ChatMessage({
     isStreaming, 
     effectiveTurnStatus
   );
+  // The server re-checks that the answer is stored; this only hides the control until it has finished.
+  const showMessageActions = Boolean(messageActions?.length) && !isStreaming && !isRecovering &&
+    message.isFinal !== false && (effectiveTurnStatus === undefined || effectiveTurnStatus === "done");
 
   return (
     <motion.div
@@ -3797,6 +3807,19 @@ const ChatMessage = React.memo(function ChatMessage({
                   feedback={feedback}
                   onFeedbackChange={onFeedbackChange}
                 />
+
+                {showMessageActions && messageActions && conversationId && agentId && (
+                  <>
+                    <div className="h-4 w-px bg-border/50" />
+                    <MessageActionButtons
+                      actions={messageActions}
+                      conversationId={conversationId}
+                      agentId={agentId}
+                      messageId={message.id}
+                      messageContent={displayContent}
+                    />
+                  </>
+                )}
               </motion.div>
             )}
 
