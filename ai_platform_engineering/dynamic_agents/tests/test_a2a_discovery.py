@@ -91,3 +91,16 @@ async def test_kubernetes_permissions_failure_is_actionable_and_not_an_empty_suc
     with pytest.raises(HTTPException, match="read-only") as error:
         await remote_agents.discover_remote_agents(remote_agents.DiscoveryRequest(source="kubernetes", namespace="primary"), None)
     assert error.value.status_code == 502
+
+
+async def test_kubernetes_failure_logs_context_without_upstream_credentials(monkeypatch, caplog):
+    monkeypatch.setattr(remote_agents, "get_settings", lambda: SimpleNamespace(remote_a2a_discovery_namespaces=["primary"], remote_a2a_cluster_domain="cluster.local"))
+    request = httpx.Request("GET", "https://kubernetes.default.svc", headers={"Authorization": "Bearer private-cluster-token"})
+    failure = httpx.HTTPStatusError("private-cluster-token private-provider-response", request=request, response=httpx.Response(403, request=request))
+    monkeypatch.setattr(remote_agents, "discover_services", AsyncMock(side_effect=failure))
+    with caplog.at_level("WARNING"), pytest.raises(HTTPException) as error:
+        await remote_agents.discover_remote_agents(remote_agents.DiscoveryRequest(source="kubernetes", namespace="primary"), None)
+    assert error.value.status_code == 502
+    assert "namespace=primary category=HTTPStatusError status=403" in caplog.text
+    assert "private-cluster-token" not in caplog.text and "private-provider-response" not in caplog.text
+    assert "private" not in error.value.detail

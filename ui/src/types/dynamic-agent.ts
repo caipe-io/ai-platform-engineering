@@ -62,6 +62,7 @@ export interface MCPServerConfig {
 }
 
 export interface RemoteAgentRegistryEntry {
+  framework?: import("@/lib/agent-framework").AgentFramework;
   _id: string;
   name: string;
   description?: string;

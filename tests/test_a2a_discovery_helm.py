@@ -1,14 +1,18 @@
 """Opt-in Kubernetes discovery permissions stay namespace-scoped and read-only."""
 
+import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 CHART = Path(__file__).resolve().parents[1] / "charts/ai-platform-engineering/charts/dynamic-agents"
 
 
 def render(*settings: str) -> list[dict]:
+    if shutil.which("helm") is None:
+        pytest.skip("helm is required for dynamic-agents chart tests")
     result = subprocess.run(["helm", "template", "example", str(CHART), "--namespace", "primary", "--set-json",
         'global={"image":{"tag":"test"}}', *settings], capture_output=True, text=True, check=True)
     return [doc for doc in yaml.safe_load_all(result.stdout) if doc]

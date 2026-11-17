@@ -523,10 +523,10 @@ dynamic_agents/
 
 ### Remote Agents registry and discovery
 
-Agent Builder uses **Advanced → Remote A2A Agents → Add from registry** to select registered agents and override their timeout. Discovery, registration, credentials, and shared connection edits stay in **Agents → Remote Agents**. Open that tab from the builder without losing its draft, then use **Refresh registry** to see newly registered entries. Removing a selection only removes the parent reference.
+Agent Builder uses **Advanced → Subagents → Add subagent** to select registered agents and override their timeout. Discovery, registration, credentials, and shared connection edits stay in **Agents → Remote Agents**. Open that tab from the builder without losing its draft, then use **Refresh agents** to see newly registered entries. Removing a selection only removes the parent reference.
 
 - Open **Agents > Remote Agents** to register, edit and remove A2A endpoints.
-  Agent builders use the same registry under **Advanced > Remote A2A Agents**.
+  Agent builders use the same registry under **Advanced > Subagents > Add subagent**.
 - Enter an agent base URL or a JSON Agent Card URL. **Discover Agent Card**
   previews the full card and fills the name, description and protocol metadata.
 - **Public URLs** discovers up to eight supplied URLs per request. It sends no
@@ -554,7 +554,7 @@ still require their exact origin in `REMOTE_A2A_ALLOWED_HTTP_ORIGINS`; discovery
 does not relax credential destination policy. No Secret or Pod permissions are
 needed. See the [A2A Agent Card specification](https://a2a-protocol.org/latest/specification/agent-card/).
 
-- Register endpoints in **Agents > Advanced > Remote A2A Agents** as a platform admin.
+- Register endpoints in **Agents > Remote Agents** as a platform admin.
 - Select multiple registry entries for an agent or its subagents. Each entry becomes a callable tool.
 - Configure an overall execution deadline (1–600 seconds); agent authors can override it per selection.
   The deadline includes credential resolution, Agent Card discovery, and execution; stream activity does not reset it.
@@ -588,7 +588,7 @@ Harness Engine image resolve the same version through their lockfiles.
 
 - [sample_a2a_agents](https://github.com/caipe-io/sample_a2a_agents) owns the Netutils and Weather example servers, their SDK adapter, tests, Docker image, and Compose/gateway configuration.
 - Follow that repository's setup guide to attach the examples to the running platform network. They are not bundled in the Dynamic Agents image or platform Compose files.
-- Register Netutils for direct A2A calls or Weather through its Keycloak JWT gateway in **Advanced > Remote A2A Agents**. Select both, optionally enable **Stream responses**, and **Save Changes**.
+- Register example agents for direct A2A calls or through a Keycloak JWT gateway in **Agents > Remote Agents**. Optionally enable **Stream responses** on each entry, then select them in **Advanced > Subagents > Add subagent** and **Save Changes**.
 
 ### Authentication and destination policy
 

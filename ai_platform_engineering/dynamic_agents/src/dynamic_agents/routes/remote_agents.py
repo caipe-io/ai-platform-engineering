@@ -106,6 +106,9 @@ async def discover_remote_agents(payload: DiscoveryRequest,
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except (OSError, TimeoutError, httpx.HTTPError, RuntimeError) as exc:
+            # Upstream exceptions may contain the service-account token or response body.
+            status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            logger.warning("Kubernetes discovery failed namespace=%s category=%s status=%s", payload.namespace, type(exc).__name__, status)
             raise HTTPException(status_code=502, detail="Kubernetes discovery unavailable; check the namespace configuration and read-only Service/EndpointSlice permissions") from exc
         return {"items": items}
     if not payload.urls:

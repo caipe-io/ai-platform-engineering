@@ -2676,3 +2676,29 @@ it("persists and reloads the configuration block without losing its recovery act
   await useChatStore.getState().loadMessagesFromServer(conv.id, { force: true });
   expect(useChatStore.getState().getActiveConversation()?.messages[0].error).toBe("HARNESS_AGENT_NOT_READY");
 });
+
+
+it("saves a rejected admission before a queued turn can replace the current turn", async () => {
+  jest.useFakeTimers();
+  try {
+    resetStore();
+    mockApiClient.addMessage.mockClear();
+    const conv = makeConversation({ id: "queued-readiness", agent_id: "example" });
+    conv.messages = [
+      makeMessage({ id: "rejected-user", turnId: "rejected", role: "user" }),
+      makeMessage({ id: "rejected-assistant", turnId: "rejected", role: "assistant", content: "Nothing was executed.", isFinal: true, error: "HARNESS_AGENT_NOT_READY" }),
+    ];
+    useChatStore.setState({ conversations: [conv], activeConversationId: conv.id });
+    useChatStore.getState().setConversationStreaming(conv.id, null);
+    const current = useChatStore.getState().conversations[0];
+    useChatStore.setState({ conversations: [{ ...current, messages: [...current.messages,
+      makeMessage({ id: "queued-user", turnId: "queued", role: "user" }),
+      makeMessage({ id: "queued-assistant", turnId: "queued", role: "assistant", content: "New turn", isFinal: false }),
+    ] }] });
+    await jest.advanceTimersByTimeAsync(500);
+    expect(mockApiClient.addMessage).toHaveBeenCalledWith(conv.id, expect.objectContaining({
+      message_id: "rejected-assistant", metadata: expect.objectContaining({ execution_error_code: "HARNESS_AGENT_NOT_READY", turn_id: "rejected" }),
+    }));
+    expect(mockApiClient.addMessage.mock.calls.map(([, message]) => message.message_id)).toEqual(["rejected-user", "rejected-assistant"]);
+  } finally { jest.useRealTimers(); }
+});

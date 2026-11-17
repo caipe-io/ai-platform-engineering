@@ -32,7 +32,7 @@ jest.mock("@/components/dynamic-agents/MiddlewarePicker", () => ({
   MiddlewarePicker: () => <div data-testid="middleware-picker" />,
 }));
 jest.mock("@/components/dynamic-agents/DelegatedAgentsPicker", () => ({
-  DelegatedAgentsPicker: () => <div data-testid="subagent-picker" />,
+  DelegatedAgentsPicker: ({ allowHarnessChildren }: { allowHarnessChildren: boolean }) => <div data-testid="subagent-picker" data-harness-children={String(allowHarnessChildren)} />,
 }));
 jest.mock("@/components/dynamic-agents/SkillsSelector", () => ({
   SkillsSelector: () => <div data-testid="skills-selector" />,
@@ -513,4 +513,25 @@ it.each(["claude_agent_sdk_remote", "claude_code_acp"])("preserves saved %s runt
   await flushAsync();
   const write = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/harness-engine/agent-drafts/validate"));
   expect(JSON.parse(String(write?.[1]?.body)).blueprint.harness).toEqual({ id: runtimeId, profile_id: "safe", options: { max_turns: 7 } });
+});
+
+it.each([true, false])("wires the advertised Harness delegation capability into the Subagents picker (%s)", async advertised => {
+  const fetchMock = mockFetch(null, true);
+  const implementation = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (url, init) => {
+    const response = await implementation(url, init);
+    if (!String(url).endsWith("/api/harness-engine/harnesses")) return response;
+    const body = await response.json();
+    const descriptor = body.data.harnesses[0];
+    descriptor.id = "dynamic_agents";
+    descriptor.capabilities = {
+      "multi_agent.delegation": { level: "native" },
+      ...(advertised ? { "multi_agent.harness_delegation": { level: "native" } } : {}),
+    };
+    return jsonResponse(body);
+  });
+  render(<DynamicAgentEditor agent={editAgent} onCancel={jest.fn()} onSave={jest.fn()} />);
+  await flushAsync();
+  fireEvent.click(screen.getByRole("button", { name: /Advanced/i }));
+  expect(screen.getByTestId("subagent-picker")).toHaveAttribute("data-harness-children", String(advertised));
 });

@@ -60,6 +60,7 @@ describe("RemoteAgentRegistry", () => {
 
     await screen.findByText("No A2A or configured ACP agents are available.");
     expect(container.querySelectorAll("form")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Add agent", exact: true }));
 
     fireEvent.change(screen.getByLabelText("Agent URL"), {
       target: { value: "https://agent.example.test/" },
@@ -69,6 +70,7 @@ describe("RemoteAgentRegistry", () => {
     expect(await screen.findByDisplayValue("Example Agent")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Stream responses" })).not.toBeChecked();
     fireEvent.click(screen.getByRole("checkbox", { name: "Stream responses" }));
+    fireEvent.change(screen.getByLabelText("Framework"), { target: { value: "google_adk" } });
     fireEvent.click(screen.getByRole("button", { name: "Register agent" }));
 
     await waitFor(() => {
@@ -79,6 +81,7 @@ describe("RemoteAgentRegistry", () => {
     });
     const posted = fetchMock.mock.calls.find(([, init]) => init?.method === "POST" && JSON.parse(init.body as string).streaming === true);
     expect(posted).toBeDefined();
+    expect(JSON.parse(posted![1]!.body as string).framework).toBe("google_adk");
     expect(onParentSubmit).not.toHaveBeenCalled();
   });
   it.each(["secret_ref", "provider_connection"])("saves the selected %s authentication reference", async (kind) => {
@@ -99,6 +102,7 @@ describe("RemoteAgentRegistry", () => {
     global.fetch = fetchMock;
     render(<form onSubmit={onParentSubmit}><RemoteAgentRegistry /></form>);
     await screen.findByText("No A2A or configured ACP agents are available.");
+    fireEvent.click(screen.getByRole("button", { name: "Add agent", exact: true }));
     fireEvent.change(screen.getByLabelText("Credential source"), { target: { value: kind } });
     fireEvent.change(screen.getByLabelText("Header name"), { target: { value: "X-Agent-Token" } });
     if (kind === "secret_ref") {
@@ -137,6 +141,7 @@ describe("RemoteAgentRegistry", () => {
       input = screen.getAllByLabelText("Name")[0];
     } else {
       await screen.findByText("No A2A or configured ACP agents are available.");
+      fireEvent.click(screen.getByRole("button", { name: "Add agent", exact: true }));
       input = screen.getByLabelText("Name");
       fireEvent.change(input, { target: { value: item.name } });
       fireEvent.change(screen.getByLabelText("Agent URL"), { target: { value: item.endpoint } });
@@ -158,6 +163,7 @@ describe("RemoteAgentRegistry", () => {
     global.fetch = fetcher;
     render(<RemoteAgentRegistry />);
     await screen.findByText("No A2A or configured ACP agents are available.");
+    fireEvent.click(screen.getByRole("button", { name: "Add agent", exact: true }));
     fireEvent.change(screen.getByLabelText("Credential source"), { target: { value: "caller_token" } });
     fireEvent.change(screen.getByLabelText("Header name"), { target: { value: "" } });
     fireEvent.change(screen.getByLabelText("Credential source"), { target: { value: "none" } });
@@ -190,12 +196,14 @@ describe("RemoteAgentRegistry", () => {
     const refresh = screen.getByRole("button", { name: "Refresh agents" });
     await waitFor(() => expect(refresh).toBeEnabled());
     if (first === "delete") {
-      fireEvent.click(screen.getByRole("button", { name: "Remove Race agent" }));
+      fireEvent.click(screen.getByRole("button", { name: "Details for Race agent" }));
+      fireEvent.click(screen.getByRole("button", { name: "Remove agent" }));
       expect(refresh).toBeDisabled();
       fireEvent.click(refresh);
       expect(reads).toBe(1);
       await act(async () => { finish(jsonResponse({})); });
     } else {
+      fireEvent.click(screen.getByRole("button", { name: "Add agent", exact: true }));
       fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New agent" } });
       fireEvent.change(screen.getByLabelText("Agent URL"), { target: { value: "https://new.example.test" } });
       fireEvent.click(refresh);
@@ -204,10 +212,51 @@ describe("RemoteAgentRegistry", () => {
       fireEvent.keyDown(screen.getByLabelText("Name"), { key: "Enter" });
       expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST" || init?.method === "DELETE")).toBe(false);
       await act(async () => { finish(jsonResponse({ items: [item], can_manage_registry: true })); });
-      fireEvent.click(await screen.findByRole("button", { name: "Remove Race agent" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close", exact: true }));
+      fireEvent.click(await screen.findByRole("button", { name: "Details for Race agent" }));
+      fireEvent.click(screen.getByRole("button", { name: "Remove agent" }));
     }
     await waitFor(() => expect(screen.queryByText("Race agent")).not.toBeInTheDocument());
     expect(fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
+  });
+
+
+  it.each(["endpoint", "credential", "header"])("clears an edited Agent Card preview when the %s changes", async field => {
+    const item = { _id: "example-agent", name: "Example agent", endpoint: "https://first.example.test", timeout_seconds: 120 };
+    const fetcher = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url).includes("available-subagents")) return jsonResponse({ agents: [] });
+      if (String(url).endsWith("/probe")) return jsonResponse({ agent_card: { skills: [{ name: "Original skill" }] } });
+      if (init?.method === "PUT") return jsonResponse({ ...item, ...JSON.parse(init.body as string) });
+      return jsonResponse({ items: [item], can_manage_registry: true });
+    });
+    global.fetch = fetcher;
+    render(<RemoteAgentRegistry />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Example agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "Test connection", exact: true }));
+    expect(await screen.findByText("Original skill")).toBeInTheDocument();
+    if (field === "endpoint") fireEvent.change(screen.getByLabelText("Agent URL"), { target: { value: "https://second.example.test" } });
+    else if (field === "credential") fireEvent.change(screen.getByLabelText("Credential source"), { target: { value: "none" } });
+    else fireEvent.change(screen.getByLabelText("Header name"), { target: { value: "X-Agent-Token" } });
+    expect(screen.queryByText("Original skill")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+    await waitFor(() => expect(fetcher.mock.calls.filter(([, init]) => init?.method === "PUT")).toHaveLength(1));
+  });
+
+  it("describes a legacy connection with the same caller-identity fallback used for its probe", async () => {
+    const item = { _id: "legacy", name: "Legacy agent", endpoint: "https://agent.example.test", timeout_seconds: 120 };
+    const fetcher = jest.fn(async (url: RequestInfo | URL) => {
+      if (String(url).includes("available-subagents")) return jsonResponse({ agents: [] });
+      if (String(url).endsWith("/probe")) return jsonResponse({ agent_card: {} });
+      return jsonResponse({ items: [item], can_manage_registry: true });
+    });
+    global.fetch = fetcher;
+    render(<RemoteAgentRegistry />);
+    fireEvent.click(await screen.findByRole("button", { name: "Details for Legacy agent" }));
+    expect(screen.getByText("Your user identity")).toBeInTheDocument();
+    expect(screen.queryByText("Public agent")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Read Agent Card" }));
+    await screen.findByRole("status");
+    expect(fetcher).toHaveBeenCalledWith("/api/remote-agents/probe", expect.objectContaining({ body: JSON.stringify({ endpoint: item.endpoint, credential_source: { kind: "caller_token", target: "header", name: "Authorization" } }) }));
   });
 
 });
