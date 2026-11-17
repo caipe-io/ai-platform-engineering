@@ -10,6 +10,7 @@ agenticApps:
   # Existing catalog ConfigMap in the release namespace; empty creates a default
   # catalog when External Apps is enabled. A custom volumeMount covering
   # config.AGENTIC_APPS_CONFIG_PATH takes precedence over this chart mount.
+  # This mount uses subPath: roll the UI Deployment after editing the ConfigMap.
   existingConfigMap: ""
   # Key containing the catalog YAML in existingConfigMap.
   configMapKey: "agentic-apps.yaml"
