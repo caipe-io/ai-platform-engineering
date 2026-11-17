@@ -1203,3 +1203,24 @@ See [the file map](./file-map.md). Every auth-relevant file is listed with what 
 - Disabling the feature or changing accounts aborts in-flight requests and clears
   stale status. Transient service failures remain retryable; server authorization
   checks are unchanged.
+
+
+## Revoking conversation shares and permanent deletion
+
+- Removing a user or team from the sharing dialog revokes their conversation
+  reader and writer grants and updates the stored sharing state. Downgrading
+  a recipient to view-only removes their writer grant. These operations still
+  require the conversation's share permission.
+- Share mutations use the authorization reconciler so successful changes
+  invalidate cached decisions. If a grant or downgrade fails, the UI reports
+  an error rather than recording a successful permission change.
+- Permanent deletion enumerates all pages of conversation grants, including
+  service-account grants, and revokes them before removing sharing records,
+  messages, and applicable agent checkpoints. The conversation record is
+  removed last, keeping failed cleanup available for retry.
+- Before qualifying a release, verify revoked recipients cannot read or write
+  the conversation and verify permanent deletion leaves no conversation
+  grants. Unrelated access, such as ownership or a separate team grant, can
+  still authorize a recipient whose individual share was removed.
+- This cleanup applies to new permanent deletions. Existing grants orphaned by
+  earlier deletions require a separately scoped inventory and cleanup.
