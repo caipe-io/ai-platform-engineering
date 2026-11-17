@@ -109,7 +109,8 @@ USER appuser
 # AWS MCP requires both CLIs, plus jq for its jq_filter option. Verify the final
 # user's PATH and log versions; missing packages must fail image publication.
 RUN if [ "$AGENT_NAME" = "aws" ]; then \
-        aws --version && kubectl version --client=true && jq --version; \
+        aws --version && kubectl version --client=true && jq --version && \
+        python -c 'import asyncio, server; out = asyncio.run(server._apply_jq("{\"Account\": \"123456789012\"}", ".Account")); assert out.strip() == "\"123456789012\"", out'; \
     fi
 
 EXPOSE 8000
