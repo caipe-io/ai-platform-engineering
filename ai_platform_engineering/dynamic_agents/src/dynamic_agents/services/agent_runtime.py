@@ -29,6 +29,7 @@ from deepagents import create_deep_agent
 from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.state import StateBackend
 from deepagents.backends.store import StoreBackend
+from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.skills import SkillsMiddleware
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT, SubAgentMiddleware
 from jinja2 import ChainableUndefined, TemplateSyntaxError
@@ -819,10 +820,10 @@ class AgentRuntime:
             return (ns[0], ns[1], ns[2])
         return (self.config.id, self._session_id, "filesystem")
 
-    def _build_skill_store_backend(self, files: dict[str, Any]) -> StoreBackend:
+    def _build_skill_store_backend(self, files: dict[str, Any], *, agent_id: str | None = None) -> StoreBackend:
         """Seed a private immutable skill snapshot without touching shared files."""
         digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
-        namespace = (self.config.id, self._session_id, f"skills-{digest}")
+        namespace = (agent_id or self.config.id, self._session_id, f"skills-{digest}")
         for path, data in files.items():
             self._store.put(namespace, path.removeprefix("/skills"), data)
         return ReadOnlySkillsBackend(store=self._store, namespace=lambda runtime: namespace)
@@ -1624,6 +1625,34 @@ class AgentRuntime:
                     enable_prompt_cache=self._prompt_cache_enabled(),
                 ),
             }
+
+            if subagent_config.skills:
+                skills_data = load_skills(
+                    subagent_config.skills,
+                    mongodb_uri=self.settings.mongodb_uri,
+                    mongodb_database=self.settings.mongodb_database,
+                    strict=bool(subagent_config.skill_pins),
+                )
+                verify_skill_pins(skills_data, subagent_config.skill_pins)
+                missing, error = detect_missing_skills(subagent_config.skills, skills_data)
+                if missing:
+                    raise ValueError(f"Subagent '{ref.agent_id}': {error}")
+                files, sources = build_skills_files(skills_data, pinned_skill_ids=subagent_config.skill_pins)
+                snapshot = self._build_skill_store_backend(files, agent_id=ref.agent_id)
+                default_backend = (
+                    StoreBackend(store=self._store, namespace=lambda runtime: self._resolve_fs_namespace())
+                    if self._resolve_backend_type() == BACKEND_STORE
+                    else StateBackend
+                )
+                backend = CompositeBackend(default=default_backend, routes={"/skills/": snapshot})
+                # Deep Agents replaces its default filesystem middleware when an
+                # explicit instance is supplied. Discovery and read_file must use
+                # the same child-owned snapshot, including ancillary files.
+                subagent_dict["middleware"] = [
+                    FilesystemMiddleware(backend=backend),
+                    SkillsMiddleware(backend=backend, sources=sources),
+                    *subagent_dict["middleware"],
+                ]
 
             if self._uses_remote_subagents(subagent_config):
                 remote_specs = [create_remote_agent_subagent(tool) for tool in await self._build_remote_agent_tools(subagent_config)]
