@@ -109,6 +109,17 @@ model, resource, collection, secret, repository, and filter controls.
 | Action and navigation menus | Workflow execution, widget customization, notifications, navigation flyouts, and file-tree actions invoke commands rather than persist a selected value, so they remain focused menu/popover components. |
 | Structured multi-pickers | Dynamic-agent tools, skills, middleware, data sources, subagents, and workflow tools. These select structured configuration rather than one entity value and remain domain components. |
 
+### Agent Builder MCP tools
+
+- Selecting a server or **Select all listed tools** saves the advertised tool
+  names. Later catalog additions require an explicit selection.
+- Catalog discovery uses the existing authorized probe route with
+  `list_only=true`; it does not invoke a smoke-test tool. A failed or empty
+  catalog leaves an unselected server unselected.
+- Existing wildcard selections remain readable. **Select all listed tools**
+  replaces a wildcard with the current tool names. Removing the final tool
+  removes the server entry, because a legacy empty array means all tools.
+
 The targeted team and agent migrations already present on `main` remain the
 pattern:
 
