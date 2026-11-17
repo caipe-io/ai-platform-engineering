@@ -273,6 +273,8 @@ export function ProductTourGate(): React.ReactElement | null {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestVersion = useRef(0);
+  const activeDialogVersion = useRef(0);
+  const [dialogVersion, setDialogVersion] = useState(0);
 
   const load = useCallback(async (restart = false, id: ProductTourId = "workspace") => {
     const version = ++requestVersion.current;
@@ -288,6 +290,8 @@ export function ProductTourGate(): React.ReactElement | null {
         next = { ...next, state: await patchTour("reset", undefined, id) };
         if (requestVersion.current !== version) return;
       }
+      activeDialogVersion.current = version;
+      setDialogVersion(version);
       setPayload({ ...next, tour_id: id });
       setOpen(true);
     } catch (reason) {
@@ -302,6 +306,8 @@ export function ProductTourGate(): React.ReactElement | null {
     void requestJson<ApiEnvelope<ProductTourPayload>>("/api/onboarding/product-tour")
       .then((response) => {
         if (cancelled || requestVersion.current !== version) return;
+        activeDialogVersion.current = version;
+        setDialogVersion(version);
         setPayload({ ...response.data, tour_id: "workspace" });
         setOpen(response.data.auto_start);
       })
@@ -323,7 +329,7 @@ export function ProductTourGate(): React.ReactElement | null {
 
   return <>
     {error && <p role="alert" className="fixed bottom-4 right-4 z-[80] max-w-sm rounded-xl border bg-card p-4 text-sm shadow-lg">{error}</p>}
-    {payload && <ProductTourDialog key={payload.tour_id ?? "workspace"} initialPayload={payload} open={open} onOpenChange={setOpen} />}
+    {payload && <ProductTourDialog key={dialogVersion} initialPayload={payload} open={open} onOpenChange={(nextOpen) => { if (activeDialogVersion.current === dialogVersion) setOpen(nextOpen); }} />}
   </>;
 }
 

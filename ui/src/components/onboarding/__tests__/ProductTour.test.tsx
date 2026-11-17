@@ -217,6 +217,28 @@ describe("ProductTourGate", () => {
     })));
   });
 
+  it.each(["dismiss", "complete"] as const)("ignores a delayed %s from a replaced tour", async (action) => {
+    let finish!: (value: Response) => void;
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (!init?.method) {
+        const payload = tourPayload("in_progress");
+        if (!String(input).includes("?tour=")) payload.data.state.current_step = action === "complete" ? 5 : 1;
+        return response(payload);
+      }
+      if (JSON.parse(String(init.body)).action === action) return new Promise<Response>((resolve) => { finish = resolve; });
+      return originalFetch(input, init);
+    });
+    render(<ProductTourGate />);
+    await screen.findByRole("heading", { name: action === "complete" ? "Make the workspace yours" : "Your workspace is ready" });
+    fireEvent.click(screen.getByRole("button", { name: action === "complete" ? "Finish tour" : "Close tour" }));
+    await waitFor(() => expect(finish).toBeDefined());
+    act(() => requestProductTour(false, "chat"));
+    await screen.findByRole("heading", { name: "Choose who you want to work with" });
+    await act(async () => finish(await response(tourPayload(action === "complete" ? "completed" : "dismissed"))));
+    expect(screen.getByRole("heading", { name: "Choose who you want to work with" })).toBeInTheDocument();
+  });
+
   it("returns a resumed agent guide to the start when its unsaved form is gone", async () => {
     render(<ProductTourDialog open initialPayload={{ ...tourPayload("in_progress", false).data, tour_id: "add-agent", state: { ...tourPayload().data.state, status: "in_progress", current_step: 3 } }} onOpenChange={jest.fn()} />);
     expect(await screen.findByRole("heading", { name: "Create an agent for one purpose" })).toBeInTheDocument();
