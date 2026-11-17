@@ -541,16 +541,19 @@ def _instantiate_model(
 def _build_llm_tool_selector(params: dict[str, Any]) -> LLMToolSelectorMiddleware:
     """Build LLMToolSelectorMiddleware from params.
 
-    Requires ``model_id`` and ``model_provider`` in params to instantiate
-    the selector LLM.  Falls back to no model (uses agent's own model)
-    if not provided.
+    Uses a resolved saved connection when present, otherwise instantiates
+    ``model_id`` with ``model_provider``. Without either configuration,
+    uses the agent's own model.
     """
     kwargs: dict[str, Any] = {"max_tools": params.get("max_tools", 10)}
 
     model_id = params.get("model_id")
     model_provider = params.get("model_provider")
-    if model_id and model_provider:
-        kwargs["model"] = params["resolved_model"].instantiate(streaming=params.get("model_streaming")) if params.get("resolved_model") else _instantiate_model(model_id, model_provider, params.get("model_streaming"))
+    resolved_model = params.get("resolved_model")
+    if resolved_model is not None:
+        kwargs["model"] = resolved_model.instantiate(streaming=params.get("model_streaming"))
+    elif model_id and model_provider:
+        kwargs["model"] = _instantiate_model(model_id, model_provider, params.get("model_streaming"))
 
     return LLMToolSelectorMiddleware(**kwargs)
 
@@ -558,16 +561,20 @@ def _build_llm_tool_selector(params: dict[str, Any]) -> LLMToolSelectorMiddlewar
 def _build_model_fallback(params: dict[str, Any]) -> ModelFallbackMiddleware | None:
     """Build ModelFallbackMiddleware from params.
 
-    Requires ``model_id`` and ``model_provider`` to specify the fallback
-    model.  Returns None if no model is configured (middleware is skipped).
+    Uses a resolved saved connection or a ``model_id``/``model_provider``
+    pair. Returns None if no model is configured (middleware is skipped).
     """
     model_id = params.get("model_id")
     model_provider = params.get("model_provider")
-    if not model_id or not model_provider:
+    resolved_model = params.get("resolved_model")
+    if resolved_model is not None:
+        fallback_model = resolved_model.instantiate(streaming=params.get("model_streaming"))
+    elif model_id and model_provider:
+        fallback_model = _instantiate_model(model_id, model_provider, params.get("model_streaming"))
+    else:
         logger.warning("model_fallback enabled but no model_id/model_provider configured, skipping")
         return None
 
-    fallback_model = params["resolved_model"].instantiate(streaming=params.get("model_streaming")) if params.get("resolved_model") else _instantiate_model(model_id, model_provider, params.get("model_streaming"))
     return ModelFallbackMiddleware(fallback_model)
 
 

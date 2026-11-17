@@ -348,10 +348,23 @@ export async function createModelConnection(
     return { connection: { ...connection, state: "ready" as const }, models };
   } catch (error) {
     // Publication may have committed even when its acknowledgement was lost.
-    // Confirm that the whole group is unavailable before destroying any resource.
+    // Never roll back a ready group that a concurrent replay may have returned.
     try {
-      const fenced = await connections.updateOne({ _id: id }, { $set: { state: "failed" } });
-      if (fenced.matchedCount !== 1) throw new Error("Connection recovery fence missing");
+      const fenced = await connections.updateOne(
+        { _id: id, state: "pending" },
+        { $set: { state: "failed" } },
+      );
+      if (fenced.matchedCount !== 1) {
+        const current = await connections.findOne({ _id: id });
+        if (current?.state === "ready") {
+          return {
+            connection: current,
+            models: await modelCollection.find({ connection_id: id }).toArray(),
+          };
+        }
+        if (current?.state !== "failed")
+          throw new Error("Connection recovery fence could not be confirmed");
+      }
     } catch {
       console.error("Model connection publication outcome needs repair", { connection_id: id });
       throw new ApiError("The publication outcome is uncertain. Retry this operation before creating another connection.", 503, "MODEL_CONNECTION_RECOVERY_PENDING");

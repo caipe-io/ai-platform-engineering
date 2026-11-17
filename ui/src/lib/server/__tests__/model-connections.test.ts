@@ -357,29 +357,59 @@ it.each([
 );
 
 
-it.each([false, true])("fences an acknowledged-or-uncertain publication before cleanup (fence unavailable=%s)", async fenceUnavailable => {
+it.each([false, true])("preserves a committed publication after a lost acknowledgement (concurrent replay=%s)", async concurrentReplay => {
+  const connections = collection(connectionRows);
+  const models = collection(modelRows);
+  (getCollection as jest.Mock).mockImplementation(async name => name === "llm_models" ? models : connections);
+  const input = { ...draft, fields: { api_key: "key-ref" }, values: { endpoint: "https://example.test" }, name: "Example", models: ["example-model"], operation_id: "00000000-0000-4000-8000-000000000012" };
+  let replay: Awaited<ReturnType<typeof createModelConnection>> | undefined;
+  const update = connections.updateOne.getMockImplementation()!;
+  connections.updateOne.mockImplementation(async (query, change) => {
+    const result = await update(query, change);
+    if (change.$set.state === "ready") {
+      if (concurrentReplay) replay = await createModelConnection(actor, input);
+      throw new Error("publication acknowledgement lost");
+    }
+    return result;
+  });
+
+  const created = await createModelConnection(actor, input);
+
+  expect(created.connection.state).toBe("ready");
+  expect(connections.updateOne).toHaveBeenCalledWith(
+    { _id: input.operation_id, state: "pending" }, { $set: { state: "failed" } },
+  );
+  expect(models.deleteMany).not.toHaveBeenCalled();
+  expect(secretService.deleteSecret).not.toHaveBeenCalled();
+  expect(connectionRows).toEqual([created.connection]);
+  expect(modelRows).toEqual(created.models);
+  expect(await publishedModels(created.models)).toEqual(created.models);
+  if (concurrentReplay) expect(created).toEqual(replay);
+});
+
+it.each([false, true])("cleans up only after fencing a pending publication (fence unavailable=%s)", async fenceUnavailable => {
   const connections = collection(connectionRows);
   const models = collection(modelRows);
   (getCollection as jest.Mock).mockImplementation(async name => name === "llm_models" ? models : connections);
   const update = connections.updateOne.getMockImplementation()!;
   connections.updateOne.mockImplementation(async (query, change) => {
+    if (change.$set.state === "ready") throw new Error("publication unavailable");
     if (change.$set.state === "failed" && fenceUnavailable) throw new Error("fence unavailable");
-    const result = await update(query, change);
-    if (change.$set.state === "ready") throw new Error("publication acknowledgement lost");
-    return result;
+    return update(query, change);
   });
   const remove = models.deleteMany.getMockImplementation()!;
   models.deleteMany.mockImplementation(async query => {
     expect(connectionRows[0].state).toBe("failed");
     return remove(query);
   });
-  const input = { ...draft, name: "Example", models: ["example-model"], operation_id: "00000000-0000-4000-8000-000000000012" };
+  const input = { ...draft, name: "Example", models: ["example-model"], operation_id: "00000000-0000-4000-8000-000000000014" };
+
   await expect(createModelConnection(actor, input)).rejects.toMatchObject({ code: fenceUnavailable ? "MODEL_CONNECTION_RECOVERY_PENDING" : "MODEL_CONNECTION_OPERATION_FAILED" });
+
   if (fenceUnavailable) {
     expect(models.deleteMany).not.toHaveBeenCalled();
     expect(modelRows).toHaveLength(1);
-    expect(connectionRows[0].state).toBe("ready");
-    await expect(createModelConnection(actor, input)).resolves.toMatchObject({ models: [expect.objectContaining({ upstream_model_id: "example-model" })] });
+    expect(connectionRows[0].state).toBe("pending");
   } else {
     expect(models.deleteMany).toHaveBeenCalled();
     expect(modelRows).toHaveLength(0);
