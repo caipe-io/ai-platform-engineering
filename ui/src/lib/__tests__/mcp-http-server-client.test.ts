@@ -1,6 +1,6 @@
 /** @jest-environment node */
 import { NextRequest } from "next/server";
-import { callHttpMcpTool, listHttpMcpTools } from "../mcp-http-server-client";
+import { callHttpMcpTool, listDirectHttpMcpTools, listHttpMcpTools } from "../mcp-http-server-client";
 import { resolveMcpHeaderCredentials } from "@/lib/mcp-credential-headers";
 
 jest.mock("@/lib/api-middleware", () => ({ ApiError: jest.requireActual("@/lib/api-error").ApiError }));
@@ -19,6 +19,16 @@ const input = {
   server: { _id: "example", name: "Example", transport: "http", enabled: true, source: "agentgateway", endpoint: "http://gateway.example.test/mcp/example" } as const,
   serverId: "example", agentId: "agent-example", toolName: "lookup", args: {},
 };
+
+it("keeps direct health catalog probes independent of caller-authorized discovery", async () => {
+  fetchMock.mockResolvedValueOnce(Response.json({ result: { tools: [{ name: "lookup" }] } }, { headers: { "mcp-session-id": "direct-session" } }));
+  const catalog = await listDirectHttpMcpTools({ endpoint: "https://health.example.test/mcp" });
+  expect(catalog).toMatchObject({ tools: [{ name: "lookup" }], sessionId: "direct-session" });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  const headers = fetchMock.mock.calls[0][1].headers;
+  expect(headers).not.toHaveProperty("Authorization");
+  expect(headers).not.toHaveProperty("X-CAIPE-Agent-Context");
+});
 
 beforeEach(() => {
   fetchMock.mockReset();
@@ -95,7 +105,7 @@ it.each([0, 1, 2, 3].flatMap(stage => [401, 403].map(status => ({ stage, status 
   },
 );
 
-it("initializes a strict catalog session before listing tools, without invoking a tool", async () => {
+it.each([undefined, "application/json"])("initializes a strict catalog session with an empty %s notification response", async contentType => {
   let ready = false;
   fetchMock.mockImplementation(async (_url, options: RequestInit) => {
     const payload = JSON.parse(options.body as string);
@@ -106,7 +116,7 @@ it("initializes a strict catalog session before listing tools, without invoking 
       expect(headers.Authorization).toBe("Bearer example-user-token");
       expect(payload).not.toHaveProperty("id");
       ready = true;
-      return new Response(null, { status: 202 });
+      return new Response(null, { status: 202, headers: contentType ? { "content-type": contentType } : undefined });
     }
     if (!headers["mcp-session-id"]) return new Response(null, { status: 400 });
     expect(ready).toBe(true);
@@ -117,6 +127,62 @@ it("initializes a strict catalog session before listing tools, without invoking 
   expect(fetchMock.mock.calls.map(([, options]) => JSON.parse(options.body).method)).toEqual([
     "tools/list", "initialize", "notifications/initialized", "tools/list",
   ]);
+});
+
+it.each([false, true])("reads all tools/list pages through the session fallback (%s)", async fallback => {
+  const seen: string[] = [];
+  fetchMock.mockImplementation(async (_url, options: RequestInit) => {
+    const payload = JSON.parse(options.body as string);
+    const headers = options.headers as Record<string, string>;
+    seen.push(payload.method);
+    if (fallback && seen.length === 1) return new Response(null, { status: 400 });
+    if (payload.method === "initialize") return Response.json({ result: {} }, { headers: { "mcp-session-id": "paged-session" } });
+    if (payload.method === "notifications/initialized") return new Response(null, { status: 202, headers: { "content-type": "application/json" } });
+    expect(payload.method).toBe("tools/list");
+    if (fallback || payload.params.cursor) expect(headers["mcp-session-id"]).toBe("paged-session");
+    expect(headers.Authorization).toBe("Bearer example-user-token");
+    const cursor = payload.params.cursor;
+    const result = !cursor ? { tools: [{ name: "first" }], nextCursor: "second-page" }
+      : cursor === "second-page" ? { tools: [{ name: "second" }], nextCursor: "final-page" } : { tools: [{ name: "lookup" }] };
+    return Response.json({ result }, { headers: { "mcp-session-id": "paged-session" } });
+  });
+  const catalog = await listHttpMcpTools(input);
+  expect(catalog.tools.map(tool => tool.name)).toEqual(["first", "second", "lookup"]);
+  expect(catalog.sessionId).toBe("paged-session");
+  expect(seen.filter(method => method === "tools/list")).toHaveLength(fallback ? 4 : 3);
+  const cursors = fetchMock.mock.calls.map(([, options]) => JSON.parse(options.body))
+    .filter(payload => payload.method === "tools/list").map(payload => payload.params.cursor);
+  expect(cursors).toEqual(fallback ? [undefined, undefined, "second-page", "final-page"] : [undefined, "second-page", "final-page"]);
+  expect(seen).not.toContain("tools/call");
+});
+
+it("rejects a repeated catalog cursor without retrying or returning a partial list", async () => {
+  fetchMock.mockImplementation(async () => Response.json({ result: { tools: [{ name: "lookup" }], nextCursor: "same-cursor" } }));
+  await expect(listHttpMcpTools(input)).rejects.toMatchObject({ code: "MCP_LIST_INVALID" });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+it.each([401, 403])("preserves authorization failure on a later catalog page (HTTP %s)", async status => {
+  fetchMock.mockResolvedValueOnce(Response.json({ result: { tools: [], nextCursor: "next-page" } }))
+    .mockResolvedValueOnce(new Response(null, { status, headers: { "content-type": "application/json" } }));
+  await expect(listHttpMcpTools(input)).rejects.toMatchObject({ code: status === 401 ? "MCP_AUTH_REQUIRED" : "MCP_TOOL_ACCESS_DENIED" });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+it("keeps the caller's cancellation budget across catalog pages", async () => {
+  const caller = new AbortController();
+  let started: () => void = () => {};
+  const pageStarted = new Promise<void>(resolve => { started = resolve; });
+  fetchMock.mockResolvedValueOnce(Response.json({ result: { tools: [], nextCursor: "next-page" } }))
+    .mockImplementationOnce((_url, options: RequestInit) => new Promise((_resolve, reject) => {
+      options.signal!.addEventListener("abort", () => reject(new Error("page-aborted")), { once: true });
+      started();
+    }));
+  const rejected = expect(listHttpMcpTools({ ...input, signal: caller.signal })).rejects.toThrow("page-aborted");
+  await pageStarted;
+  caller.abort();
+  await rejected;
+  expect(fetchMock).toHaveBeenCalledTimes(2);
 });
 
 it.each([500, 200])("stops catalog discovery when its initialized notification fails with HTTP %s", async status => {

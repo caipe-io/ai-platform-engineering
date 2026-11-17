@@ -163,7 +163,10 @@ and skills later without rebuilding the agent.
   permission denials retain the existing unavailable-tool behavior. Execution-time
   authorization checks remain authoritative.
   Session-based MCP catalog reads send the initialized notification before
-  listing tools. Failures log only agent/server IDs and a bounded diagnostic
+  listing tools and follow pagination within the shared readiness deadline.
+  Repeated cursors or catalogs exceeding 100 pages fail instead of producing a
+  partial catalog. Empty successful notification responses are accepted even
+  when labeled JSON. Failures log only agent/server IDs and a bounded diagnostic
   category, excluding credentials and private upstream details.
 - Each picker catalog becomes usable independently. Requests and response-body
   reads time out after ten seconds; refresh cancels pending reads and retries
