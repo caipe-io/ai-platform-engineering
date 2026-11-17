@@ -62,6 +62,18 @@ Create the name of the service account to use
 {{- end }}
 
 {{/*
+Resolve the ExternalSecret API version within this chart so standalone installs work.
+Keep v1beta1 as the compatibility default; v1 can be selected through global values.
+*/}}
+{{- define "agent.externalSecrets.apiVersion" -}}
+    {{- $global := .Values.global | default dict -}}
+    {{- $externalSecrets := $global.externalSecrets | default dict -}}
+    {{- $llmSecrets := $global.llmSecrets | default dict -}}
+    {{- $llmExternalSecrets := $llmSecrets.externalSecrets | default dict -}}
+    {{- coalesce $externalSecrets.apiVersion $llmExternalSecrets.apiVersion "v1beta1" -}}
+{{- end -}}
+
+{{/*
 Determine if external secrets are enabled for llmSecrets - prioritize global
 */}}
 {{- define "agent.llmSecrets.externalSecrets.enabled" -}}

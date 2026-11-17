@@ -79,7 +79,8 @@ global:
     secretName: "llm-secret"
   externalSecrets:
     enabled: false
-    apiVersion: "v1beta1"  # API version for ExternalSecret resources. Options: "v1" or "v1beta1". Defaults to "v1beta1" if not specified.
+    # -- ExternalSecret API version: v1 or v1beta1. Empty uses global.llmSecrets.externalSecrets.apiVersion, then v1beta1. A nonempty value takes precedence over the legacy setting.
+    apiVersion: ""
   # RAG Stack configuration
   rag:
     enableGraphRag: true
