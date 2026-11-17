@@ -45,7 +45,7 @@ it("does not expose discovery or write controls to registry readers", async () =
   render(<RemoteAgentsTab />);
   await screen.findByText("Example");
   expect(screen.queryByRole("button", { name: "Discover agents", exact: true })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Add agent", exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Connect Remote Agent", exact: true })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Register agent" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Edit Example" })).not.toBeInTheDocument();
 });

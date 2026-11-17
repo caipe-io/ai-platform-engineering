@@ -7,6 +7,7 @@ export const AGENT_FRAMEWORKS = {
   claude_agent_sdk: getHarnessPresentation("claude_agent_sdk"),
   google_adk: { label: "Google ADK", logoSrc: "/provider-logos/adk.svg" },
   deepagents: getHarnessPresentation("dynamic_agents"),
+  agentcore: getHarnessPresentation("agentcore"),
 } as const;
 
 export type AgentFramework = keyof typeof AGENT_FRAMEWORKS;

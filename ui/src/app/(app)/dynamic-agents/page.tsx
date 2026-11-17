@@ -25,7 +25,7 @@ import { useUnsavedChangesStore } from "@/store/unsaved-changes-store";
 import { usePathname,useRouter,useSearchParams } from "next/navigation";
 import React from "react";
 
-const RESOURCE_QUERY_KEYS = ["agent", "server", "model", "step"] as const;
+const RESOURCE_QUERY_KEYS = ["agent", "server", "model", "step", "create"] as const;
 
 function DynamicAgentsPageContent() {
   const router = useRouter();
@@ -43,8 +43,11 @@ function DynamicAgentsPageContent() {
   );
 
   const requestedTab = searchParams.get("tab") ?? "agents";
-  const activeTab = visibleTabs.has(requestedTab) ? requestedTab : "agents";
+  const activeTab = requestedTab === "remote-agents" ? "agents" : visibleTabs.has(requestedTab) ? requestedTab : "agents";
   const selectedAgentId = searchParams.get("agent");
+  const creatingAgent = !selectedAgentId && searchParams.get("create") === "true";
+  const createdFromCatalog = React.useRef(false);
+  React.useEffect(() => { if (!creatingAgent) createdFromCatalog.current = false; }, [creatingAgent]);
   const selectedServerId = searchParams.get("server");
   const selectedModelId = searchParams.get("model");
   const [selectedAgentName, setSelectedAgentName] = React.useState<string | null>(null);
@@ -91,15 +94,31 @@ function DynamicAgentsPageContent() {
       params.set(key, id);
       if (key === "agent") params.set("step", "basic");
     }
+    if (key === "agent" && !id && creatingAgent) {
+      if (createdFromCatalog.current) router.back();
+      else router.replace(hrefFor(params));
+      return;
+    }
+    if (hrefFor(params) !== hrefFor(new URLSearchParams(searchParams.toString()))) router.push(hrefFor(params));
+  }
+
+  function startCreatingAgent() {
+    const params = new URLSearchParams(searchParams.toString());
+    clearResourceSelection(params);
+    params.set("tab", "agents");
+    params.set("create", "true");
+    params.set("step", "basic");
+    createdFromCatalog.current = true;
     router.push(hrefFor(params));
   }
 
   function setAgentStep(step: AgentSetupStep) {
-    if (!selectedAgentId) return;
+    if (!selectedAgentId && !creatingAgent) return;
     const params = new URLSearchParams(searchParams.toString());
     clearResourceSelection(params);
     params.set("tab", "agents");
-    params.set("agent", selectedAgentId);
+    if (creatingAgent) params.set("create", "true");
+    else params.set("agent", selectedAgentId!);
     params.set("step", step);
     router.replace(hrefFor(params));
   }
@@ -135,7 +154,7 @@ function DynamicAgentsPageContent() {
     .flatMap((item) => item.children ?? [item])
     .find((item) => item.id === activeTab)!;
   const activeDescription = {
-    agents: "Build agents and choose the instructions, tools, and model they use.",
+    agents: "Build, connect, and chat with your team’s agents.",
     conversations: "Review agent conversations and manage their checkpoint history.",
     "llm-models": "Register the provider and model identifiers available to agents.",
     "mcp-servers": "Configure MCP connections and authorize each tool call through AgentGateway.",
@@ -145,7 +164,9 @@ function DynamicAgentsPageContent() {
   const agentHomeHref = hrefForTab("agents");
   const modelsHref = hrefForTab("model-providers");
   const currentHref = hrefFor(new URLSearchParams(searchParams.toString()));
-  const selectedResourceName = activeTab === "agents" && selectedAgentId
+  const selectedResourceName = activeTab === "agents" && creatingAgent
+    ? "Create CAIPE Agent"
+    : activeTab === "agents" && selectedAgentId
     ? selectedAgentName
     : activeTab === "mcp-servers" && selectedServerId
       ? selectedServerName
@@ -198,6 +219,7 @@ function DynamicAgentsPageContent() {
                 ? [{ label: selectedResourceName, href: currentHref }]
                 : []),
             ]}
+            actionsClassName={activeTab === "agents" ? "w-full xl:w-auto" : undefined}
             description={activeDescription}
             title={activeNavigationItem.label}
           />
@@ -215,6 +237,8 @@ function DynamicAgentsPageContent() {
         {activeTab === "agents" ? (
           <DynamicAgentsTab
             selectedAgentId={selectedAgentId}
+            creating={creatingAgent}
+            onCreateAgent={startCreatingAgent}
             initialStep={agentStep}
             onSelectedAgentChange={(id) => selectResource("agents", "agent", id)}
             onSelectedAgentNameChange={setSelectedAgentName}

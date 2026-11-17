@@ -60,7 +60,7 @@ describe("RemoteAgentRegistry", () => {
 
     await screen.findByText("No A2A or configured ACP agents are available.");
     expect(container.querySelectorAll("form")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Add agent", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect Remote Agent", exact: true }));
 
     fireEvent.change(screen.getByLabelText("Agent URL"), {
       target: { value: "https://agent.example.test/" },
@@ -102,7 +102,7 @@ describe("RemoteAgentRegistry", () => {
     global.fetch = fetchMock;
     render(<form onSubmit={onParentSubmit}><RemoteAgentRegistry /></form>);
     await screen.findByText("No A2A or configured ACP agents are available.");
-    fireEvent.click(screen.getByRole("button", { name: "Add agent", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect Remote Agent", exact: true }));
     fireEvent.change(screen.getByLabelText("Credential source"), { target: { value: kind } });
     fireEvent.change(screen.getByLabelText("Header name"), { target: { value: "X-Agent-Token" } });
     if (kind === "secret_ref") {
@@ -141,7 +141,7 @@ describe("RemoteAgentRegistry", () => {
       input = screen.getAllByLabelText("Name")[0];
     } else {
       await screen.findByText("No A2A or configured ACP agents are available.");
-      fireEvent.click(screen.getByRole("button", { name: "Add agent", exact: true }));
+      fireEvent.click(screen.getByRole("button", { name: "Connect Remote Agent", exact: true }));
       input = screen.getByLabelText("Name");
       fireEvent.change(input, { target: { value: item.name } });
       fireEvent.change(screen.getByLabelText("Agent URL"), { target: { value: item.endpoint } });
@@ -163,7 +163,7 @@ describe("RemoteAgentRegistry", () => {
     global.fetch = fetcher;
     render(<RemoteAgentRegistry />);
     await screen.findByText("No A2A or configured ACP agents are available.");
-    fireEvent.click(screen.getByRole("button", { name: "Add agent", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect Remote Agent", exact: true }));
     fireEvent.change(screen.getByLabelText("Credential source"), { target: { value: "caller_token" } });
     fireEvent.change(screen.getByLabelText("Header name"), { target: { value: "" } });
     fireEvent.change(screen.getByLabelText("Credential source"), { target: { value: "none" } });
@@ -191,7 +191,8 @@ describe("RemoteAgentRegistry", () => {
     });
     global.fetch = fetcher as typeof fetch;
     jest.spyOn(window, "confirm").mockReturnValue(true);
-    render(<RemoteAgentRegistry />);
+    const onRegistryChange = jest.fn();
+    render(<RemoteAgentRegistry onRegistryChange={onRegistryChange} />);
     await screen.findByText("Race agent");
     const refresh = screen.getByRole("button", { name: "Refresh agents" });
     await waitFor(() => expect(refresh).toBeEnabled());
@@ -203,7 +204,7 @@ describe("RemoteAgentRegistry", () => {
       expect(reads).toBe(1);
       await act(async () => { finish(jsonResponse({})); });
     } else {
-      fireEvent.click(screen.getByRole("button", { name: "Add agent", exact: true }));
+      fireEvent.click(screen.getByRole("button", { name: "Connect Remote Agent", exact: true }));
       fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New agent" } });
       fireEvent.change(screen.getByLabelText("Agent URL"), { target: { value: "https://new.example.test" } });
       fireEvent.click(refresh);
@@ -218,6 +219,7 @@ describe("RemoteAgentRegistry", () => {
     }
     await waitFor(() => expect(screen.queryByText("Race agent")).not.toBeInTheDocument());
     expect(fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE")).toHaveLength(1);
+    expect(onRegistryChange).toHaveBeenCalledTimes(1);
   });
 
 

@@ -1052,8 +1052,8 @@ export function DynamicAgentEditor({
 
   // Local state for the in-app "you have unsaved changes" confirmation when the
   // user clicks the back arrow. We don't route this through the global store's
-  // pendingNavigationHref because closing the editor isn't an href navigation —
-  // it's a parent-state flip controlled by the onCancel prop.
+  // pendingNavigationHref: the parent owns the exit destination through onCancel,
+  // including routed creation and embedded editor state.
   const [pendingClose, setPendingClose] = React.useState(false);
 
   // Snapshot sentinel: flips once after the async models endpoint resolves and
@@ -1607,7 +1607,7 @@ export function DynamicAgentEditor({
     }
   };
 
-  // Each entry describes one reason the Create Agent / Save Changes button is
+  // Each entry describes one reason the Create CAIPE Agent / Save Changes button is
   // disabled. We render `blockers[0]` next to the button so the user always
   // sees WHY they can't submit and on which step to fix it — previously the
   // button just went `disabled` with no explanation, which the user reported
@@ -1730,7 +1730,7 @@ export function DynamicAgentEditor({
     <Card>
       <CardHeader className="pb-2">
         <div className="flex items-start gap-3 sm:gap-4">
-          <Button variant="ghost" size="icon" onClick={handleBackClick}>
+          <Button type="button" variant="ghost" size="icon" aria-label="Back to Agents" onClick={handleBackClick}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="min-w-0 flex-1">
@@ -1741,7 +1741,7 @@ export function DynamicAgentEditor({
                   ? `Edit Agent - ${agent?.name}`
                   : isCloning
                     ? "Clone Agent"
-                    : "Create Agent"}
+                    : "Create CAIPE Agent"}
             </CardTitle>
             <CardDescription>
               {readOnly
@@ -3112,7 +3112,7 @@ export function DynamicAgentEditor({
             ) : isEditing ? (
               "Save Changes"
             ) : (
-              "Create Agent"
+              "Create CAIPE Agent"
             )}
           </Button>
         )}

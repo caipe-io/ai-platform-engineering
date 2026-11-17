@@ -1,7 +1,7 @@
 /**
  * Tests for how DynamicAgentEditor enforces required fields on submit.
  *
- * Enforcement is intentionally quiet: the Create Agent button is `disabled`
+ * Enforcement is intentionally quiet: the Create CAIPE Agent button is `disabled`
  * while any required field is missing (Owner Team, name, model, system
  * prompt), with a hover-only native `title=` explaining what's left. The
  * owner picker carries a silent `aria-invalid` for screen readers. We
@@ -238,7 +238,7 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
     },
   );
 
-  it("disables Create Agent (with a hover tooltip) while Owner Team is empty", async () => {
+  it("disables Create CAIPE Agent (with a hover tooltip) while Owner Team is empty", async () => {
     render(<DynamicAgentEditor onCancel={jest.fn()} onSave={jest.fn()} />);
     await flushAsync();
 
@@ -255,7 +255,7 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
     // owner_team ✗. Enforcement is quiet: the button stays disabled and only
     // the hover tooltip names what's missing — no loud footer banner.
     const createButton = await screen.findByRole("button", {
-      name: /Create Agent/i,
+      name: /Create CAIPE Agent/i,
     });
     expect(createButton).toBeDisabled();
     expect(createButton).toHaveAttribute(
@@ -304,7 +304,7 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /^Global/ }));
 
-    const createButton = screen.getByRole("button", { name: /Create Agent/i });
+    const createButton = screen.getByRole("button", { name: /Create CAIPE Agent/i });
     expect(screen.getByLabelText(/Owner Team/i)).not.toHaveAttribute(
       "aria-invalid",
       "true",
@@ -381,7 +381,7 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
     },
   );
 
-  it("enables Create Agent once Owner Team and the remaining fields are filled", async () => {
+  it("enables Create CAIPE Agent once Owner Team and the remaining fields are filled", async () => {
     render(<DynamicAgentEditor onCancel={jest.fn()} onSave={jest.fn()} />);
     await flushAsync();
 
@@ -391,7 +391,7 @@ describe("DynamicAgentEditor — required-field enforcement", () => {
     fireEvent.change(nameInput, { target: { value: "blocker-test-agent" } });
 
     // Pre-condition: button disabled, owner picker flagged.
-    const createButton = screen.getByRole("button", { name: /Create Agent/i });
+    const createButton = screen.getByRole("button", { name: /Create CAIPE Agent/i });
     expect(createButton).toBeDisabled();
 
     // Pick the team via the searchable TeamPicker (2026-05-27).

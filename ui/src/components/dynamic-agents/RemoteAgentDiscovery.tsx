@@ -52,7 +52,7 @@ export function RemoteAgentDiscovery({ onChoose, disabled }: { onChoose: (agent:
     } catch (err) { setError(err instanceof Error ? err.message : "Discovery failed"); }
     finally { setLoading(false); }
   };
-  return <section aria-label="Discover remote agents" className="space-y-3 rounded-lg border bg-muted/20 p-4">
+  return <section aria-label="Discover remote agents" className="min-w-0 space-y-3 rounded-lg border bg-muted/20 p-3 [overflow-wrap:anywhere] sm:p-4">
     <h2 className="font-medium">Discover agents</h2>
     <p className="text-sm text-muted-foreground">Read public Agent Cards or find Kubernetes Services. Review a candidate before registering it.</p>
     <div className="max-w-sm space-y-1"><Label htmlFor="a2a-discovery-source">Discovery source</Label>
@@ -72,7 +72,7 @@ export function RemoteAgentDiscovery({ onChoose, disabled }: { onChoose: (agent:
     <Button type="button" variant="outline" disabled={disabled || loading || (source === "urls" ? !candidates.length || candidates.length > 8 : !namespace)} onClick={() => void discover()}>{loading ? "Discovering…" : "Discover"}</Button>
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {searched && !items.length && <p role="status" className="text-sm text-muted-foreground">No discoverable agents found.</p>}
-    {items.map((item) => <div key={item.endpoint} className="flex items-start justify-between gap-3 rounded-md border bg-background p-3">
+    {items.map((item) => <div key={item.endpoint} className="flex min-w-0 flex-col items-start justify-between gap-3 rounded-md border bg-background p-3 sm:flex-row">
       <div className="min-w-0"><div className="font-medium">{item.name || item.endpoint}</div><p className="break-all font-mono text-xs text-muted-foreground">{item.endpoint}</p>
         {item.description && <p className="text-sm text-muted-foreground">{item.description}</p>}
         {item.namespace && <p className="text-xs text-muted-foreground">{item.namespace} · {item.ready ? "Ready endpoints" : "No ready endpoints"}</p>}

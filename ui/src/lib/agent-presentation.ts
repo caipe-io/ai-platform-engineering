@@ -100,6 +100,7 @@ export function getHarnessPresentation(
 export function getAgentPresentation(
   harnessId?: string | null,
   presentation?: AgentPresentation,
+  remote?: { protocol?: "a2a" | "acp"; framework?: string },
 ): { label: string; logoSrc?: string; isApp: boolean; searchTerms: string[] } {
   if (presentation?.app) {
     const app = presentation.app;
@@ -109,11 +110,18 @@ export function getAgentPresentation(
       searchTerms: [app.id, app.name, "app"],
     };
   }
-  const harness = getHarnessPresentation(harnessId);
+  const frameworks: Record<string, string> = { claude_code: "claude_code_cli_acp", claude_agent_sdk: "claude_agent_sdk", deepagents: "dynamic_agents", agentcore: "agentcore" };
+  const normalized = harnessId ? normalizeHarnessId(harnessId) : undefined;
+  const known = normalized && Object.hasOwn(HARNESS_PRESENTATIONS, normalized) ? HARNESS_PRESENTATIONS[normalized] : undefined;
+  const framework = remote?.framework && Object.hasOwn(frameworks, remote.framework) ? frameworks[remote.framework] : undefined;
+  const harness = known ?? (framework ? getHarnessPresentation(framework) : null);
+  if (!harness && remote?.framework === "google_adk") return { label: "Agent framework: Google ADK", logoSrc: "/provider-logos/adk.svg", isApp: false, searchTerms: ["Google ADK"] };
+  if (!harness && remote?.protocol) return { label: `Remote agent: ${remote.protocol.toUpperCase()}`, logoSrc: remote.protocol === "a2a" ? "/provider-logos/a2a.svg" : undefined, isApp: false, searchTerms: [remote.protocol] };
+  const identity = harness ?? getHarnessPresentation(harnessId);
   return {
-    label: `Execution harness: ${harness.label}`,
-    logoSrc: harness.logoSrc,
+    label: `Execution harness: ${identity.label}`,
+    logoSrc: identity.logoSrc,
     isApp: false,
-    searchTerms: [harness.id, harness.label, harness.shortLabel],
+    searchTerms: [identity.id, identity.label, identity.shortLabel],
   };
 }

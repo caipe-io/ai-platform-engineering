@@ -2474,6 +2474,7 @@ export function ChatPanel({
         className="flex min-h-14 shrink-0 flex-wrap items-center gap-3 bg-gradient-to-r from-primary/[0.06] via-background/70 to-background px-4 py-2"
         aria-label={`Chat: ${conversationTitle}`}
       >
+        <div className="relative shrink-0">
         <AgentAvatar
           agent={agent}
           agentId={agentId}
@@ -2482,6 +2483,8 @@ export function ChatPanel({
           iconSize="h-4 w-4"
           isLoading={!agent && !readOnly}
         />
+          {agent && <AgentHarnessBadge compact harnessId={observedRuntime?.conversationId === activeConversationId ? observedRuntime.harnessId : agent.execution_harness_id} presentation={agent.presentation} className="absolute -bottom-1 -right-1 rounded-sm bg-card ring-2 ring-card" />}
+        </div>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-semibold" title={conversationTitle}>
             {conversationTitle}
