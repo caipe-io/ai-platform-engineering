@@ -108,7 +108,7 @@ def main() -> None:
     emit({"type": "user", "session_id": session, "message": {"content": [
         {"type": "tool_result", "tool_use_id": "tool-example", "content": "done"},
     ]}})
-    emit({"type": "result", "subtype": "success", "is_error": False, "session_id": session})
+    emit({"type": "result", "subtype": "success", "is_error": False, "session_id": session, "result": "CLI answer"})
 
 
 if __name__ == "__main__":

@@ -178,6 +178,7 @@ async def test_three_pass_cli_uses_one_session_shared_budget_and_hides_unverifie
     messages = [event.content.text for event in client.events if event.session_update == "agent_message_chunk"]
     assert len(messages) == 1 and "Research execution: 3 passes; 6 model turns" in messages[0]
     assert not any("CLI answer" in message for message in messages)
+    assert result.field_meta == {"caipe.io/harness": {"final_content": messages[0]}}
     assert agent.options["maxTurns"] == 12
 
 

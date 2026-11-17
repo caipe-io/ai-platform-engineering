@@ -62,6 +62,7 @@ async def test_cli_streams_once_and_keeps_capabilities_out_of_argv(tmp_path: Pat
     agent, client, session = await configured(tmp_path, monkeypatch)
     result = await agent.prompt(session, [TextContentBlock(type="text", text="hello")])
     assert result.stop_reason == "end_turn"
+    assert result.field_meta == {"caipe.io/harness": {"final_content": "CLI answer"}}
     assert [e.content.text for e in client.events if e.session_update == "agent_message_chunk"] == ["CLI answer"]
     assert [e.status for e in client.events if e.session_update.startswith("tool_call")] == ["in_progress", "completed"]
     recorded = json.loads((tmp_path / "cli-policy.json").read_text())

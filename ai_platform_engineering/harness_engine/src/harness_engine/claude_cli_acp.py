@@ -255,7 +255,9 @@ class ClaudeCodeCLIAgent(Agent):
                             await self.client.session_update(session_id=session_id, update=AgentMessageChunk(
                                 session_update="agent_message_chunk", content=TextContentBlock(type="text", text=content),
                             ))
-                            return PromptResponse(stop_reason="end_turn")
+                            return PromptResponse(stop_reason="end_turn", field_meta={
+                                "caipe.io/harness": {"final_content": content},
+                            })
                         if attempt == self.research_policy.max_report_repairs or remaining_turns < 2 or self.remaining_budget <= 0:
                             break
                         await self.update(AgentThoughtChunk(session_update="agent_thought_chunk", content=TextContentBlock(
@@ -416,7 +418,9 @@ class ClaudeCodeCLIAgent(Agent):
                     raise RequestError.internal_error({"message": "Claude Code CLI did not complete its turn"})
                 self.resume = True
                 self.last_result = result
-                return PromptResponse(stop_reason="end_turn")
+                return PromptResponse(stop_reason="end_turn", field_meta={
+                    "caipe.io/harness": {"final_content": result.get("result")},
+                })
             finally:
                 if process.returncode is None:
                     process.terminate()
