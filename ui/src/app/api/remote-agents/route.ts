@@ -7,6 +7,7 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
+import { isAgentFramework } from "@/lib/agent-framework";
 import { normalizeRemoteAgentCredentialSource } from "@/lib/remote-agent-auth";
 import type { RemoteAgentCredentialSource } from "@/types/dynamic-agent";
 import { Document } from "mongodb";
@@ -117,6 +118,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     description: 1,
     timeout_seconds: 1,
     streaming: 1,
+    framework: 1,
     protocol_version: 1,
     protocol_bindings: 1,
     ...(canManage ? { endpoint: 1, credential_source: 1 } : {}),
@@ -139,6 +141,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if (body.streaming !== undefined && typeof body.streaming !== "boolean") {
     throw new ApiError("Streaming must be a boolean", 400, "INVALID_REMOTE_AGENT_STREAMING");
   }
+  if (body.framework !== undefined && !isAgentFramework(body.framework)) throw new ApiError("Unknown agent framework", 400, "INVALID_REMOTE_AGENT_FRAMEWORK");
   const id = `remote-${slugify(name)}`;
   if (id === "remote-") throw new ApiError("Name must include letters or numbers", 400, "INVALID_REMOTE_AGENT");
 
@@ -153,6 +156,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     description: typeof body.description === "string" ? body.description.trim() : "",
     endpoint,
     timeout_seconds,
+    ...(body.framework !== undefined ? { framework: body.framework } : {}),
     streaming: body.streaming === true,
     credential_source,
     protocol_version: typeof body.protocol_version === "string" ? body.protocol_version : undefined,

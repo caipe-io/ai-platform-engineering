@@ -240,10 +240,19 @@ export function DynamicAgentsTab({
     if (!agentCanManage(agent)) return;
     clearRowActionError(agent._id);
     try {
-      const response = await fetch(`/api/dynamic-agents?id=${agent._id}`, {
+      const update: Record<string, unknown> = { enabled: !agent.enabled };
+      if (agent.execution_harness_id && agent.execution_harness_id !== "dynamic_agents") {
+        const published = await fetch(`/api/harness-engine/agents/${encodeURIComponent(agent._id)}`);
+        const saved = await published.json();
+        if (!published.ok || !saved.success || !saved.data?.version?.blueprint) {
+          throw new Error(saved.error || "The published execution configuration is unavailable");
+        }
+        update.harness_save = { blueprint: saved.data.version.blueprint };
+      }
+      const response = await fetch(`/api/dynamic-agents?id=${encodeURIComponent(agent._id)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: !agent.enabled }),
+        body: JSON.stringify(update),
       });
       const data = await response.json();
       if (data.success) {
@@ -263,7 +272,7 @@ export function DynamicAgentsTab({
   };
 
   const handleStartChat = async (agent: DynamicAgentConfigWithPermissions) => {
-    if (!agent.enabled || startingChatAgentId) return;
+    if (!agent.enabled || agent.execution_readiness?.ready === false || startingChatAgentId) return;
     setStartingChatAgentId(agent._id);
     clearRowActionError(agent._id);
     try {
@@ -577,8 +586,8 @@ export function DynamicAgentsTab({
                     className="h-8 w-8"
                     onClick={() => void handleStartChat(agent)}
                     aria-label={`Chat with ${agent.name}`}
-                    title={agent.enabled ? `Chat with ${agent.name}` : "This agent is disabled"}
-                    disabled={!agent.enabled || startingChatAgentId !== null}
+                    title={agent.execution_readiness?.ready === false ? agent.execution_readiness.message : agent.enabled ? `Chat with ${agent.name}` : "This agent is disabled"}
+                    disabled={!agent.enabled || agent.execution_readiness?.ready === false || startingChatAgentId !== null}
                   >
                     {startingChatAgentId === agent._id ? (
                       <Loader2 className="h-4 w-4 animate-spin" />

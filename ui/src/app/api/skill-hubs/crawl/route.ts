@@ -1,3 +1,4 @@
+import { githubHubOptions } from "@/lib/github-hub-options";
 import {
 apiHostFromBaseUrl,
 buildCrawlStreamResponse,
@@ -88,6 +89,7 @@ export const POST = withErrorHandler(async (request: NextRequest): Promise<NextR
     // legacy callsites don't have to change.
     const wantStream = wantsNdjsonStream(request);
 
+    const githubOptions = type === "github" ? githubHubOptions(body) : {};
     try {
       if (type === "github") {
         const [owner, repo] = normalizedLocation.split("/").filter(Boolean);
@@ -118,6 +120,7 @@ export const POST = withErrorHandler(async (request: NextRequest): Promise<NextR
                 token,
                 undefined,
                 emitter,
+                githubOptions,
               );
               return { skills: crawled.length, truncation };
             },
@@ -128,6 +131,9 @@ export const POST = withErrorHandler(async (request: NextRequest): Promise<NextR
           owner,
           repo,
           token,
+          undefined,
+          undefined,
+          githubOptions,
         );
         const sliced = crawled.slice(0, maxPreview);
         return NextResponse.json({

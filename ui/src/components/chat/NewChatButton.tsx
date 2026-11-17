@@ -233,21 +233,21 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
 
   // Split button: main area + dropdown trigger
   return (
-    <div className="relative w-full" ref={dropdownRef}>
-      <div className="flex w-full">
+    <div className="relative w-full min-w-0" ref={dropdownRef}>
+      <div className="flex w-full min-w-0">
         {/* Main button area */}
         <Button
           onClick={handleMainClick}
           disabled={!defaultAgentResolved}
           className={cn(
-            "flex-1 gap-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 hover-glow",
+            "min-w-0 flex-1 gap-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 hover-glow",
             "rounded-r-none border-r-0"
           )}
           variant="ghost"
           size="default"
         >
           <Plus className="h-4 w-4 shrink-0" />
-          <span className="min-w-0 truncate">{defaultAgentName}</span>
+          <span className="min-w-0 truncate" title={defaultAgentName}>{defaultAgentName}</span>
           {defaultAgentId && defaultAgent && (
             <AgentHarnessBadge
               harnessId={defaultAgent.execution_harness_id}
@@ -264,7 +264,7 @@ export function NewChatButton({ collapsed, onNewChat }: NewChatButtonProps) {
           aria-label="Choose an agent"
           aria-expanded={dropdownOpen}
           className={cn(
-            "px-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 hover-glow",
+            "shrink-0 px-2 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 hover-glow",
             "rounded-l-none",
             dropdownOpen && "bg-primary/20"
           )}

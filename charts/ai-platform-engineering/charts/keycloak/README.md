@@ -296,3 +296,11 @@ The `secondary-auth-profile` post-install/post-upgrade job protects the six
 independently of IdP, token exchange, and auth-reconcile flags and preserves other
 profile settings. Secondary auth itself remains disabled unless configured in the
 CAIPE UI. See `ui/src/lib/auth/README.md` for provider trust and migration steps.
+
+The same job reconciles `userProfile.customAttributes` on every install and
+upgrade, including realms stored in an existing database. Existing attributes
+are preserved, and configured fields are merged by name. Invalid attribute
+configuration fails the job before writing a profile update. The six protected
+secondary identity attributes retain admin-only permissions even if a custom
+attribute entry requests broader access. The realm's existing unmanaged
+attribute policy is preserved.

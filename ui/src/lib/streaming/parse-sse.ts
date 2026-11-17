@@ -16,6 +16,7 @@
 export interface RawSSEEvent {
   event: string;
   data: string;
+  id?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -25,7 +26,7 @@ export interface RawSSEEvent {
 /**
  * Parse an SSE stream from a fetch Response.
  *
- * Yields one RawSSEEvent per SSE frame (delimited by `\n\n`).
+ * Yields one RawSSEEvent per data-bearing frame (delimited by `\n\n`).
  * Handles multi-line `data:` fields per the SSE spec.
  * Uses getReader() for Safari compatibility.
  */
@@ -56,11 +57,14 @@ export async function* parseSSEStream(
         if (!eventStr.trim()) continue;
 
         let eventType = "message";
+        let id: string | undefined;
         const dataLines: string[] = [];
 
         for (const line of eventStr.split("\n")) {
           if (line.startsWith("event: ")) {
             eventType = line.slice(7).trim();
+          } else if (line.startsWith("id:")) {
+            id = line.slice(3).trim();
           } else if (line.startsWith("data: ")) {
             dataLines.push(line.slice(6));
           } else if (line.startsWith("data:")) {
@@ -69,9 +73,13 @@ export async function* parseSSEStream(
           }
         }
 
+        // Comments and event-only keep-alives do not dispatch application data.
+        // An explicit empty data field still counts as a data-bearing frame.
+        if (dataLines.length === 0) continue;
+
         // Join multiple data lines with newlines (SSE spec)
         const eventData = dataLines.join("\n");
-        yield { event: eventType, data: eventData };
+        yield { event: eventType, data: eventData, ...(id !== undefined && { id }) };
       }
     }
   } finally {

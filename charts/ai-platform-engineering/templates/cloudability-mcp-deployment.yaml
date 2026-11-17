@@ -1,0 +1,77 @@
+{{- if .Values.cloudabilityMcp.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ai-platform-engineering.cloudabilityMcp.fullname" . }}
+  labels:
+    {{- include "ai-platform-engineering.cloudabilityMcp.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.cloudabilityMcp.replicaCount }}
+  revisionHistoryLimit: {{ .Values.cloudabilityMcp.revisionHistoryLimit }}
+  selector:
+    matchLabels:
+      {{- include "ai-platform-engineering.cloudabilityMcp.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ai-platform-engineering.cloudabilityMcp.selectorLabels" . | nindent 8 }}
+        {{- with .Values.cloudabilityMcp.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.cloudabilityMcp.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.cloudabilityMcp.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.cloudabilityMcp.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: cloudability-mcp
+          image: "{{ .Values.cloudabilityMcp.image.repository }}:{{ .Values.cloudabilityMcp.image.tag | default (include "ai-platform-engineering.appVersion" .) }}"
+          imagePullPolicy: {{ .Values.cloudabilityMcp.image.pullPolicy }}
+          {{- with .Values.cloudabilityMcp.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.cloudabilityMcp.service.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "ai-platform-engineering.cloudabilityMcp.fullname" . }}
+            {{- if or .Values.cloudabilityMcp.existingSecret .Values.cloudabilityMcp.secret.create .Values.cloudabilityMcp.externalSecrets.enabled }}
+            - secretRef:
+                name: {{ include "ai-platform-engineering.cloudabilityMcp.secretName" . }}
+            {{- end }}
+          {{- with .Values.cloudabilityMcp.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cloudabilityMcp.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cloudabilityMcp.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.cloudabilityMcp.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.cloudabilityMcp.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.cloudabilityMcp.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -7,6 +7,8 @@ import { act,fireEvent,render,screen,waitFor } from "@testing-library/react";
 import { NotificationsSettings } from "../NotificationsSettings";
 import { PlatformAnnouncementsSettings } from "../PlatformAnnouncementsSettings";
 
+jest.mock("@/components/settings/ReleaseNotesOverrideSettings", () => ({ ReleaseNotesOverrideSettings: () => <div>Curated notes settings</div> }));
+
 jest.mock("@/hooks/use-admin-role",() => ({
   useAdminRole: () => ({ isAdmin: true }),
 }));

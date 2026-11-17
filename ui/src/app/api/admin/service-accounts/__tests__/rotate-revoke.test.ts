@@ -22,6 +22,10 @@ const mockCheckOpenFgaTuple = jest.fn();
 const mockListOpenFgaObjects = jest.fn();
 const mockReadOpenFgaTuples = jest.fn();
 const mockDeleteExactOpenFgaTuples = jest.fn();
+const mockReconcileTupleDiff = jest.fn();
+jest.mock("@/lib/authz", () => ({
+  reconcileTupleDiff: (...args: unknown[]) => mockReconcileTupleDiff(...args),
+}));
 jest.mock("@/lib/rbac/openfga", () => ({
   checkOpenFgaTuple: (...args: unknown[]) => mockCheckOpenFgaTuple(...args),
   listOpenFgaObjects: (...args: unknown[]) => mockListOpenFgaObjects(...args),
@@ -91,7 +95,7 @@ beforeEach(() => {
   mockGetBySub.mockResolvedValue(DOC);
   mockRegenerateClientSecret.mockResolvedValue("new-secret-xyz");
   mockDeleteServiceAccountClient.mockResolvedValue(undefined);
-  mockDeleteExactOpenFgaTuples.mockResolvedValue({
+  mockReconcileTupleDiff.mockResolvedValue({
     enabled: true,
     writes: 0,
     deletes: 3,
@@ -114,7 +118,7 @@ describe("POST .../[id]/rotate", () => {
     expect(body.data.credential.client_id).toBe(DOC.client_id);
     expect(mockRegenerateClientSecret).toHaveBeenCalledWith("kc-uuid-1");
     // No tuple/scope mutation on rotate (FR-019).
-    expect(mockDeleteExactOpenFgaTuples).not.toHaveBeenCalled();
+    expect(mockReconcileTupleDiff).not.toHaveBeenCalled();
     expect(mockLogAudit).toHaveBeenCalledWith(
       expect.objectContaining({ operation: "service_account.rotate" }),
     );
@@ -175,7 +179,7 @@ describe("DELETE .../[id] (revoke)", () => {
     expect(mockDeleteServiceAccountClient).toHaveBeenCalledWith("kc-uuid-1");
 
     // Ownership + coarse-gateway baseline + every scope tuple deleted (base relations).
-    const deleted = mockDeleteExactOpenFgaTuples.mock.calls[0][0];
+    const deleted = mockReconcileTupleDiff.mock.calls[0][0].deletes;
     expect(deleted).toEqual(
       expect.arrayContaining([
         {
@@ -224,6 +228,31 @@ describe("DELETE .../[id] (revoke)", () => {
     );
   });
 
+  it("finishes revoking a zero-scope account when optional baseline tuples are absent", async () => {
+    mockDeleteExactOpenFgaTuples.mockRejectedValue(new Error("cannot delete a tuple which does not exist"));
+    mockReconcileTupleDiff.mockResolvedValue({ enabled: true, writes: 0, deletes: 2 });
+    const response = await REVOKE(req("DELETE"), ctx());
+    expect(response.status).toBe(200);
+    expect(mockReconcileTupleDiff).toHaveBeenCalledWith(
+      { writes: [], deletes: expect.any(Array) },
+      { caller: { type: "user", id: SESSION.sub }, source: "service_account_revoke" },
+    );
+    expect(mockDeleteExactOpenFgaTuples).not.toHaveBeenCalled();
+    expect(mockDeleteServiceAccountClient.mock.invocationCallOrder[0]).toBeLessThan(mockReconcileTupleDiff.mock.invocationCallOrder[0]);
+    expect(mockUpdateStatus).toHaveBeenCalledWith(SA_ID, "revoked");
+  });
+
+  it("preserves a retryable record if policy cleanup fails after credential deletion", async () => {
+    mockReconcileTupleDiff.mockRejectedValueOnce(new Error("Policy service unavailable"));
+    const warning = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await REVOKE(req("DELETE"), ctx());
+      expect(response.status).toBe(503);
+      expect(mockDeleteServiceAccountClient).toHaveBeenCalledTimes(1);
+      expect(mockUpdateStatus).not.toHaveBeenCalled();
+    } finally { warning.mockRestore(); }
+  });
+
   it("404 for a non-manager", async () => {
     mockCheckOpenFgaTuple.mockResolvedValue({ allowed: false });
     const res = await REVOKE(req("DELETE"), ctx());
@@ -236,7 +265,7 @@ describe("DELETE .../[id] (revoke)", () => {
     const res = await REVOKE(req("DELETE"), ctx());
     expect(res.status).toBe(200);
     expect(mockDeleteServiceAccountClient).not.toHaveBeenCalled();
-    expect(mockDeleteExactOpenFgaTuples).not.toHaveBeenCalled();
+    expect(mockReconcileTupleDiff).not.toHaveBeenCalled();
   });
 
   it("401 when unauthenticated", async () => {
@@ -250,7 +279,7 @@ describe("DELETE .../[id] (revoke)", () => {
     const res = await REVOKE(req("DELETE"), ctx());
     expect(res.status).toBe(403);
     expect(mockDeleteServiceAccountClient).not.toHaveBeenCalled();
-    expect(mockDeleteExactOpenFgaTuples).not.toHaveBeenCalled();
+    expect(mockReconcileTupleDiff).not.toHaveBeenCalled();
     expect(mockUpdateStatus).not.toHaveBeenCalled();
   });
 

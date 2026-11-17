@@ -136,7 +136,7 @@ def test_unlinked_direct_user_is_prompted_to_link_before_dm_access_is_checked() 
 
     assert result.ignored is False
     assert result.reason_code == app_module.REASON_USER_NOT_LINKED
-    assert result.linking_url == "https://ui.example/link"
+    assert result.linking_url == "https://ui.example/link?bot_id=secondary"
     assert identity.resolve_calls == 1
     assert identity.link_calls == 1
     assert direct_users.calls == []

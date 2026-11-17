@@ -8,9 +8,11 @@ MongoDB collections, normalises them into a unified format with a single
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
+from collections.abc import Collection
 from datetime import UTC, datetime
 from typing import Any
 
@@ -152,6 +154,7 @@ def _load_agent_skills(
                 "source": "agent_skills",
                 "source_id": doc.get("owner_id"),
                 "content": content,
+                "scan_status": doc.get("scan_status"),
                 "metadata": doc.get("metadata", {}),
                 "visibility": doc.get("visibility"),
                 "team_ids": doc.get("team_ids"),
@@ -204,6 +207,7 @@ def _load_hub_skills(
         key = (str(doc.get("hub_id", "")), str(doc.get("skill_id", "")))
         doc_index[key] = doc
 
+    hubs = {str(h.get("id")): h for h in db["skill_hubs"].find({"id": {"$in": list({h for h, _ in hub_ids_map.values()})}})}
     skills: list[dict[str, Any]] = []
     for composite_id, (hub_id, skill_id) in hub_ids_map.items():
         doc = doc_index.get((hub_id, skill_id))
@@ -211,6 +215,12 @@ def _load_hub_skills(
             logger.warning("Hub skill not found: hub_id=%s skill_id=%s", hub_id, skill_id)
             continue
 
+        hub = hubs.get(hub_id, {})
+        if hub.get("enabled") is False or (
+            hub.get("cache_generation") and doc.get("cache_generation") != hub["cache_generation"]
+        ):
+            logger.warning("Hub skill cache is disabled or from an obsolete configuration: %s", composite_id)
+            continue
         name = doc.get("name", "")
         if not name:
             logger.warning("Skipping hub skill doc (hub_id=%s, skill_id=%s): missing name", hub_id, skill_id)
@@ -243,11 +253,13 @@ def _load_hub_skills(
                 "source": "hub",
                 "source_id": hub_id,
                 "content": content,
+                "scan_status": doc.get("scan_status"),
                 "metadata": doc.get("metadata", {}),
                 "visibility": "global",
                 "team_ids": None,
                 "owner_user_id": "",
-                "ancillary_files": {},
+                "ancillary_files": doc.get("ancillary_files") if isinstance(doc.get("ancillary_files"), dict) else {},
+                "ancillary_summary": doc.get("ancillary_summary") or {},
             }
         )
 
@@ -259,6 +271,7 @@ def load_skills(
     *,
     mongodb_uri: str,
     mongodb_database: str,
+    strict: bool = False,
 ) -> list[dict[str, Any]]:
     """Load skill documents from MongoDB ``agent_skills`` and ``hub_skills``.
 
@@ -298,6 +311,8 @@ def load_skills(
         hub_skills = _load_hub_skills(hub_ids_map, db)
     except Exception as e:
         logger.warning("Failed to load skills: %s", e, exc_info=True)
+        if strict:
+            raise
         return []
     finally:
         client.close()
@@ -347,18 +362,23 @@ def _create_file_data(content: str) -> dict[str, Any]:
     }
 
 
-def _build_skill_md(skill: dict[str, Any]) -> str:
+def _build_skill_md(skill: dict[str, Any], *, preserve_original: bool = False) -> str:
     """Build a SKILL.md string (YAML frontmatter + body) from a skill dict."""
     name = skill.get("name", "")
     description = skill.get("description", "")
     content = skill.get("content", "")
+    metadata = skill.get("metadata", {})
+
+    # Original imports and pinned Hub packages retain the bytes selected by the owner.
+    # Legacy Hub entries still need generated frontmatter for skill discovery.
+    if skill.get("source") == "hub" and (preserve_original or metadata.get("original_content")):
+        return content
 
     # If the original content already has valid frontmatter, use it as-is
     if content and content.strip().startswith("---"):
         return content
 
     # Build frontmatter + body
-    metadata = skill.get("metadata", {})
     fm_lines = [
         "---",
         f"name: {name}",
@@ -392,11 +412,15 @@ def _build_skill_md(skill: dict[str, Any]) -> str:
 
 def build_skills_files(
     skills: list[dict[str, Any]],
+    *,
+    pinned_skill_ids: Collection[str] = (),
 ) -> tuple[dict[str, Any], list[str]]:
     """Build a ``files`` dict and source paths for StateBackend + SkillsMiddleware.
 
     Args:
         skills: List of skill dicts from ``load_skills()``.
+        pinned_skill_ids: Hub entries whose original bytes must be preserved,
+            even when their cache rows lack original-import metadata.
 
     Returns:
         Tuple of:
@@ -426,7 +450,7 @@ def build_skills_files(
         source_paths.add(source_path)
 
         file_path = f"{source_dir}/{dir_name}/SKILL.md"
-        skill_md = _build_skill_md(skill)
+        skill_md = _build_skill_md(skill, preserve_original=skill.get("id", "") in pinned_skill_ids)
         files[file_path] = _create_file_data(skill_md)
 
         for rel_path, file_content in skill.get("ancillary_files", {}).items():
@@ -470,3 +494,31 @@ def detect_missing_skills(
         error = f"Skills not found: {', '.join(missing)}"
 
     return missing, error
+
+
+def verify_skill_pins(skills: list[dict[str, Any]], pins: dict[str, Any]) -> None:
+    """Verify the exact executable package before files reach model context."""
+    by_id = {skill["id"]: skill for skill in skills}
+    for skill_id, pin in pins.items():
+        skill = by_id.get(skill_id)
+        if skill is None:
+            raise ValueError(f"Pinned skill is unavailable or blocked: {skill_id}")
+        if skill.get("scan_status") != "passed":
+            raise ValueError(f"Pinned skill security scan has not passed: {skill_id}")
+        summary = skill.get("ancillary_summary") or {}
+        if any(summary.get(key) for key in (
+            "skipped_binary", "skipped_too_large", "truncated_at_count_cap", "truncated_at_size_cap"
+        )):
+            raise ValueError(f"Pinned original skill package is incomplete: {skill_id}")
+        expected = pin.model_dump() if hasattr(pin, "model_dump") else pin
+        content_hash = hashlib.sha256(_build_skill_md(skill, preserve_original=True).encode()).hexdigest()
+        ancillary = skill.get("ancillary_files", {})
+        hashes = {}
+        for path, content in ancillary.items():
+            if not isinstance(content, str) or path.startswith("/") or "\\" in path or any(
+                part in {"", ".", ".."} for part in path.split("/")
+            ) or path == "SKILL.md":
+                raise ValueError(f"Invalid pinned skill ancillary path: {skill_id}")
+            hashes[path] = hashlib.sha256(content.encode()).hexdigest()
+        if content_hash != expected["content_sha256"] or hashes != expected["ancillary_sha256"]:
+            raise ValueError(f"Pinned skill changed since selection; rescan and explicitly reselect it: {skill_id}")

@@ -206,6 +206,12 @@ function handleRunFinished(
 ): boolean {
   const outcome = parsed.outcome as string;
 
+  if (outcome === "cancelled") {
+    if (callbacks.onCancelled) callbacks.onCancelled();
+    else callbacks.onError?.("The run was stopped before completion.");
+    return true;
+  }
+
   if (outcome === "interrupt") {
     const interrupt = parsed.interrupt as Record<string, unknown> | undefined;
     if (interrupt) {

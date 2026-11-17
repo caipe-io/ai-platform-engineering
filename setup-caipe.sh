@@ -6597,6 +6597,52 @@ MCP_ROUTE_EOF
   log "Created ${count} AgentGateway MCP backend(s)"
 }
 
+_resolve_llm_streaming() {
+  # Explicit environment/--env-file settings win; upgrades inherit the release.
+  if [[ -n "${LLM_STREAMING:-}" ]]; then
+    printf '%s' "$LLM_STREAMING"
+    return 0
+  fi
+  if ! helm status caipe -n caipe &>/dev/null; then
+    printf '%s' true
+    return 0
+  fi
+
+  local deployed_streaming
+  if ! deployed_streaming=$(helm get values caipe -n caipe -o json | jq -r '
+    ."dynamic-agents".config.LLM_STREAMING |
+    if . == null then "true" else tostring end
+  '); then
+    err "Cannot read the deployed LLM_STREAMING setting; refusing to reset it"
+    return 1
+  fi
+  printf '%s' "$deployed_streaming"
+}
+
+_restart_dynamic_agents_after_config_change() {
+  local previous_streaming="$1" streaming="$2"
+  local streaming_changed=false
+  if [[ -n "$previous_streaming" && "$previous_streaming" != "$streaming" ]]; then
+    streaming_changed=true
+  fi
+  # ConfigMap changes do not roll pods; retain the existing domain/OIDC restart.
+  if [[ -n "${CAIPE_DOMAIN:-}" ]] || $streaming_changed; then
+    if kubectl rollout restart deploy/caipe-dynamic-agents -n caipe &>/dev/null; then
+      if ! kubectl rollout status deploy/caipe-dynamic-agents -n caipe --timeout=120s &>/dev/null; then
+        if $streaming_changed; then
+          err "Dynamic Agents did not become ready with the new LLM_STREAMING setting"
+          return 1
+        fi
+      fi
+      log "dynamic-agents: restarted to apply runtime config"
+    elif $streaming_changed; then
+      err "Cannot restart Dynamic Agents to apply the new LLM_STREAMING setting"
+      return 1
+    fi
+  fi
+  return 0
+}
+
 deploy_caipe() {
   step "Deploying CAIPE (v${CAIPE_CHART_VERSION})"
 
@@ -6675,6 +6721,12 @@ deploy_caipe() {
   local release_name="caipe"
   local da_svc="${release_name}-dynamic-agents"
   local ns="caipe"
+  local previous_llm_streaming=""
+  if helm status caipe -n caipe &>/dev/null; then
+    previous_llm_streaming=$(LLM_STREAMING= _resolve_llm_streaming) || return 1
+  fi
+  local llm_streaming
+  llm_streaming=$(_resolve_llm_streaming) || return 1
 
     helm_args+=(
       --set "tags.dynamic-agents=true"
@@ -6682,6 +6734,7 @@ deploy_caipe() {
       # Inject the shared LLM secret (ANTHROPIC_API_KEY / AWS_* / AZURE_*) so
       # dynamic-agents can call the LLM backend.
       --set "dynamic-agents.llmSecret=llm-secret"
+      --set-string "dynamic-agents.config.LLM_STREAMING=${llm_streaming}"
     )
 
     # Auth + OIDC: enable when a public domain + OIDC issuer are configured.
@@ -7143,17 +7196,7 @@ DAEOF
   fi
   log "CAIPE Helm release deployed"
 
-  # Helm only restarts pods when the Deployment spec changes, not on ConfigMap-only
-  # updates. When OIDC_ISSUER / AUTH_ENABLED are freshly set (domain run), the
-  # dynamic-agents pod must be cycled so it picks up the new issuer from the ConfigMap.
-  # Without this it keeps using the internal http://keycloak:8080 issuer URL and rejects
-  # every token with "Invalid issuer", blocking all chat in the Custom Agents UI.
-  if [[ -n "${CAIPE_DOMAIN:-}" ]]; then
-    if kubectl rollout restart deploy/caipe-dynamic-agents -n caipe &>/dev/null 2>&1; then
-      kubectl rollout status deploy/caipe-dynamic-agents -n caipe --timeout=120s &>/dev/null 2>&1 || true
-      log "dynamic-agents: restarted to apply OIDC issuer config"
-    fi
-  fi
+  _restart_dynamic_agents_after_config_change "$previous_llm_streaming" "$llm_streaming" || return 1
 
   # Non-fatal: a timeout here (e.g. credential-less agents that never become
   # ready) must NOT abort the script under `set -e` — post_deploy_patches still
@@ -9085,7 +9128,7 @@ BANNER
   # collect_credentials picks the right provider without requiring the caller
   # to also export them as shell environment variables.
   if [[ -n "$ENV_FILE" && -f "$ENV_FILE" ]]; then
-    local _llm_vars=(LLM_PROVIDER
+    local _llm_vars=(LLM_PROVIDER LLM_STREAMING
       ANTHROPIC_API_KEY ANTHROPIC_MODEL_NAME
       AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION AWS_DEFAULT_REGION
       AWS_BEDROCK_MODEL_ID AWS_BEDROCK_PROVIDER AWS_BEDROCK_ENABLE_PROMPT_CACHE
@@ -9513,6 +9556,7 @@ Re-run behavior:
 
 Environment variables (all optional):
   LLM_PROVIDER            LLM provider: anthropic-claude (default) | aws-bedrock | openai
+  LLM_STREAMING           Set false for non-streaming model requests (default: true)
   OPENAI_API_KEY          Pre-set OpenAI API key (skips prompt)
   OPENAI_MODEL_NAME       OpenAI model (default: gpt-5.2; used by llm_wrapper)
   ANTHROPIC_API_KEY       Pre-set Anthropic API key (skips prompt)

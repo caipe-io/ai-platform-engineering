@@ -48,6 +48,37 @@ Dynamic Agents provide a flexible way to create purpose-built AI assistants with
 - Exactly one terminal outcome per turn: `success`, `error`, `interrupted`, or `cancelled`
 - Time to first user-visible response and end-to-end turn latency histograms
 
+### Optional structured responses
+
+- Enable the `structured_response` middleware on the agent. It is disabled by
+  default and exposes one option: `allowed_schema_ids`, a comma-separated
+  allowlist. An empty allowlist accepts any schema ID.
+- Chat `config_override` cannot add, remove, or change this middleware or its
+  schema allowlist. Other middleware overrides remain available.
+- A caller may send `client_context.response_format` with `type: json_schema`,
+  an optional `schema_id`, and an object-root `schema`. The root agent receives
+  a `submit_structured_response` tool and instructions to use it. Subagents do
+  not receive this tool.
+- Schemas use their declared supported JSON Schema dialect, or Draft 2020-12
+  when omitted. Nullable types, nested objects/arrays, constraints, and local
+  references within the schema are validated. Root references and external
+  references are rejected; reference resolution never fetches URLs. Invalid active requests return an invocation
+  error; disabled agents retain their existing behavior.
+- Rejected submissions return validation feedback without publishing output.
+  The agent may correct and resubmit. A model that cannot obtain required data
+  can explain the limitation; a valid structured submission is not guaranteed.
+- Each accepted submission is carried by its graph invocation and captured by
+  its request's encoder. Custom SSE emits `structured_output` with
+  `{payload, schema_id}`. AG-UI emits `CUSTOM` / `STRUCTURED_OUTPUT` with the same
+  value. Events are delivered before any later approval interrupt; resume uses
+  a fresh encoder and never reuses another request's result.
+- Send the original `client_context.response_format` again on resume, including
+  after runtime eviction. A changed response format on a later turn rebuilds
+  the cached graph; a conflicting request during an active stream must retry.
+- `/chat/invoke` includes `structured_output` and `structured_output_schema_id`
+  only after an accepted submission. Otherwise its legacy response fields are
+  unchanged. An accepted empty object is still returned.
+
 ### Optional app-context prompt adapter
 
 - Structured `client_context` remains separate from the user's message.
@@ -81,6 +112,12 @@ app_context_prompt:
   Existing raw-context tooling/templates and their telemetry are unchanged; this adapter is not a general DLP layer.
 
 ## Running Locally
+
+Persistent runtimes ignore empty pending-checkpoint write batches. Compiled local
+subgraphs can emit these acknowledgements after a successful model response;
+the pinned MongoDB saver would otherwise submit an invalid empty bulk write and
+cause the task to retry. Nonempty writes, serialization, persistence, and database
+errors retain their upstream behavior. In-memory runtimes are unchanged.
 
 ### Prerequisites
 
@@ -199,6 +236,7 @@ This guard does not change context compaction thresholds or model output budgets
 | `PORT` | Server port | `8001` |
 | `METRICS_PORT` | Dedicated port for `/metrics` (0 = same as `PORT`) | `0` |
 | `DEBUG` | Enable debug mode / hot reload | `false` |
+| `LLM_STREAMING` | Set `false` to disable streaming requests to the model provider; browser chat events still use SSE | `true` |
 | `MONGODB_URI` | MongoDB connection string | `mongodb://localhost:27017` |
 | `MONGODB_DATABASE` | Database name | `caipe` |
 | `DYNAMIC_AGENTS_COLLECTION` | Agents collection name | `dynamic_agents` |
@@ -209,6 +247,24 @@ This guard does not change context compaction thresholds or model output budgets
 | `CORS_ORIGINS` | Allowed CORS origins | `["*"]` |
 
 ### Models Configuration
+
+#### Change streaming from the UI
+
+Open **Agents → Agents**, edit an agent, and find **Model response streaming**
+on **Basic Info**:
+
+- **Use deployment default**: inherit `LLM_STREAMING` (enabled when unset).
+- **Enabled**: request streaming responses from the model provider.
+- **Disabled**: request complete responses, for proxies without streaming support.
+
+Save the agent. Its next chat turn uses the new setting without a pod restart;
+an already running turn keeps its existing model. This setting is stored as
+`model.streaming` (`true`, `false`, or `null` for inheritance) and takes precedence
+over the deployment default. Existing agent editing permissions still apply.
+Subagents use their own saved model settings. The browser continues to receive
+agent progress events over SSE in every mode.
+
+#### Available models
 
 Available LLM models are configured in `src/dynamic_agents/services/config.yaml`:
 
@@ -465,7 +521,40 @@ dynamic_agents/
 
 ## Remote A2A agents
 
-- Register endpoints in **Agents > Advanced > Remote A2A Agents** as a platform admin.
+### Remote Agents registry and discovery
+
+Agent Builder uses **Advanced → Subagents → Add subagent** to select registered agents and override their timeout. Discovery, registration, credentials, and shared connection edits stay in **Agents → Remote Agents**. Open that tab from the builder without losing its draft, then use **Refresh agents** to see newly registered entries. Removing a selection only removes the parent reference.
+
+- Open **Agents > Remote Agents** to register, edit and remove A2A endpoints.
+  Agent builders use the same registry under **Advanced > Subagents > Add subagent**.
+- Enter an agent base URL or a JSON Agent Card URL. **Discover Agent Card**
+  previews the full card and fills the name, description and protocol metadata.
+- **Public URLs** discovers up to eight supplied URLs per request. It sends no
+  caller JWT or saved credentials. Review a result before registering it; nothing
+  is automatically added. For protected cards, configure authentication before
+  reading the card in the registration form.
+- Choose **No authentication (public agent)** for anonymous A2A calls. Existing
+  entries continue to use their configured authentication, defaulting to user JWT.
+- Discovery and registry writes require organization management permission;
+  other authenticated authors can view registered metadata.
+
+Kubernetes discovery is off by default. In the Dynamic Agents subchart, enable
+`a2aDiscovery.enabled` and configure `a2aDiscovery.namespaces` (empty uses the
+release namespace). The chart projects a short-lived Kubernetes API token and
+creates namespace Roles granting only `list` on Services and EndpointSlices.
+For custom deployments, set `REMOTE_A2A_DISCOVERY_NAMESPACES` to a JSON array,
+mount the standard service-account token and CA, and supply equivalent read-only
+RBAC. The setting belongs on the service receiving the discovery API calls.
+
+Services opt in with label `caipe.io/a2a-discovery: "true"` and a TCP port named
+`a2a-https` or `a2a`. Optional annotation `caipe.io/a2a-path` supplies the base
+path or JSON card path. Discovery shows ready endpoints and excludes ExternalName
+Services. It uses Service DNS names rather than scanning Pod IPs. HTTP services
+still require their exact origin in `REMOTE_A2A_ALLOWED_HTTP_ORIGINS`; discovery
+does not relax credential destination policy. No Secret or Pod permissions are
+needed. See the [A2A Agent Card specification](https://a2a-protocol.org/latest/specification/agent-card/).
+
+- Register endpoints in **Agents > Remote Agents** as a platform admin.
 - Select multiple registry entries for an agent or its subagents. Each entry becomes a callable tool.
 - Configure an overall execution deadline (1–600 seconds); agent authors can override it per selection.
   The deadline includes credential resolution, Agent Card discovery, and execution; stream activity does not reset it.
@@ -480,11 +569,26 @@ dynamic_agents/
 - Agent Card discovery and calls use the official A2A SDK with JSON-RPC or HTTP+JSON negotiation.
 - Calls use the registered endpoint. Register a gateway URL to gate A2A calls; `AGENT_GATEWAY_URL` configures MCP routing only.
 
+### Native remote subagents (opt-in)
+
+The runtime pins Deep Agents **0.7.37**. Dynamic Agents and the Deep Agents
+Harness Engine image resolve the same version through their lockfiles.
+
+- Set `features.remote_agents_as_subagents: true` on an agent configuration to register its selected A2A entries as LangChain `CompiledSubAgent` runnables. Set it separately on a configured local subagent to enable that subagent's remote delegation.
+- Existing configurations keep the named-tool path. The flag defaults to false and is omitted from legacy serialized settings; no migration or package upgrade is required.
+- The supervisor uses upstream `task(description, subagent_type="remote_<registry-id>")`. LangChain owns dispatch, isolated message state, tracing and result delivery; no extra model is created for the remote adapter.
+- Both modes share the official A2A SDK transport, per-invocation caller credentials, deadline, origin checks, response/output limits and streaming negotiation. Partial output is attributed to the enclosing task, including nested delegation.
+- To require human approval, configure `interrupt_on.builtin.task`. Enabling native mode with existing remote-tool approval rules fails validation: migrate those rules explicitly so the change cannot bypass an approval. Task-level approval also applies to local delegations.
+- The middleware editor preserves the opt-in flag when editing other features. This initial rollout is configured through the agent API/configuration; it does not add an editor toggle.
+- This phase supports synchronous, bounded text delegation. Parent tool middleware receives execution failures as an explicit error result rather than automatically resubmitting an uncertain remote command.
+- Local cancellation unwinds the graph and closes the A2A client. It does **not** prove the remote task stopped. Persisted remote task/context IDs, acknowledged remote cancellation, input/auth-required continuation, durable child runs and ACP delegation remain separate milestones. Native mode reports input/auth-required tasks as unsupported continuations, never completed work.
+- Harness Engine remains the execution authority. LangSmith Agent Server is not introduced. Remaining delivery stages are tracked in [#3381](https://github.com/caipe-io/ai-platform-engineering/issues/3381).
+
 ### Standalone examples
 
 - [sample_a2a_agents](https://github.com/caipe-io/sample_a2a_agents) owns the Netutils and Weather example servers, their SDK adapter, tests, Docker image, and Compose/gateway configuration.
 - Follow that repository's setup guide to attach the examples to the running platform network. They are not bundled in the Dynamic Agents image or platform Compose files.
-- Register Netutils for direct A2A calls or Weather through its Keycloak JWT gateway in **Advanced > Remote A2A Agents**. Select both, optionally enable **Stream responses**, and **Save Changes**.
+- Register example agents for direct A2A calls or through a Keycloak JWT gateway in **Agents > Remote Agents**. Optionally enable **Stream responses** on each entry, then select them in **Advanced > Subagents > Add subagent** and **Save Changes**.
 
 ### Authentication and destination policy
 
@@ -511,3 +615,29 @@ dynamic_agents/
 - Requests use `Accept-Encoding: identity`; compressed responses are rejected to keep decompression from bypassing the response budget.
 - Exceeding a limit fails the tool call and closes the active response stream and SDK client. Oversized snapshots are not emitted; partial output is not returned as a successful answer. Closing a local stream does not guarantee cancellation of work already running on the remote service.
 - Remote endpoints must be trusted and administrator-approved. Mandatory AgentGateway routing, verified calling-agent identity and CAS delegation authorization are tracked in [#2914](https://github.com/caipe-io/ai-platform-engineering/issues/2914).
+
+### Original GitHub skill packages
+
+Agents can attach stable GitHub Hub IDs and optional `skill_pins` with the
+SHA-256 of the original entry content and every ancillary file. The runtime
+checks the complete scanned package before loading it; missing, changed or
+unscanned packages fail closed. Chat overrides cannot clear pins or detach a
+pinned skill. Authorized agent management can explicitly reselect a new version.
+Original Hub command Markdown is materialized without adding frontmatter or
+rewriting its instructions. Supporting references retain their relative paths.
+Legacy unpinned Hub entries without frontmatter retain generated discovery
+metadata; original imports and pinned Hub entries preserve their exact bytes.
+Upstream tool declarations do not grant runtime tools or execution permission.
+
+### Unified subagent selection
+
+Agent Builder's Advanced step has one **Subagents** section. **Add subagent**
+searches authorized CAIPE agents and the shared A2A registry, with runtime/source
+labels. Published Harness children keep their runtime; enable Harness Engine
+execution before using them. Discovery and credentials remain in Remote Agents,
+which opens separately so an unsaved builder draft is retained.
+
+Existing `subagents`, `allowed_remote_agents`, A2A timeout overrides and native
+A2A opt-in settings are preserved. Removing a selection changes only the parent
+reference. Catalog errors retain saved references and leave the other available
+catalog usable. Sharing constraints and server-side authorization still apply.

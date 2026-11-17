@@ -281,4 +281,18 @@ describe("ReleaseUpgradeDialog", () => {
     expect(screen.getByText(/Couldn't load the release notes for 0.5.1/i)).toBeInTheDocument();
     expect(screen.queryByText("ReBAC admin diagnostics improved")).not.toBeInTheDocument();
   });
+  it.each(["", "javascript:alert(1)", "http://example.test/notes", "invalid"])("omits a rejected manual changelog link: %s", changelogUrl => {
+    render(<ReleaseUpgradeDialog open isAdmin={false} releaseVersion="1.3.2" release={null}
+      releaseMarkdown={{ matchedVersion: "1.3.2", title: null, date: null, body: "", source: "manual", changelogUrl }}
+      onSkipUntilNextLogin={jest.fn()} onDismissPermanently={jest.fn()} />);
+    expect(screen.queryByText("View full changelog")).not.toBeInTheDocument();
+  });
+
+  it("preserves first-line indented code for ordinary viewers", () => {
+    render(<ReleaseUpgradeDialog open isAdmin={false} releaseVersion="1.3.2" release={null}
+      releaseMarkdown={{ matchedVersion: "1.3.2", title: null, date: null, body: "    example command", source: "manual" }}
+      onSkipUntilNextLogin={jest.fn()} onDismissPermanently={jest.fn()} />);
+    expect(screen.getByText("example command").textContent).toBe("    example command");
+  });
+
 });

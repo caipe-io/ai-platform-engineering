@@ -15,6 +15,8 @@ const mockRequireAgentPermission = jest.fn();
 const mockGetPlatformDefaultAgentId = jest.fn();
 const mockFilterAgentsByOwnershipScopeForSession = jest.fn();
 
+jest.mock("@/lib/agent-mutation-lock", () => ({ withAgentMutationLock: async (_id: string, operation: () => Promise<unknown>) => operation() }));
+
 jest.mock("@/lib/api-middleware", () => {
   class ApiError extends Error {
     constructor(

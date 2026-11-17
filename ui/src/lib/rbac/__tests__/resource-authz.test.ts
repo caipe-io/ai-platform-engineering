@@ -26,8 +26,16 @@ import {
 } from "../resource-authz";
 
 describe("resource-authz", () => {
+  const originalEnv = { ...process.env };
+
   beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env.CAIPE_UNSAFE_RBAC_BYPASS;
     jest.clearAllMocks();
+  });
+
+  afterAll(() => {
+    process.env = originalEnv;
   });
 
   it("maps legacy list/admin actions onto CAS actions", () => {
@@ -118,6 +126,23 @@ describe("resource-authz", () => {
       statusCode: 401,
       code: "NO_SUBJECT",
     });
+  });
+
+  it("allows resource checks behind the unsafe RBAC bypass flag", async () => {
+    process.env.CAIPE_UNSAFE_RBAC_BYPASS = "true";
+    const warnMock = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const check = jest.fn(async () => ({ allowed: false }));
+
+    await expect(
+      requireResourcePermission(
+        {},
+        { type: "skill", id: "incident-triage", action: "read" },
+        { check },
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(check).not.toHaveBeenCalled();
+    warnMock.mockRestore();
   });
 
   it("checks the expected OpenFGA tuple and denies on false", async () => {
@@ -278,6 +303,28 @@ describe("resource-authz", () => {
     );
 
     expect(visible).toEqual([]);
+  });
+
+  it("returns all filtered resources behind the unsafe RBAC bypass flag", async () => {
+    process.env.CAIPE_UNSAFE_RBAC_BYPASS = "true";
+    const warnMock = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const check = jest.fn(async () => ({ allowed: false }));
+
+    const resources = [{ id: "a" }, { id: "b" }];
+    const visible = await filterResourcesByPermission(
+      {},
+      resources,
+      {
+        type: "llm_model",
+        action: "read",
+        id: (resource) => resource.id,
+      },
+      { check },
+    );
+
+    expect(visible).toEqual(resources);
+    expect(check).not.toHaveBeenCalled();
+    warnMock.mockRestore();
   });
 
   it("drops resources whose OpenFGA check errors", async () => {

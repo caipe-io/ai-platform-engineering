@@ -4,6 +4,9 @@ import { supportsAssistantClient, verifyWebexAssistantContext } from "../assista
 import type { AuthResult } from "@/lib/da-proxy";
 import type { Conversation } from "@/types/mongodb";
 
+const mockTeam = jest.fn();
+jest.mock("@/lib/rbac/webex-assistant-scope", () => ({ resolveWebexAssistantTeam: (...args: unknown[]) => mockTeam(...args) }));
+
 const secret = "example-shared-key-".repeat(3);
 const bearerToken = "example-user-token";
 const conversation = { _id: "example-chat", client_type: "webex", participants: [{ type: "agent", id: "example-agent" }],
@@ -49,4 +52,17 @@ it("keeps support opt-in and group support separately opt-in", () => {
   expect(supportsAssistantClient(enabled, "webex", "direct")).toBe(true);
   expect(supportsAssistantClient(enabled, "webex", "group")).toBe(false);
   expect(supportsAssistantClient({ ...enabled, webexGroupChat: true }, "webex", "group")).toBe(true);
+});
+
+const groupConversation = { ...conversation, metadata: { ...conversation.metadata, webex_is_direct: false, webex_bot_id: "primary" } } as Conversation;
+it("uses the current bot-specific team mapping instead of team fields in a signed message", async () => {
+  mockTeam.mockResolvedValue({ workspaceId: "example-workspace", teamSlug: "example-team" });
+  await expect(verifyWebexAssistantContext(request({ kind: "group", botId: "primary", teamSlug: "private-team" }), auth, groupConversation))
+    .resolves.toMatchObject({ kind: "group", botId: "primary", workspaceId: "example-workspace", teamSlug: "example-team" });
+  expect(mockTeam).toHaveBeenCalledWith("primary", "example-space");
+});
+it("rejects another bot and revoked room mappings", async () => {
+  await expect(verifyWebexAssistantContext(request({ kind: "group", botId: "secondary" }), auth, groupConversation)).rejects.toThrow();
+  mockTeam.mockRejectedValue(new Error("Mapping unavailable"));
+  await expect(verifyWebexAssistantContext(request({ kind: "group", botId: "primary" }), auth, groupConversation)).rejects.toThrow("Mapping unavailable");
 });

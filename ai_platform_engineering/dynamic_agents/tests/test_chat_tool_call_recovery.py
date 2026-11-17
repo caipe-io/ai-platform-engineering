@@ -73,3 +73,15 @@ async def test_invoke_returns_actionable_422(monkeypatch: pytest.MonkeyPatch) ->
     )
     assert response.status_code == 422
     assert json.loads(response.body)["error"] == ERROR
+
+
+@pytest.mark.parametrize("protocol", ["custom", "agui"])
+@pytest.mark.parametrize("resume", [False, True])
+async def test_native_thread_conflicts_have_a_specific_stream_error(monkeypatch: pytest.MonkeyPatch, protocol: str, resume: bool) -> None:
+    cache = MagicMock(get_or_create=AsyncMock(side_effect=chat.NativeThreadBusyError("busy")))
+    monkeypatch.setattr(chat, "get_runtime_cache", lambda: cache)
+    agent = DynamicAgentConfig(_id="example", name="Example", system_prompt="Help", owner_id="user@example.test", model=ModelConfig(id="example", provider="example"))
+    kwargs = dict(agent_config=agent, mcp_servers=[], session_id="example", user=UserContext(email="user@example.test"), encoder=get_encoder(protocol))
+    events = chat._generate_resume_sse_events(**kwargs, resume_data="continue") if resume else chat._generate_sse_events(**kwargs, message="example")
+    wire = "".join([frame async for frame in events])
+    assert "conversation_busy" in wire and chat.GENERIC_AGENT_ERROR not in wire

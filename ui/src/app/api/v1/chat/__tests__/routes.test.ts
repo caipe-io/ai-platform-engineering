@@ -3,6 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { checkHarnessMcpReadiness } from "@/lib/harness-mcp-readiness";
 
 import { POST as invokePost } from "../invoke/route";
 import { POST as cancelPost } from "../stream/cancel/route";
@@ -24,6 +25,9 @@ const mockIsSchedulerTokenConfigured = jest.fn();
 const mockIsSchedulerTokenValid = jest.fn();
 const mockResolveScheduledRunContext = jest.fn();
 const mockMintScheduledOwnerToken = jest.fn();
+const mockListMcpTools = jest.fn();
+const mockFilterMcpPermissions = jest.fn();
+jest.mock("@/lib/mcp-http-server-client", () => ({ listHttpMcpTools: (...args: unknown[]) => mockListMcpTools(...args) }));
 
 jest.mock("@/lib/da-proxy", () => ({
   authenticateRequest: (...args: unknown[]) => mockAuthenticateRequest(...args),
@@ -45,6 +49,7 @@ jest.mock("@/lib/rbac/openfga-agent-authz", () => ({
 
 jest.mock("@/lib/rbac/resource-authz", () => ({
   requireResourcePermission: (...args: unknown[]) => mockRequireResourcePermission(...args),
+  filterResourcesByPermission: (...args: unknown[]) => mockFilterMcpPermissions(...args),
 }));
 
 jest.mock("@/lib/rbac/conversation-implicit-authz", () => ({
@@ -62,6 +67,7 @@ jest.mock("@/lib/mongodb", () => ({
     if (name === "checkpoints_conversation") return Promise.resolve({ findOne: async () => null });
     if (name === "harness_gateway_bindings") return Promise.resolve({
       findOne: mockFindGatewayBinding,
+      updateOne: async () => ({ matchedCount: 1 }),
       findOneAndUpdate: async (_key: unknown, update: { $setOnInsert: unknown }) => update.$setOnInsert,
     });
     return mockGetCollection(name, ...args);
@@ -123,6 +129,49 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
       scheduleTitle: "Persisted schedule title",
     });
     mockMintScheduledOwnerToken.mockResolvedValue("owner-bearer-token");
+  });
+
+  it("reads shared Engine status without requiring agent use or conversation write", async () => {
+    mockFindGatewayBinding.mockResolvedValue({ runtime: "harness_engine", agent_id: "agent-1", conversation_id: "conv-1" });
+    mockLookupHarnessSession.mockResolvedValue({ harness_id: "dynamic_agents", last_run: {
+      run_id: "run-owner", owner_subject: "other-owner", status: "completed", turn_id: "turn-owner", last_sequence: 8,
+    } });
+    mockRequireAgentUsePermission.mockResolvedValue(NextResponse.json({ error: "No use permission" }, { status: 403 }));
+    const response = await statusPost(jsonRequest("/api/v1/chat/stream/status", { agent_id: "agent-1", conversation_id: "conv-1" }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ data: { runtime: "harness_engine", run_id: "run-owner", run_status: "completed", is_run_owner: false } });
+    expect(mockRequireAgentUsePermission).not.toHaveBeenCalled();
+    expect(mockRequireConversationResourcePermission).toHaveBeenCalledWith(expect.any(Object), "alice@example.com", expect.any(Object), "read");
+    expect(mockRequireConversationResourcePermission).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), "write");
+    expect(mockLookupHarnessSession).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ subject: "alice-sub" }), "agent-1", "conv-1", {
+      agentId: "agent-1", conversationId: "conv-1",
+    });
+  });
+
+  it("lets a shared reader wait for the first binding without write or agent permission", async () => {
+    mockRequireAgentUsePermission.mockResolvedValue(NextResponse.json({ error: "No use permission" }, { status: 403 }));
+    const request = () => jsonRequest("/api/v1/chat/stream/status", { agent_id: "agent-1", conversation_id: "conv-1" });
+    const response = await statusPost(request());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ data: { runtime: "unbound", run_id: null } });
+    expect(mockRequireAgentUsePermission).not.toHaveBeenCalled();
+    expect(mockLookupHarnessSession).not.toHaveBeenCalled();
+    expect(mockProxyJSONRequest).not.toHaveBeenCalled();
+    expect(mockRequireConversationResourcePermission).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything(), "write");
+    mockFindGatewayBinding.mockResolvedValue({ runtime: "harness_engine" });
+    mockLookupHarnessSession.mockResolvedValue({ harness_id: "claude_code", active_run: {
+      run_id: "first-run", owner_subject: "other-owner", turn_id: "first-turn",
+    } });
+    expect(await (await statusPost(request())).json()).toMatchObject({ data: { runtime: "harness_engine", run_id: "first-run" } });
+  });
+
+  it.each(["native", "disabled"])("retains status authorization for %s execution", async runtime => {
+    if (runtime === "disabled") delete process.env.HARNESS_ENGINE_URL;
+    else mockFindGatewayBinding.mockResolvedValueOnce(null).mockResolvedValue({ runtime: "dynamic_agents", harness_id: "dynamic_agents" });
+    mockRequireAgentUsePermission.mockResolvedValue(NextResponse.json({ error: "No use permission" }, { status: 403 }));
+    const response = await statusPost(jsonRequest("/api/v1/chat/stream/status", { agent_id: "agent-1", conversation_id: "conv-1" }));
+    expect(response.status).toBe(403);
+    expect(mockRequireAgentUsePermission).toHaveBeenCalled();
   });
 
   it.each([
@@ -935,6 +984,29 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
         traceparent: expect.stringMatching(/^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/),
       }),
     );
+
+    // Exercise real MCP readiness with the scheduled auth produced by this route.
+    // It must retain the owner session and freshly exchanged token without a cookie.
+    const scheduledAuth = mockProxyJSONRequest.mock.calls[0][2];
+    const previousGateway = process.env.AGENT_GATEWAY_URL;
+    process.env.AGENT_GATEWAY_URL = "http://gateway.example.test:4000";
+    mockGetCollection.mockResolvedValue({ find: () => ({ toArray: async () => [{ _id: "primary", enabled: true }] }) });
+    mockFilterMcpPermissions.mockImplementation(async (_session, servers) => servers);
+    mockListMcpTools.mockResolvedValue({ tools: [{ name: "lookup" }] });
+    try {
+      expect(await checkHarnessMcpReadiness("agent-persisted", ["primary.lookup"], scheduledAuth)).toBeUndefined();
+      expect(mockFilterMcpPermissions).toHaveBeenCalledWith(expect.objectContaining({ sub: "owner-sub", isServiceAccount: false }), expect.any(Array), expect.any(Object));
+      expect(mockListMcpTools).toHaveBeenCalledWith(expect.objectContaining({
+        agentId: "agent-persisted",
+        session: expect.objectContaining({ sub: "owner-sub", accessToken: "owner-bearer-token", role: "user", principalType: "oidc_user" }),
+      }));
+      expect(mockListMcpTools.mock.calls[0][0].request.headers.get("Authorization")).toBe("Bearer owner-bearer-token");
+      mockListMcpTools.mockResolvedValue({ tools: [] });
+      expect(await checkHarnessMcpReadiness("agent-persisted", ["primary.lookup"], scheduledAuth)).toMatchObject({ ready: false, code: "HARNESS_AGENT_NOT_READY" });
+    } finally {
+      if (previousGateway === undefined) delete process.env.AGENT_GATEWAY_URL;
+      else process.env.AGENT_GATEWAY_URL = previousGateway;
+    }
 
     const proxiedBody = JSON.parse(mockProxyJSONRequest.mock.calls[0][1] as string) as Record<string, unknown>;
     expect(proxiedBody.conversation_id).not.toBe("scheduled-sched_123-run_456");

@@ -49,6 +49,7 @@ import { getLastActiveConversationId, resolveChatNavigationPath, useChatStore } 
 import { apiClient } from '@/lib/api-client';
 import { createStreamEvent } from '@/lib/streaming/types';
 import type { Conversation, ChatMessage } from '@/types/a2a';
+import type { StreamAdapter } from '@/lib/streaming/adapter';
 
 // Get typed mock references
 const mockApiClient = apiClient as jest.Mocked<typeof apiClient>;
@@ -108,6 +109,74 @@ describe('chat-store', () => {
     window.localStorage.clear();
     (global as unknown).__mockStorageMode = 'mongodb';
     resetStore();
+  });
+
+  it('keeps replay subscriptions read-only through periodic save, cancellation, and completion', async () => {
+    const conv = makeConversation({ messages: [makeMessage({ role: 'assistant' })] });
+    const cancelStream = jest.fn();
+    useChatStore.setState({ conversations: [conv], activeConversationId: conv.id });
+    useChatStore.getState().setConversationStreaming(conv.id, { conversationId: conv.id, messageId: conv.messages[0].id,
+      client: { abort: jest.fn() }, streamAdapter: { cancelStream } as unknown as import('@/lib/streaming').StreamAdapter,
+      readOnly: true });
+    await useChatStore.getState().saveMessagesToServer(conv.id);
+    useChatStore.getState().cancelConversationRequest(conv.id);
+    expect(cancelStream).not.toHaveBeenCalled();
+    expect(useChatStore.getState().isConversationStreaming(conv.id)).toBe(true);
+    useChatStore.getState().setConversationStreaming(conv.id, null);
+    await jest.runAllTimersAsync();
+    expect(mockApiClient.addMessage).not.toHaveBeenCalled();
+  });
+
+  it.each(['shared_readonly', 'admin_audit'] as const)('never persists a %s transcript from a viewer browser', async accessLevel => {
+    const conv = makeConversation({ accessLevel, messages: [makeMessage()] });
+    useChatStore.setState({ conversations: [conv] });
+    await useChatStore.getState().saveMessagesToServer(conv.id);
+    expect(mockApiClient.addMessage).not.toHaveBeenCalled();
+  });
+
+  it('persists the final answer after an owner reconnects to their Engine run', async () => {
+    const conv = makeConversation({ accessLevel: 'owner', messages: [makeMessage({ role: 'assistant', isFinal: true })] });
+    useChatStore.setState({ conversations: [conv], activeConversationId: conv.id });
+    useChatStore.getState().setConversationStreaming(conv.id, { conversationId: conv.id, messageId: conv.messages[0].id,
+      client: { abort: jest.fn() }, readOnly: false });
+    useChatStore.getState().setConversationStreaming(conv.id, null);
+    await jest.runAllTimersAsync();
+    expect(mockApiClient.addMessage).toHaveBeenCalledWith(conv.id, expect.objectContaining({
+      role: 'assistant', metadata: expect.objectContaining({ is_final: true }),
+    }));
+  });
+
+  it.each([false, true])('reconciles a view-only replay with its persisted reply without duplicates (final=%s)', async isFinal => {
+    const id = `replay-merge-${isFinal}`;
+    const conv = makeConversation({ id, messages: [
+      makeMessage({ id: 'prompt-one', role: 'user', turnId: 'shared-turn' }),
+      makeMessage({ id: 'prompt-two', role: 'user', turnId: 'shared-turn' }),
+      makeMessage({ id: 'local-replay', role: 'assistant', turnId: 'shared-turn', content: 'Complete live answer', isFinal: true, isReadOnlyReplay: true }),
+    ] });
+    useChatStore.setState({ conversations: [conv] });
+    mockApiClient.getMessages.mockResolvedValue({ items: [{
+      message_id: 'persisted-answer', conversation_id: id, role: 'assistant',
+      content: isFinal ? 'Saved final answer' : 'Stale partial', created_at: '2026-09-01T00:00:00Z',
+      metadata: { turn_id: 'shared-turn', is_final: isFinal },
+    }], total: 1 });
+    await useChatStore.getState().loadMessagesFromServer(id, { force: true });
+    await useChatStore.getState().loadMessagesFromServer(id, { force: true });
+    const messages = useChatStore.getState().conversations[0].messages;
+    expect(messages.filter(m => m.role === 'user')).toHaveLength(2);
+    expect(messages.filter(m => m.role === 'assistant')).toEqual([expect.objectContaining({
+      id: 'persisted-answer', content: isFinal ? 'Saved final answer' : 'Complete live answer', isFinal: true,
+    })]);
+    expect(messages.find(m => m.id === 'persisted-answer')?.isReadOnlyReplay).toBe(isFinal ? undefined : true);
+  });
+
+  it('does not persist a completed view-only replay after its subscription ends', async () => {
+    const conv = makeConversation({ messages: [
+      makeMessage({ role: 'user', turnId: 'shared-turn' }),
+      makeMessage({ role: 'assistant', turnId: 'shared-turn', isFinal: true, isReadOnlyReplay: true }),
+    ] });
+    useChatStore.setState({ conversations: [conv] });
+    await useChatStore.getState().saveMessagesToServer(conv.id);
+    expect(mockApiClient.addMessage).not.toHaveBeenCalled();
   });
 
   it('preserves an explicit title when the first user message arrives', async () => {
@@ -172,6 +241,40 @@ describe('chat-store', () => {
   afterEach(() => {
     jest.useRealTimers();
     window.localStorage.clear();
+  });
+
+  describe('browser refresh', () => {
+    it.each([
+      ['no active streams', [], false],
+      ['admitted Engine runs', [true, true], false],
+      ['legacy or unconfirmed runs', [undefined], true],
+      ['requests awaiting admission', [false], true],
+      ['mixed Engine and legacy runs', [true, undefined], true],
+    ] as const)('%s', (_name, recoveryStates, warns) => {
+      const originalSave = useChatStore.getState().saveMessagesToServer;
+      const save = jest.fn().mockResolvedValue(undefined);
+      useChatStore.setState({
+        saveMessagesToServer: save,
+        streamingConversations: new Map(recoveryStates.map((canRecoverOnRefresh, index) => {
+          const conversationId = `example-${index}`;
+          return [conversationId, {
+            conversationId, messageId: `message-${index}`, client: { abort: jest.fn() },
+            streamAdapter: canRecoverOnRefresh === undefined ? undefined : {
+              canRecoverOnRefresh, streamMessage: jest.fn(), resumeStream: jest.fn(),
+              recoverRun: jest.fn(), cancelStream: jest.fn(), abort: jest.fn(),
+            },
+          }];
+        })),
+      });
+      try {
+        const event = new Event('beforeunload', { cancelable: true });
+        window.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(warns);
+        expect(save).toHaveBeenCalledTimes(recoveryStates.length);
+      } finally {
+        useChatStore.setState({ saveMessagesToServer: originalSave, streamingConversations: new Map() });
+      }
+    });
   });
 
   describe('context usage', () => {
@@ -1029,6 +1132,42 @@ describe('chat-store', () => {
   });
 
   describe('saveMessagesToServer — queued batches', () => {
+    it('anchors all queued prompts before dispatch without saving an unfinished answer', async () => {
+      const turnId = 'turn-detached';
+      useChatStore.setState({ conversations: [makeConversation({
+        id: 'detached-conversation', messages: [
+          makeMessage({ id: 'prompt-one', role: 'user', content: 'First', turnId }),
+          makeMessage({ id: 'prompt-two', role: 'user', content: 'Second', turnId }),
+          makeMessage({ id: 'reply', role: 'assistant', content: '', turnId, isFinal: false }),
+        ],
+      })] });
+      await useChatStore.getState().saveMessagesToServer('detached-conversation', {
+        skipNonFinal: true, requireSuccess: true,
+      });
+      expect(mockApiClient.addMessage.mock.calls.map(([, message]) => message.message_id))
+        .toEqual(['prompt-one', 'prompt-two']);
+      expect(mockApiClient.addMessage).toHaveBeenCalledWith('detached-conversation',
+        expect.objectContaining({ metadata: expect.objectContaining({ turn_id: turnId }) }));
+    });
+
+    it('rejects a failed admission save instead of allowing an unanchored run', async () => {
+      useChatStore.setState({ conversations: [makeConversation({
+        id: 'failed-anchor', messages: [
+          makeMessage({ id: 'prompt', role: 'user', content: 'Hello', turnId: 'turn-anchor' }),
+          makeMessage({ id: 'reply', role: 'assistant', content: '', turnId: 'turn-anchor', isFinal: false }),
+        ],
+      })] });
+      mockApiClient.addMessage.mockRejectedValueOnce(new Error('Database unavailable'));
+      await expect(useChatStore.getState().saveMessagesToServer('failed-anchor', {
+        skipNonFinal: true, requireSuccess: true,
+      })).rejects.toThrow('Database unavailable');
+      // Best-effort periodic saves keep their existing error behavior.
+      mockApiClient.addMessage.mockRejectedValueOnce(new Error('Database unavailable'));
+      await expect(useChatStore.getState().saveMessagesToServer('failed-anchor', {
+        skipNonFinal: true,
+      })).resolves.toBeUndefined();
+    });
+
     it('persists every user bubble sharing the latest assistant turn', async () => {
       const turnId = 'turn-batch';
       const conv = makeConversation({
@@ -1807,6 +1946,38 @@ describe('chat-store', () => {
   // --------------------------------------------------------------------------
 
   describe('cancelConversationRequest', () => {
+    it('retains the Engine subscription and draft until the dispatched work drains', async () => {
+      const conv = makeConversation({ id: 'example-stop', participants: [{ type: 'agent', id: 'example-agent' }] });
+      conv.messages = [makeMessage({ id: 'example-response', role: 'assistant', content: 'partial', isFinal: false })];
+      const cancel = jest.fn().mockResolvedValue(true);
+      const abort = jest.fn();
+      useChatStore.setState({ conversations: [conv], activeConversationId: conv.id, isStreaming: true,
+        streamingConversations: new Map([[conv.id, { conversationId: conv.id, messageId: 'example-response', client: { abort },
+          streamAdapter: { canRecoverOnRefresh: true, cancelStream: cancel } as unknown as StreamAdapter }]]) });
+      useChatStore.getState().cancelConversationRequest(conv.id);
+      useChatStore.getState().cancelConversationRequest(conv.id);
+      await Promise.resolve();
+      jest.advanceTimersByTime(1000);
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(abort).not.toHaveBeenCalled();
+      expect(useChatStore.getState().streamingConversations.get(conv.id)?.stopping).toBe(true);
+      expect(useChatStore.getState().isConversationStreaming(conv.id)).toBe(true);
+      expect(useChatStore.getState().conversations[0].messages[0]).toMatchObject({ content: 'partial', isFinal: false });
+    });
+
+    it('keeps following the response when cancellation is rejected', async () => {
+      const conv = makeConversation({ id: 'example-stop', participants: [{ type: 'agent', id: 'example-agent' }] });
+      const abort = jest.fn();
+      useChatStore.setState({ conversations: [conv], isStreaming: true,
+        streamingConversations: new Map([[conv.id, { conversationId: conv.id, messageId: 'example-response', client: { abort },
+          streamAdapter: { canRecoverOnRefresh: true, cancelStream: async () => false } as unknown as StreamAdapter }]]) });
+      useChatStore.getState().cancelConversationRequest(conv.id);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(useChatStore.getState().streamingConversations.get(conv.id)).toMatchObject({ stopping: false, stopError: expect.stringContaining('Could not confirm Stop') });
+      expect(abort).not.toHaveBeenCalled();
+    });
+
     it('does not save to MongoDB after cancelling (server-side persistence handles it)', async () => {
       const conv = makeConversation({ id: 'cancel-save-test' });
       const msg = makeMessage({
@@ -2492,4 +2663,42 @@ describe('chat-store', () => {
     });
   });
 
+});
+
+it("persists and reloads the configuration block without losing its recovery action", async () => {
+  const conv = makeConversation({ id: "readiness-chat", agent_id: "example" });
+  conv.messages = [makeMessage({ id: "readiness-message", role: "assistant", content: "Nothing was executed.", isFinal: true, turnStatus: "interrupted", error: "HARNESS_AGENT_NOT_READY" })];
+  useChatStore.setState({ conversations: [conv], activeConversationId: conv.id, streamingConversations: new Map() });
+  await useChatStore.getState().saveMessagesToServer(conv.id);
+  expect(mockApiClient.addMessage).toHaveBeenCalledWith(conv.id, expect.objectContaining({ metadata: expect.objectContaining({ execution_error_code: "HARNESS_AGENT_NOT_READY" }) }));
+  mockApiClient.getMessages.mockResolvedValueOnce({ items: [{ _id: "saved", message_id: "readiness-message", conversation_id: conv.id, role: "assistant", content: "Nothing was executed.", created_at: new Date(), metadata: { is_final: true, turn_status: "interrupted", execution_error_code: "HARNESS_AGENT_NOT_READY" } }], total: 1, page: 1, page_size: 100, has_more: false } as never);
+  useChatStore.setState({ conversations: [{ ...conv, messages: [] }], loadingConversations: new Set() } as never);
+  await useChatStore.getState().loadMessagesFromServer(conv.id, { force: true });
+  expect(useChatStore.getState().getActiveConversation()?.messages[0].error).toBe("HARNESS_AGENT_NOT_READY");
+});
+
+
+it("saves a rejected admission before a queued turn can replace the current turn", async () => {
+  jest.useFakeTimers();
+  try {
+    resetStore();
+    mockApiClient.addMessage.mockClear();
+    const conv = makeConversation({ id: "queued-readiness", agent_id: "example" });
+    conv.messages = [
+      makeMessage({ id: "rejected-user", turnId: "rejected", role: "user" }),
+      makeMessage({ id: "rejected-assistant", turnId: "rejected", role: "assistant", content: "Nothing was executed.", isFinal: true, error: "HARNESS_AGENT_NOT_READY" }),
+    ];
+    useChatStore.setState({ conversations: [conv], activeConversationId: conv.id });
+    useChatStore.getState().setConversationStreaming(conv.id, null);
+    const current = useChatStore.getState().conversations[0];
+    useChatStore.setState({ conversations: [{ ...current, messages: [...current.messages,
+      makeMessage({ id: "queued-user", turnId: "queued", role: "user" }),
+      makeMessage({ id: "queued-assistant", turnId: "queued", role: "assistant", content: "New turn", isFinal: false }),
+    ] }] });
+    await jest.advanceTimersByTimeAsync(500);
+    expect(mockApiClient.addMessage).toHaveBeenCalledWith(conv.id, expect.objectContaining({
+      message_id: "rejected-assistant", metadata: expect.objectContaining({ execution_error_code: "HARNESS_AGENT_NOT_READY", turn_id: "rejected" }),
+    }));
+    expect(mockApiClient.addMessage.mock.calls.map(([, message]) => message.message_id)).toEqual(["rejected-user", "rejected-assistant"]);
+  } finally { jest.useRealTimers(); }
 });

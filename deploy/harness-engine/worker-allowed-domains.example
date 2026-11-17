@@ -1,0 +1,2 @@
+# Copy to deployment-owned configuration; list exact required TLS model hosts.
+api.example.com

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 
+import pytest
+
 from harness_engine.adapters.agentcore import AgentCoreAdapter
 from harness_engine.config import Settings
 from harness_engine.models import (
@@ -40,21 +42,25 @@ class FakeClient:
 
 
 class FakeManagedHarnessClient:
-    def __init__(self) -> None:
+    def __init__(self, events: list[dict[str, object]] | None = None) -> None:
         self.calls: list[dict[str, object]] = []
+        self.events = events if events is not None else [
+            {"messageStart": {"role": "assistant"}},
+            {"contentBlockDelta": {"delta": {"text": "managed"}}},
+            {"contentBlockDelta": {"delta": {"text": " harness"}}},
+            {"messageStop": {"stopReason": "end_turn"}},
+            {"metadata": {"usage": {"inputTokens": 3, "outputTokens": 2}}},
+        ]
 
     def invoke_harness(self, **kwargs: object) -> dict[str, object]:
         self.calls.append(kwargs)
-        return {
-            "stream": iter(
-                [
-                    {"messageStart": {"role": "assistant"}},
-                    {"contentBlockDelta": {"delta": {"text": "managed"}}},
-                    {"contentBlockDelta": {"delta": {"text": " harness"}}},
-                    {"metadata": {"usage": {"inputTokens": 3, "outputTokens": 2}}},
-                ]
-            )
-        }
+        return {"stream": iter(self.events)}
+
+
+class JsonResultClient(FakeClient):
+    def invoke_agent_runtime(self, **kwargs: object) -> dict[str, object]:
+        self.calls.append(kwargs)
+        return {"contentType": "application/json", "response": [b'{"result":"Final report"}']}
 
 
 def context(profile_id: str = "primary") -> RunContext:
@@ -92,7 +98,8 @@ async def test_agentcore_adapter_uses_operator_target_and_provider_session(setti
 
     events = [event async for event in adapter.stream(context())]
 
-    assert [event.data["text"] for event in events] == ["first", "second"]
+    assert [event.data["text"] for event in events if event.event_type == "content.delta"] == ["first", "second"]
+    assert all(event.event_type == "content.delta" for event in events)
     assert client.calls[0]["agentRuntimeArn"] == (
         "arn:aws:bedrock-agentcore:us-east-1:111122223333:runtime/example"
     )
@@ -103,6 +110,46 @@ async def test_agentcore_adapter_uses_operator_target_and_provider_session(setti
     assert isinstance(payload, bytes)
     assert b'"system_prompt":"Be helpful."' in payload
     assert "Authorization" not in client.calls[0]
+
+
+async def test_agentcore_json_result_is_an_authoritative_report(settings: Settings) -> None:
+    adapter = AgentCoreAdapter(settings, clients={"default": JsonResultClient()})
+    events = [event async for event in adapter.stream(context())]
+    assert events[-1].event_type == "result.updated"
+    assert events[-1].data == {"content": "Final report", "final_content": "Final report"}
+
+
+async def test_agentcore_sse_requires_an_explicit_result_for_a_final_report(settings: Settings) -> None:
+    class ResultClient(FakeClient):
+        def invoke_agent_runtime(self, **kwargs: object) -> dict[str, object]:
+            return {"contentType": "text/event-stream", "response": StreamingBody([
+                b'data: preamble', b'data: {"result":"Final report"}',
+            ])}
+
+    adapter = AgentCoreAdapter(settings, clients={"default": ResultClient()})
+    events = [event async for event in adapter.stream(context())]
+    assert events[-1].event_type == "result.updated"
+    assert events[-1].data == {"content": "Final report", "final_content": "Final report"}
+
+
+async def test_agentcore_managed_final_report_uses_message_boundary() -> None:
+    client = FakeManagedHarnessClient([
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"delta": {"text": "Investigating first. "}}},
+        {"messageStop": {"stopReason": "tool_use"}},
+        {"messageStart": {"role": "assistant"}},
+        {"contentBlockDelta": {"delta": {"text": "Final report"}}},
+        {"messageStop": {"stopReason": "end_turn"}},
+    ])
+    settings = Settings(agentcore_runtimes_json=json.dumps({"primary": {
+        "arn": "arn:aws:bedrock-agentcore:us-east-2:111122223333:harness/example",
+        "region": "us-east-2",
+    }}))
+    adapter = AgentCoreAdapter(settings, clients={"us-east-2": client})
+    events = [event async for event in adapter.stream(context())]
+    results = [event for event in events if event.event_type == "result.updated"]
+    assert len(results) == 1
+    assert results[0].data == {"content": "Final report", "final_content": "Final report"}
 
 
 async def test_agentcore_adapter_rejects_non_allowlisted_profile(settings: Settings) -> None:
@@ -140,8 +187,10 @@ async def test_agentcore_adapter_invokes_managed_harness() -> None:
     assert [event.event_type for event in events] == [
         "content.delta",
         "content.delta",
+        "result.updated",
         "usage.updated",
     ]
+    assert events[-2].data == {"content": "managed harness", "final_content": "managed harness"}
     assert [event.data.get("text") for event in events[:2]] == ["managed", " harness"]
     call = client.calls[0]
     assert call["harnessArn"] == (
@@ -153,7 +202,27 @@ async def test_agentcore_adapter_invokes_managed_harness() -> None:
         "00-11111111111111111111111111111111-2222222222222222-01"
     )
     assert call["runtimeUserId"] != "test-user"
+    assert call["actorId"] == call["runtimeUserId"]
     assert "Authorization" not in call
+
+
+@pytest.mark.parametrize("error_type", ["runtimeClientError", "internalServerException", "validationException"])
+async def test_agentcore_rejects_provider_errors_after_partial_content(error_type: str) -> None:
+    client = FakeManagedHarnessClient([
+        {"contentBlockDelta": {"delta": {"text": "partial"}}},
+        {error_type: {"message": "Private provider failure details"}},
+        {"contentBlockDelta": {"delta": {"text": "must not be published"}}},
+    ])
+    settings = Settings(agentcore_runtimes_json=json.dumps({"primary": {
+        "arn": "arn:aws:bedrock-agentcore:us-east-2:111122223333:harness/example",
+        "region": "us-east-2",
+    }}))
+    adapter = AgentCoreAdapter(settings, clients={"us-east-2": client})
+    stream = adapter.stream(context())
+    assert (await anext(stream)).data["text"] == "partial"
+    with pytest.raises(RuntimeError, match=error_type) as error:
+        await anext(stream)
+    assert "Private provider failure details" not in str(error.value)
 
 
 async def test_agentcore_adapter_resolves_a_server_owned_per_agent_harness() -> None:

@@ -254,6 +254,8 @@ async function smokeTestNoArgumentTool(
 export const POST = withErrorHandler(async (request: NextRequest) => {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
+  // Builder selection discovers metadata without invoking a smoke-test tool.
+  const listOnly = searchParams.get("list_only") === "true";
 
   if (!id) {
     throw new ApiError("Server ID is required", 400);
@@ -283,7 +285,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
             server,
             serverId: id,
           });
-          const toolTest = await smokeTestNoArgumentTool(server, listed.tools, listed.sessionId);
+          const toolTest = listOnly ? undefined : await smokeTestNoArgumentTool(server, listed.tools, listed.sessionId);
           try {
             await cacheMcpToolCatalog({
               serverId: id,
@@ -304,7 +306,7 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
 
         const directResult = await listToolsDirect(server);
         if (directResult) {
-          const toolTest = await smokeTestNoArgumentTool(server, directResult.tools, directResult.sessionId);
+          const toolTest = listOnly ? undefined : await smokeTestNoArgumentTool(server, directResult.tools, directResult.sessionId);
           try {
             await cacheMcpToolCatalog({
               serverId: id,

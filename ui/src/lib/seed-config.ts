@@ -520,6 +520,11 @@ async function seedMCPServers(
     await reconcileConfigDrivenMcpServerRelationships({
       serverId,
       organizationId: caipeOrgKey(),
+    }).catch((error) => {
+      console.warn(
+        `[seed-config] Failed to reconcile config-driven MCP server OpenFGA tuples for ${serverId}:`,
+        error instanceof Error ? error.message : String(error),
+      );
     });
     console.log(`[seed-config] Seeded MCP server: ${serverId}`);
     count++;

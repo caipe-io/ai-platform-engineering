@@ -1,3 +1,4 @@
+import { safeWebexReturnTo, safeWebexBotId } from "@/lib/webex-link-context";
 import { NextRequest, NextResponse } from "next/server";
 
 import { getRequestOrigin } from "@/app/api/skills/_lib/request-origin";
@@ -79,6 +80,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     ownerId,
     state,
     codeVerifier,
+    webexLinkContext: { returnTo: safeWebexReturnTo(request.nextUrl.searchParams.get("return_to")), botId: safeWebexBotId(request.nextUrl.searchParams.get("bot_id")) },
   })}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600${secureCookie ? "; Secure" : ""}`;
 
   return new Response(null, {

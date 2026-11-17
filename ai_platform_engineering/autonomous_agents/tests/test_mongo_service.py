@@ -253,14 +253,18 @@ class TestTaskCrud:
         assert await service.get_task("t1") is None
         assert await service.get_task("t2") is not None
 
-    async def test_delete_purges_runs_and_chat_history_for_reused_task_id(self, service: MongoService):
-        """``delete_task`` cascades to runs + chat history so a recreated task starts clean."""
+    async def test_delete_purges_runs_and_chat_history_for_reused_task_id(self, service: MongoService) -> None:
+        """``delete_task`` purges runs, trigger claims and chat history before ID reuse."""
         task = _task("t1")
         await service.create_task(task)
 
         run = _make_run("r1", task_id="t1", status=TaskStatus.SUCCESS)
         run.response_preview = "old response"
         await service.record_run(run)
+        trigger_key = "t1:manual:example-request"
+        await service.record_trigger_instance({"_id": trigger_key, "task_id": "t1",
+            "run_id": "r1", "manual_queue_accepted": True})
+        await service.record_trigger_instance({"_id": "unrelated", "task_id": "t2"})
         await service.publish_creation_intent(task)
         await service.publish_preflight_ack(
             task,
@@ -279,12 +283,16 @@ class TestTaskCrud:
 
         await service.delete_task("t1")
 
+        assert await service.get_trigger_instance(trigger_key) is None
+        assert await service.get_trigger_instance("unrelated") is not None
         assert await service._runs().count_documents({"task_id": "t1"}) == 0
         assert await service._conversations().count_documents({"_id": conv_id}) == 0
         assert await service._messages().count_documents({"conversation_id": conv_id}) == 0
 
         recreated = _task("t1", name="Replacement task")
         await service.create_task(recreated)
+        claimed, _ = await service.record_trigger_instance({"_id": trigger_key, "task_id": "t1", "run_id": "new-run"})
+        assert claimed is True
         await service.publish_creation_intent(recreated)
 
         assert await service._runs().count_documents({"task_id": "t1"}) == 0

@@ -320,7 +320,9 @@ async def test_runtime_omits_projection_with_pii_and_preserves_input_handling(
 
     monkeypatch.setenv("ENABLE_TRACING", "false")
     monkeypatch.setattr(
-        agent_runtime, "get_llm", lambda *args: FakeMessagesListChatModel(responses=[AIMessage(content="Example response")])
+        agent_runtime,
+        "get_llm",
+        lambda *args, streaming=None: FakeMessagesListChatModel(responses=[AIMessage(content="Example response")]),
     )
     monkeypatch.setattr(agent_runtime, "create_deep_agent", create_graph)
     runtime = agent_runtime.AgentRuntime(

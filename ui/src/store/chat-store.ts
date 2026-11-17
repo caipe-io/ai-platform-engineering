@@ -73,6 +73,11 @@ interface StreamingState {
   client: { abort: () => void };
   // For Dynamic Agents: adapter reference for backend cancellation
   streamAdapter?: StreamAdapter;
+  /** View-only subscriptions must never send execution controls. */
+  readOnly?: boolean;
+  /** Keep the subscription and execution fence until the server confirms stop. */
+  stopping?: boolean;
+  stopError?: string;
 }
 
 interface MessageHistoryState {
@@ -136,7 +141,7 @@ interface ChatState {
   setPendingMessage: (message: string | null) => void;
   consumePendingMessage: () => string | null;
   loadConversationsFromServer: (options?: { filter?: ConversationListFilter; append?: boolean }) => Promise<void>; // Load conversations from server (MongoDB mode only)
-  saveMessagesToServer: (conversationId: string, options?: { skipNonFinal?: boolean }) => Promise<void>; // Save messages to MongoDB after streaming
+  saveMessagesToServer: (conversationId: string, options?: { skipNonFinal?: boolean; requireSuccess?: boolean }) => Promise<void>; // Save messages to MongoDB after streaming
   loadMessagesFromServer: (conversationId: string, options?: { force?: boolean }) => Promise<void>; // Load messages from MongoDB when opening conversation
   loadOlderMessagesFromServer: (conversationId: string) => Promise<void>;
   evictOldMessageContent: (conversationId: string, messageIdsToEvict: string[]) => void; // Evict content from old messages to free memory
@@ -266,6 +271,7 @@ function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
       autonomousMessageKind: msg.metadata?.kind,
       autonomousExecutionContextId: msg.metadata?.execution_context_id,
       turnStatus: msg.metadata?.turn_status as TurnStatus | undefined,
+      ...(msg.metadata?.execution_error_code === "HARNESS_AGENT_NOT_READY" && { error: "HARNESS_AGENT_NOT_READY" }),
       // A non-final message may still be streaming in another tab. Only a
       // persisted terminal status can confirm that its response was interrupted.
       isInterrupted: !hasHitlForm && (
@@ -288,10 +294,14 @@ function deserializeMessages(rawItems: StoredMessage[]): ChatMessage[] {
 }
 
 function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
-  const messagesById = new Map(existing.map((message) => [message.id, message]));
+  const replaysByTurn = new Map(existing.filter(message => message.isReadOnlyReplay && message.turnId)
+    .map(message => [message.turnId, message]));
+  const savedReplies = new Set(incoming.filter(message => message.role === 'assistant' && message.turnId).map(message => message.turnId));
+  const messagesById = new Map(existing.filter(message => !message.isReadOnlyReplay || !savedReplies.has(message.turnId))
+    .map((message) => [message.id, message]));
   for (const message of incoming) {
-    const localMessage = messagesById.get(message.id);
-    messagesById.set(message.id, localMessage?.isFinal && !message.isFinal ? localMessage : message);
+    const localMessage = messagesById.get(message.id) ?? (message.role === 'assistant' ? replaysByTurn.get(message.turnId) : undefined);
+    messagesById.set(message.id, localMessage?.isFinal && !message.isFinal ? { ...localMessage, id: message.id } : message);
   }
 
   const ordered = [...messagesById.values()].sort(
@@ -503,6 +513,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       },
 
       setConversationStreaming: (conversationId: string, state: StreamingState | null) => {
+        const wasReadOnly = get().streamingConversations.get(conversationId)?.readOnly;
         set((prev: ChatState) => {
           const newMap = new Map(prev.streamingConversations);
           if (state) {
@@ -540,12 +551,12 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
 
           // Reset periodic save counter for this conversation
           eventCountSinceLastSave.delete(conversationId);
+          if (wasReadOnly) return;
           // Mark save as pending — prevents loadMessagesFromServer from
           // overwriting the correct in-memory state with stale MongoDB data
           // before this save completes.
           pendingSaveTimestamps.set(conversationId, Date.now());
-          // Use setTimeout to let the final message update settle before saving
-          setTimeout(() => {
+          const persistCompletedTurn = () => {
             get().saveMessagesToServer(conversationId)
               .then(() => {
                 pendingSaveTimestamps.delete(conversationId);
@@ -555,7 +566,12 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
                 pendingSaveTimestamps.delete(conversationId);
                 console.error('[ChatStore] Background save failed:', error);
               });
-          }, 500);
+          };
+          const lastResponse = get().conversations.find(conv => conv.id === conversationId)?.messages.findLast(msg => msg.role === "assistant");
+          // A rejected admission is already final. Start its save synchronously
+          // so it captures this turn before a queued prompt becomes current.
+          if (lastResponse?.error === "HARNESS_AGENT_NOT_READY") persistCompletedTurn();
+          else setTimeout(persistCompletedTurn, 500);
         }
       },
 
@@ -567,8 +583,30 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         const state = get();
         const streamingState = state.streamingConversations.get(conversationId);
         if (streamingState) {
+          if (streamingState.readOnly) return;
           // Get conversation to check if it's a Dynamic Agent
           const conv = state.conversations.find((c: Conversation) => c.id === conversationId);
+          const persistentAdapter = streamingState.streamAdapter;
+          if (persistentAdapter?.canRecoverOnRefresh) {
+            if (streamingState.stopping) return;
+            const agentId = conv ? getAgentId(conv) : undefined;
+            if (!agentId) return;
+            const pending = { ...streamingState, stopping: true, stopError: undefined };
+            set({ streamingConversations: new Map(get().streamingConversations).set(conversationId, pending) });
+            void persistentAdapter.cancelStream(conversationId, agentId).catch((error) => {
+              console.error('[ChatStore] Backend cancel failed:', error);
+              return false;
+            }).then((accepted) => {
+              // A completed response or a newer turn must not be changed by a
+              // late cancellation reply. Keep following the current producer.
+              if (!accepted && get().streamingConversations.get(conversationId) === pending) {
+                set({ streamingConversations: new Map(get().streamingConversations).set(conversationId, {
+                  ...pending, stopping: false, stopError: 'Could not confirm Stop. The response is still active; try again.',
+                }) });
+              }
+            });
+            return;
+          }
           
           // For Dynamic Agents, send backend cancel request before aborting client
           if (streamingState.streamAdapter) {
@@ -1092,17 +1130,21 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       // No localStorage cache, no "saved vs stale" tracking needed.
       //
       // Options:
+      //   requireSuccess: Reject on a failed write so a new run cannot start
+      //     without the persisted user turn needed to recover it after tab close.
       //   skipNonFinal: When true, skip saving assistant messages that don't have
       //     isFinal=true. Used by periodic saves during streaming to avoid writing
       //     stale intermediate content to MongoDB. The final save (after streaming
       //     ends) omits this flag so the correct final content is written.
-      saveMessagesToServer: async (conversationId: string, options?: { skipNonFinal?: boolean }) => {
+      saveMessagesToServer: async (conversationId: string, options?: { skipNonFinal?: boolean; requireSuccess?: boolean }) => {
         const storageMode = getStorageMode();
         if (storageMode !== 'mongodb') return;
 
         const state = get();
         const conv = state.conversations.find((c: Conversation) => c.id === conversationId);
         if (!conv || conv.messages.length === 0) return;
+        if (conv.accessLevel === 'shared_readonly' || conv.accessLevel === 'admin_audit' ||
+            state.streamingConversations.get(conversationId)?.readOnly) return;
 
         // Stream events during streaming are stored at the conversation level
         // (conv.streamEvents) via addStreamEvent(). To persist them to MongoDB,
@@ -1131,6 +1173,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
         // saveMessagesToServer calls. Re-saving them all is wasteful and causes
         // request spam (one POST per message × every turn).
         const lastAssistantMsg = lastAssistantIdx >= 0 ? conv.messages[lastAssistantIdx] : null;
+        if (lastAssistantMsg?.isReadOnlyReplay) return;
         const messagesToSave: { msg: typeof conv.messages[0]; idx: number }[] = [];
         const currentTurnId = lastAssistantMsg?.turnId;
         if (currentTurnId) {
@@ -1205,6 +1248,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
                 ...(msg.taskId && { task_id: msg.taskId }),
                 ...(msg.isInterrupted && { is_interrupted: msg.isInterrupted }),
                 ...(msg.turnStatus && { turn_status: msg.turnStatus }),
+                ...(msg.error === "HARNESS_AGENT_NOT_READY" && { execution_error_code: msg.error }),
                 // agent_name + latency_ms power the Insights "Favorite Agents"
                 // and response-time analytics. Set on the finalized assistant
                 // message by DynamicAgentChatPanel.finalizeStreamLoop.
@@ -1218,6 +1262,7 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
             savedCount++;
           } catch (error) {
             console.error(`[ChatStore] Failed to save message ${msg.id}:`, getErrorMessage(error, ""));
+            if (options?.requireSuccess) throw error;
           }
         }
 
@@ -1610,7 +1655,7 @@ if (typeof window !== 'undefined') {
       const localMsgs = conv?.messages || [];
 
       try {
-        const res = await fetch(`/api/chat/conversations/${convId}/messages?pageSize=100`);
+        const res = await fetch(`/api/chat/conversations/${encodeURIComponent(convId)}/messages?pageSize=100`);
         const data = await res.json();
         const mongoMsgs = data.items || data.data || [];
 
@@ -1649,7 +1694,7 @@ if (typeof window !== 'undefined') {
     mongo: async () => {
       const convId = useChatStore.getState().activeConversationId;
       if (!convId) { console.log('No active conversation'); return; }
-      const res = await fetch(`/api/chat/conversations/${convId}/messages?pageSize=100`);
+      const res = await fetch(`/api/chat/conversations/${encodeURIComponent(convId)}/messages?pageSize=100`);
       const data = await res.json();
       const items = (data.items || data.data || []) as StoredMessage[];
       console.log(`MongoDB: ${items.length} messages for ${convId}`);
@@ -1751,19 +1796,21 @@ if (typeof window !== 'undefined') {
   });
 
   // Fallback: beforeunload for older browsers and explicit tab close.
-  // Also prompts the user to confirm if any conversations are actively streaming,
-  // so they don't accidentally lose an in-flight response.
+  // Engine runs survive a subscriber disconnect. Warn only for streams whose
+  // server has not confirmed refresh recovery, including legacy execution.
   window.addEventListener('beforeunload', (e: BeforeUnloadEvent) => {
     saveInflightConversations();
 
     const state = useChatStore.getState();
-    if (state.streamingConversations.size > 0) {
+    const interruptedCount = [...state.streamingConversations.values()].filter(
+      stream => !stream.streamAdapter?.canRecoverOnRefresh,
+    ).length;
+    if (interruptedCount > 0) {
       e.preventDefault();
-      const count = state.streamingConversations.size;
       const msg =
-        count === 1
+        interruptedCount === 1
           ? 'You have 1 live chat receiving a response. Refreshing will interrupt it.'
-          : `You have ${count} live chats receiving responses. Refreshing will interrupt them.`;
+          : `You have ${interruptedCount} live chats receiving responses. Refreshing will interrupt them.`;
       e.returnValue = msg;
     }
   });

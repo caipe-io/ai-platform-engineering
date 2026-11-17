@@ -1,4 +1,5 @@
 import { StreamError } from "@/lib/streaming";
+import { APIClientError } from "@/lib/api-client";
 import type { AuthFailureReason } from "@/lib/auth-error";
 
 const SIGN_IN_AUTH_REASONS: ReadonlySet<AuthFailureReason> = new Set([
@@ -15,11 +16,12 @@ export function interruptedTurnFallbackText(error?: string): string {
 }
 
 export function interruptedAuthReason(error: unknown): AuthFailureReason | undefined {
-  if (error instanceof StreamError && error.isAuthError()) {
+  if ((error instanceof StreamError && error.isAuthError()) ||
+      (error instanceof APIClientError && (error.reason || error.status === 401 || error.status === 403))) {
     if (error.reason && SIGN_IN_AUTH_REASONS.has(error.reason)) {
       return error.reason;
     }
-    if (error.action === "sign_in") {
+    if (error.action === "sign_in" || error instanceof StreamError && error.status === 401 && !error.reason) {
       return "session_expired";
     }
   }
@@ -27,4 +29,9 @@ export function interruptedAuthReason(error: unknown): AuthFailureReason | undef
     return "session_expired";
   }
   return undefined;
+}
+
+/** A rejected admission is not a broken stream and cannot heal by retrying. */
+export function isAgentReadinessError(error: unknown): boolean {
+  return (error instanceof StreamError || error instanceof APIClientError) && error.code === "HARNESS_AGENT_NOT_READY";
 }

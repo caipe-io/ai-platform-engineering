@@ -114,7 +114,7 @@ Agent Builder guides you through six steps:
 | **Tools** | Registered MCP tools and CAIPE built-in tools |
 | **Knowledge** | Individual data sources and reusable collections |
 | **Skills** | Reusable instructions and packaged capabilities |
-| **Advanced** | Subagents, remote A2A agents, human approval rules, middleware, and workflow access |
+| **Advanced** | Subagents (CAIPE, configured ACP, and registered A2A agents), human approval rules, middleware, and workflow access |
 
 After you save an agent, you can test it in chat without redeploying the runtime.
 You can also clone it, enable or disable it, and export it as YAML.
@@ -132,6 +132,49 @@ You can also clone it, enable or disable it, and export it as YAML.
 
 Start with the smallest useful capability set. You can add tools, knowledge,
 and skills later without rebuilding the agent.
+
+## Remote agents and subagents
+
+- **Agents → Remote Agents** lists registered A2A agents and configured Claude
+  Code / Claude Agent SDK ACP agents in one searchable catalog. Only enabled ACP
+  agents the caller can use are shown. Refresh reloads both sources independently.
+- ACP entries refer to existing CAIPE agents. **Chat** starts their normal
+  conversation; **Open agent** opens their saved configuration with the usual
+  permission checks. Operator profiles, native sessions, and credentials stay in
+  their existing configuration. They are not copied into the A2A registry.
+- A2A Agent Card discovery and registration remain specific to A2A endpoints.
+  Arbitrary ACP endpoints and full ACP conformance are not implied by this view.
+- **Advanced → Subagents** provides one picker for local Deep Agents, configured
+  Harness children (including ACP), and registered A2A agents. Removing a selection
+  removes the parent's reference, not the remote agent or its credentials.
+- Claude SDK and ACP entries with a selected MCP server that is disabled or
+  missing show **Needs attention**. Chat and new subagent selections are disabled;
+  saved references remain visible. The owner can open the agent and repair its
+  tool configuration without granting new access.
+- Before a new Claude run, Gateway checks the conversation's pinned tool set
+  against current server availability and agent grants. A rejected admission
+  reports **Agent configuration needs attention**, links to agent settings, and
+  offers no blind retry. The error classification survives a chat reload.
+  Retry is hidden on both the rejected response and its user-message bubbles;
+  other turns retain their normal actions.
+  Existing request replay and recovery controls remain available. This checks
+  configuration metadata and initializes permitted MCP catalogs through the
+  existing caller/agent gateway path. It never invokes tools. Credential and
+  permission denials retain the existing unavailable-tool behavior. Execution-time
+  authorization checks remain authoritative.
+  Session-based MCP catalog reads send the initialized notification before
+  listing tools and follow pagination within the shared readiness deadline.
+  Repeated cursors or catalogs exceeding 100 pages fail instead of producing a
+  partial catalog. Empty successful notification responses are accepted even
+  when labeled JSON. Failures log only agent/server IDs and a bounded diagnostic
+  category, excluding credentials and private upstream details.
+- Each picker catalog becomes usable independently. Requests and response-body
+  reads time out after ten seconds; refresh cancels pending reads and retries
+  without dropping saved references. Only CAIPE choices exclude the parent ID;
+  an A2A entry with the same ID remains a distinct agent.
+- Harness children require the Engine delegation capability. Older backends keep
+  those choices disabled. ACP chat uses the configured worker directly; A2A
+  delegation currently runs through a Deep Agents supervisor.
 
 ## Knowledge and tool scope
 
@@ -154,7 +197,12 @@ and skills later without rebuilding the agent.
 
 ## Ownership and sharing
 
-Every agent has an owner team.
+Team-visible agents require an owner team. Global agents can have an owner team.
+
+- Choose an owner team on **Basic Info** before pressing **Next** or selecting a
+  later setup step for a new team-visible agent. If it is missing, the builder
+  stays on **Basic Info**, focuses the owner picker, and explains what to select.
+  Deep links to later steps follow the same requirement.
 
 - **Team visibility** grants use according to the selected team relationships.
 - **Global visibility** makes the agent discoverable across the organization

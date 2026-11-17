@@ -52,6 +52,19 @@ describe('APIClient — Archive methods', () => {
     mockFetch.mockReset();
   });
 
+  it.each(['example:legacy', 'example%3Aliteral', 'example/legacy?query#fragment'])(
+    'encodes conversation IDs at read boundaries: %s', async id => {
+      mockFetch.mockResolvedValue(mockSuccessResponse({ items: [] }));
+      await apiClient.getConversation(id);
+      await apiClient.getMessages(id);
+      await apiClient.getTurns(id);
+      const base = `/api/chat/conversations/${encodeURIComponent(id)}`;
+      expect(mockFetch.mock.calls.map(([url]: [string]) => new URL(url, 'https://example.test').pathname)).toEqual([
+        base, `${base}/messages`, `${base}/turns`,
+      ]);
+    },
+  );
+
   describe('getConversations', () => {
     it('requests only webui conversations by default', async () => {
       mockFetch.mockResolvedValue(

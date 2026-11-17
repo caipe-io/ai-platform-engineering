@@ -44,7 +44,8 @@ import { useKbTabGates } from "@/hooks/use-kb-tab-gates";
 import { useAdminTabGates } from "@/hooks/useAdminTabGates";
 import { KNOWLEDGE_NAV_ITEMS } from "@/components/rag/KnowledgeSidebar";
 import { PERSONAL_SETTINGS_ROUTES } from "@/components/settings/settings-routes";
-import { config,getLogoFilterClass } from "@/lib/config";
+import { BrandLogo } from "@/components/brand/BrandLogo";
+import { config } from "@/lib/config";
 import type { PublicAgenticApp } from "@/types/agentic-app";
 import { cn } from "@/lib/utils";
 import { resolveChatNavigationPath,useChatStore } from "@/store/chat-store";
@@ -71,7 +72,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
-import Image from "next/image";
 import { usePathname } from "next/navigation";
 import React from "react";
 
@@ -687,14 +687,12 @@ function ApplicationBrand({
       href="/"
       onClick={applicationNavigation?.closeMobileNavigation}
     >
-      <Image
-        alt=""
-        aria-hidden="true"
-        className={cn("h-12 w-auto",getLogoFilterClass(config.logoStyle))}
-        height={48}
+      <BrandLogo
+        className="h-12 w-auto"
+        logoStyle={config.logoStyle}
+        size={48}
+        themed={config.logoThemed}
         src={config.logoUrl}
-        unoptimized
-        width={48}
       />
       {!collapsed ? (
         <span className="brand-lockup relative min-w-0">
@@ -792,14 +790,12 @@ export function MobileApplicationBrand(): React.ReactElement {
       className="brand-link flex min-w-0 items-center gap-2 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring xl:hidden"
       href="/"
     >
-      <Image
-        alt=""
-        aria-hidden="true"
-        className={cn("h-9 w-auto",getLogoFilterClass(config.logoStyle))}
-        height={36}
+      <BrandLogo
+        className="h-9 w-auto"
+        logoStyle={config.logoStyle}
+        size={36}
+        themed={config.logoThemed}
         src={config.logoUrl}
-        unoptimized
-        width={36}
       />
       <span className="brand-lockup relative hidden min-w-0 sm:inline-block">
         <span className="gradient-text truncate text-lg font-bold">

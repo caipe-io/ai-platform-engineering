@@ -956,7 +956,7 @@ test.describe("mocked service accounts browser regression", () => {
 
     await dialog.getByRole("button", { name: "Add tools..." }).click();
     await dialog.getByRole("button", { name: "jira: search" }).click();
-    await page.keyboard.press("Escape");
+    await dialog.getByRole("heading", { name: "Unlinked Access", exact: true }).click();
     await dialog.getByRole("button", { name: "Add", exact: true }).click();
 
     await expect

@@ -62,6 +62,7 @@ export interface MCPServerConfig {
 }
 
 export interface RemoteAgentRegistryEntry {
+  framework?: import("@/lib/agent-framework").AgentFramework;
   _id: string;
   name: string;
   description?: string;
@@ -74,7 +75,7 @@ export interface RemoteAgentRegistryEntry {
 }
 
 export interface RemoteAgentCredentialSource {
-  kind: "caller_token" | "secret_ref" | "provider_connection";
+  kind: "none" | "caller_token" | "secret_ref" | "provider_connection";
   target: "header";
   name: string;
   secret_ref?: string;
@@ -296,6 +297,7 @@ export interface MiddlewareEntry {
  * are applied with their default params on the server side.
  */
 export interface FeaturesConfig {
+  remote_agents_as_subagents?: boolean;
   middleware: MiddlewareEntry[];
 }
 
@@ -332,6 +334,8 @@ export interface ModelConfig {
   id: string; // LLM model identifier (e.g., 'claude-sonnet-4-20250514')
   provider: string; // LLM provider (anthropic-claude, openai, azure-openai, aws-bedrock, etc.)
   reasoning_effort?: ReasoningEffort;
+  /** null/omitted inherits the deployment's LLM_STREAMING default. */
+  streaming?: boolean | null;
 }
 
 export type ReasoningEffort = "low" | "medium" | "high" | "max";
@@ -345,6 +349,7 @@ export type ReasoningEffort = "low" | "medium" | "high" | "max";
  * When configured, the parent agent can delegate tasks to this subagent.
  */
 export interface SubAgentRef {
+  timeout_seconds?: number;
   agent_id: string; // MongoDB ObjectId of the subagent
   name: string; // Routing identifier (e.g., 'code-reviewer')
   description: string; // Description for LLM routing decisions
@@ -434,13 +439,21 @@ export interface AgentPresentation {
   available: boolean;
 }
 
+export interface AgentExecutionReadiness {
+  ready: boolean;
+  code?: "HARNESS_AGENT_NOT_READY";
+  message?: string;
+}
+
 export interface DynamicAgentConfig {
+  execution_readiness?: AgentExecutionReadiness;
   /** Deployment-owned, opt-in model-input projection. Not a permission grant. */
   app_context_prompt?: { app_ids: string[]; fields: string[]; max_bytes?: number };
   _id: string;
   readonly presentation?: AgentPresentation;
   /** Runtime selected by Harness Gateway. Missing legacy values mean Dynamic Agents. */
   execution_harness_id?: string;
+  execution_blueprint_version?: number;
   name: string;
   description?: string;
   system_prompt: string;
@@ -452,7 +465,8 @@ export interface DynamicAgentConfig {
   visibility: VisibilityType;
   shared_with_teams?: string[];
   subagents: SubAgentRef[]; // Other dynamic agents that can be delegated to
-  skills: string[]; // Skill document IDs from agent_skills collection
+  skills: string[]; // Stable default, agent-skill or Hub skill IDs
+  skill_pins?: Record<string, { content_sha256: string; ancillary_sha256: Record<string, string> }>;
   /**
    * RAG datasource ids (== source_id == knowledge_base_id) this agent's
    * search tool is pinned to. Narrows, never widens: the runtime intersects
@@ -516,6 +530,7 @@ export interface DynamicAgentConfigWithPermissions extends DynamicAgentConfig {
 }
 
 export interface DynamicAgentConfigCreate {
+  harness_save?: unknown;
   id: string; // Required: User-friendly slug ID derived from name
   execution_harness_id?: string;
   name: string;
@@ -546,6 +561,7 @@ export interface DynamicAgentConfigCreate {
 }
 
 export interface DynamicAgentConfigUpdate {
+  harness_save?: unknown;
   execution_harness_id?: string;
   name?: string;
   description?: string;
@@ -578,6 +594,8 @@ export interface DynamicAgentConfigUpdate {
  * Available agent for subagent selection (returned by available-subagents endpoint)
  */
 export interface AvailableSubagent {
+  execution_readiness?: AgentExecutionReadiness;
+  execution_harness_id?: string;
   id: string;
   name: string;
   description?: string;

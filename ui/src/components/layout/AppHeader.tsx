@@ -5,6 +5,7 @@ import {
   MobileApplicationBrand,
 } from "@/components/layout/ApplicationNavigation";
 import { ApplicationNavigationSearchTrigger } from "@/components/layout/ApplicationNavigationSearch";
+import { RunningChats } from "@/components/layout/RunningChats";
 import { isOnHeaderDialogEditor } from "@/components/layout/GuardedNavigationLink";
 import { ReleaseUpgradeDialog } from "@/components/release/ReleaseUpgradeDialog";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
@@ -472,6 +473,7 @@ export function AppHeader() {
               </a>
             </Button>
           )}
+          <RunningChats />
           <NotificationBell enabled={Boolean(session)} />
           <UserMenu />
         </div>

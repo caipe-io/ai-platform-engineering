@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 
 import { AgenticAppsHub } from "@/components/agentic-apps/AgenticAppsHub";
@@ -8,7 +9,9 @@ export default function AppsPage(): React.ReactElement {
   if (!isAgenticAppsEnabled()) notFound();
   return (
     <AuthGuard>
-      <AgenticAppsHub />
+      <Suspense fallback={<p className="p-6 text-muted-foreground">Loading Apps…</p>}>
+        <AgenticAppsHub />
+      </Suspense>
     </AuthGuard>
   );
 }

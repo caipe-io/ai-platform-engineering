@@ -39,6 +39,9 @@ def native_assistant_headers(
         "bodyHash": hashlib.sha256(body).hexdigest(),
         "tokenHash": hashlib.sha256(bearer_token.encode()).hexdigest(),
     }
+    bot_id = context.get("webex_bot_id")
+    if isinstance(bot_id, str) and bot_id:
+        proof["botId"] = bot_id
     encoded = base64.urlsafe_b64encode(json.dumps(proof, separators=(",", ":"), ensure_ascii=False).encode()).rstrip(b"=").decode()
     return {"x-caipe-webex-context": encoded,
             "x-caipe-webex-signature": hmac.new(secret.encode(), ("caipe.webex.assistant.v1\n" + encoded).encode(), hashlib.sha256).hexdigest()}

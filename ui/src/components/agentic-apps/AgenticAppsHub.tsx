@@ -1,8 +1,8 @@
 "use client";
 
 import { ArrowUpRight, LayoutGrid, LoaderCircle, Search, X } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AgenticAppCard } from "./AgenticAppCard";
 import { apiClient } from "@/lib/api-client";
@@ -18,7 +18,35 @@ type LoadState =
 export function AgenticAppsHub(): React.ReactElement {
   const router = useRouter();
   const [state, setState] = useState<LoadState>({ status: "loading" });
-  const [query, setQuery] = useState("");
+  const searchParams = useSearchParams();
+  const urlQuery = (searchParams.get("q") ?? "").slice(0, 256);
+  const [query, setQuery] = useState(urlQuery);
+  const editingSearch = useRef(false);
+  const lastEditedHref = useRef<string | null>(null);
+
+  useEffect(() => { setQuery(urlQuery); }, [urlQuery]);
+  useEffect(() => {
+    const resetEdit = () => { editingSearch.current = false; };
+    window.addEventListener("popstate", resetEdit);
+    return () => window.removeEventListener("popstate", resetEdit);
+  }, []);
+
+  function updateQuery(value: string, newEntry = false): void {
+    const next = value.slice(0, 256);
+    setQuery(next);
+    const currentHref = window.location.pathname + window.location.search + window.location.hash;
+    if (lastEditedHref.current !== currentHref) editingSearch.current = false;
+    const url = new URL(window.location.href);
+    if (next) url.searchParams.set("q", next);
+    else url.searchParams.delete("q");
+    const href = url.pathname + url.search + url.hash;
+    if (href === window.location.pathname + window.location.search + window.location.hash) return;
+    // One Back entry per editing session, rather than one per keystroke.
+    if (newEntry || !editingSearch.current) window.history.pushState(null, "", href);
+    else window.history.replaceState(null, "", href);
+    editingSearch.current = true;
+    lastEditedHref.current = href;
+  }
   const [favoriteAppIds, setFavoriteAppIds] = useState<string[]>([]);
   const [favoritesReady, setFavoritesReady] = useState(false);
   const [favoritePending, setFavoritePending] = useState(false);
@@ -30,7 +58,7 @@ export function AgenticAppsHub(): React.ReactElement {
       .then(async (response) => {
         if (response.status === 401) {
           router.push(
-            `/login?callbackUrl=${encodeURIComponent(window.location.pathname)}`,
+            `/login?callbackUrl=${encodeURIComponent(window.location.pathname + window.location.search + window.location.hash)}`,
           );
           return null;
         }
@@ -137,8 +165,8 @@ export function AgenticAppsHub(): React.ReactElement {
                   <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
                   <input className="h-11 w-full appearance-none rounded-xl border border-border bg-background py-2 pl-10 pr-11 text-sm text-foreground outline-none transition placeholder:text-muted-foreground hover:border-primary/40 focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
                     type="search" placeholder="Search by app, capability, or category" aria-label="Search apps"
-                    value={query} onChange={(event) => setQuery(event.target.value)} />
-                  {query ? <button type="button" onClick={() => setQuery("")} aria-label="Clear search"
+                    value={query} maxLength={256} onFocus={() => { editingSearch.current = false; }} onChange={(event) => updateQuery(event.target.value)} />
+                  {query ? <button type="button" onClick={() => updateQuery("", true)} aria-label="Clear search"
                     className="absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground">
                     <X className="h-4 w-4" aria-hidden />
                   </button> : null}

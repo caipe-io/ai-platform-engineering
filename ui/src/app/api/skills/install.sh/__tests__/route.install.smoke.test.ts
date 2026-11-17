@@ -74,6 +74,7 @@ case "$url" in
   *"/api/skills/update-skills"*) printf '%s' '{"template":"---\\nname: update-caipe-skills\\ndescription: Refresh\\n---\\n\\n# Refresh\\n"}' > "$out" ;;
   *"/api/skills/helpers/caipe-skills.py"*) printf '# helper\\n' > "$out" ;;
   *"/api/skills/hooks/caipe-catalog.sh"*) printf '#!/usr/bin/env bash\\n' > "$out" ;;
+  *"/api/skills?"*) if [ -n "\${FAKE_CATALOG_JSON:-}" ]; then printf '%s' "$FAKE_CATALOG_JSON" > "$out"; else printf '{}' > "$out"; fi ;;
   *) printf '{}' > "$out" ;;
 esac
 printf '200'
@@ -84,6 +85,35 @@ printf '200'
 }
 
 describe("GET /api/skills/install.sh — install runtime smoke", () => {
+  it.each(["--force", "--upgrade"])("keeps the first eligible install path with %s", async (flag) => {
+    const res = await callRaw("https://app.example.test/api/skills/install.sh?agent=claude&scope=user");
+    const dir = mkdtempSync(join(tmpdir(), "catalog-identity-"));
+    try {
+      const home = join(dir, "home"), bin = join(dir, "bin");
+      mkdirSync(bin, { recursive: true });
+      writeFakeCurl(bin);
+      const script = join(dir, "install.sh");
+      writeFileSync(script, res.body, { mode: 0o755 });
+      const env = { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH ?? ""}`, CAIPE_CATALOG_KEY: "fake-test-key",
+        FAKE_CATALOG_JSON: JSON.stringify({ skills: [
+          { id: "builtin", name: "Review", content: "preferred", scan_status: "passed" },
+          { id: "hub", name: "Review", content: "lower priority", scan_status: "passed" },
+          { id: "flagged", name: "Fallback", content: "unsafe", scan_status: "flagged" },
+          { id: "allowed", name: "Fallback", content: "safe fallback", scan_status: "passed" },
+          { id: "slash", name: "Review/Code", content: "first path", scan_status: "passed" },
+          { id: "question", name: "Review?Code", content: "same sanitized path", scan_status: "passed" },
+        ] }),
+      };
+      execFileSync("bash", [script, "--no-hook"], { env, stdio: "pipe" });
+      execFileSync("bash", [script, "--no-hook", flag], { env, stdio: "pipe" });
+      for (const root of [".claude/skills", ".agents/skills"]) {
+        expect(readFileSync(join(home, root, "Review/SKILL.md"), "utf8")).toBe("preferred");
+        expect(readFileSync(join(home, root, "Fallback/SKILL.md"), "utf8")).toBe("safe fallback");
+        expect(readFileSync(join(home, root, "Review_Code/SKILL.md"), "utf8")).toBe("first path");
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
   it("installs helper skills into Claude native and vendor-neutral skill trees", async () => {
     const res = await callRaw(
       "https://app.example.com/api/skills/install.sh?agent=claude&scope=user",

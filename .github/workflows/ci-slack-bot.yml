@@ -10,6 +10,7 @@ on:
   pull_request:
     paths:
       - 'ai_platform_engineering/integrations/slack_bot/**'
+      - 'tests/test_bot_harness_gateway.py'
       - 'build/Dockerfile.slack-bot'
   workflow_dispatch:
     inputs:
@@ -88,7 +89,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
           egress-policy: audit
 
@@ -100,7 +101,7 @@ jobs:
           python-version: "3.14"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
       - name: Install dependencies and run tests
@@ -108,7 +109,7 @@ jobs:
           cd ai_platform_engineering/integrations/slack_bot
           uv sync --group unittest
           cd ../../..
-          uv run --project ai_platform_engineering/integrations/slack_bot pytest ai_platform_engineering/integrations/slack_bot/tests/ -v -m "not integration"
+          uv run --project ai_platform_engineering/integrations/slack_bot pytest ai_platform_engineering/integrations/slack_bot/tests/ tests/test_bot_harness_gateway.py -v -m "not integration"
 
   # Build natively per-platform (no QEMU) and push by digest only;
   # merge-manifests combines the per-arch digests into the final tagged
@@ -140,7 +141,7 @@ jobs:
 
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
           egress-policy: audit
 
@@ -149,7 +150,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -209,7 +210,7 @@ jobs:
       IMAGE_NAME: ${{ github.repository_owner }}/caipe-slack-bot
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
           egress-policy: audit
 
@@ -224,7 +225,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}

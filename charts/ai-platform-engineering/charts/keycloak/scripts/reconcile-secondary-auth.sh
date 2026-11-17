@@ -10,6 +10,7 @@ ADMIN_USER="${KEYCLOAK_ADMIN:-${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}}"
 ADMIN_PASS="${KEYCLOAK_ADMIN_PASSWORD:-${KC_BOOTSTRAP_ADMIN_PASSWORD:-admin}}"
 DESIRED_ATTRIBUTES='[{"name":"caipe_secondary_oidc_identity_key","permissions":{"view":["admin"],"edit":["admin"]}},{"name":"caipe_secondary_oidc_provider_id","permissions":{"view":["admin"],"edit":["admin"]}},{"name":"caipe_secondary_oidc_issuer","permissions":{"view":["admin"],"edit":["admin"]}},{"name":"caipe_secondary_oidc_sub","permissions":{"view":["admin"],"edit":["admin"]}},{"name":"caipe_secondary_oidc_email","permissions":{"view":["admin"],"edit":["admin"]}},{"name":"caipe_secondary_oidc_linked_at","permissions":{"view":["admin"],"edit":["admin"]}}]'
 TAG="[secondary-auth-profile]"
+CUSTOM_ATTRIBUTES="${KEYCLOAK_USER_PROFILE_ATTRIBUTES_JSON:-[]}"
 
 json_field() {
   echo "$1" | grep -o "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | head -1 | sed 's/.*:.*"\(.*\)"/\1/'
@@ -40,6 +41,7 @@ PROFILE=$(curl -sf -H "${AUTH}" \
 }
 
 UPDATED_PROFILE=$(DESIRED_ATTRIBUTES="${DESIRED_ATTRIBUTES}" \
+  CUSTOM_ATTRIBUTES="${CUSTOM_ATTRIBUTES}" \
   python3 -c '
 import json
 import os
@@ -47,8 +49,9 @@ import sys
 
 profile = json.load(sys.stdin)
 desired = json.loads(os.environ["DESIRED_ATTRIBUTES"])
-if not isinstance(profile, dict) or not isinstance(desired, list):
-    raise ValueError("user profile and desired attributes must be JSON objects")
+custom = json.loads(os.environ["CUSTOM_ATTRIBUTES"])
+if not isinstance(profile, dict) or not isinstance(custom, list):
+    raise ValueError("user profile must be an object and custom attributes an array")
 
 attributes = profile.setdefault("attributes", [])
 if not isinstance(attributes, list):
@@ -59,7 +62,9 @@ existing = {
     if isinstance(attribute, dict) and isinstance(attribute.get("name"), str)
 }
 
-for configured in desired:
+# Apply protected permissions last so custom configuration cannot weaken the
+# admin-only secondary identity binding attributes.
+for configured in custom + desired:
     if not isinstance(configured, dict) or not isinstance(configured.get("name"), str):
         raise ValueError("each desired user-profile attribute must have a name")
     name = configured["name"]
