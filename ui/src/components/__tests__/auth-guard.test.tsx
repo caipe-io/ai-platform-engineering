@@ -125,6 +125,38 @@ describe('AuthGuard', () => {
       expect(mockPush).not.toHaveBeenCalled()
     })
 
+    describe('informational logging', () => {
+      let logSpy: jest.SpyInstance
+      beforeEach(() => { logSpy = jest.spyOn(console, 'log').mockImplementation(() => {}) })
+      afterEach(() => { logSpy.mockRestore() })
+
+      const renderAuthorized = async (debug: boolean) => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { getConfig } = require('@/lib/config')
+        getConfig.mockImplementation((key: string) => {
+          if (key === 'ssoEnabled') return true
+          if (key === 'uiDebugLogging') return debug
+          return undefined
+        })
+        mockUseSession.mockReturnValue({
+          data: { user: { email: 'test-user@example.com' }, isAuthorized: true },
+          status: 'authenticated',
+        } as unknown)
+        render(<AuthGuard><div>Protected Content</div></AuthGuard>)
+        await screen.findByText('Protected Content')
+      }
+
+      it('is silent by default', async () => {
+        await renderAuthorized(false)
+        expect(logSpy).not.toHaveBeenCalled()
+      })
+
+      it('logs when uiDebugLogging is on', async () => {
+        await renderAuthorized(true)
+        expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[AuthGuard]'))
+      })
+    })
+
     it('should show loading screen while checking SSO config', () => {
       mockUseSession.mockReturnValue({
         data: null,

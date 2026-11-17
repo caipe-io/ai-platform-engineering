@@ -170,6 +170,7 @@ describe('getServerConfig', () => {
         'scheduleEditorAgentId',
         'schedulerAdminOnly',
         'schedulerEnabled',
+        'uiDebugLogging',
       ];
       expect(Object.keys(cfg).sort()).toEqual(expectedKeys.sort());
     });
@@ -748,6 +749,34 @@ describe('getServerConfig', () => {
     });
   });
 
+  describe('uiDebugLogging', () => {
+    beforeEach(() => {
+      clearEnv('UI_DEBUG_LOGGING');
+    });
+
+    it('defaults to false', () => {
+      process.env.NODE_ENV = 'development';
+      expect(getServerConfig().uiDebugLogging).toBe(false);
+    });
+
+    it('is true when UI_DEBUG_LOGGING is enabled outside production', () => {
+      process.env.NODE_ENV = 'development';
+      process.env.UI_DEBUG_LOGGING = 'true';
+      expect(getServerConfig().uiDebugLogging).toBe(true);
+    });
+
+    it('is true in production when UI_DEBUG_LOGGING is enabled', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.UI_DEBUG_LOGGING = 'true';
+      expect(getServerConfig().uiDebugLogging).toBe(true);
+    });
+
+    it('is false in production when UI_DEBUG_LOGGING is unset', () => {
+      process.env.NODE_ENV = 'production';
+      expect(getServerConfig().uiDebugLogging).toBe(false);
+    });
+  });
+
   // ---------- NODE_ENV / isDev / isProd ----------
 
   describe('NODE_ENV detection', () => {
@@ -971,6 +1000,7 @@ describe('getClientConfigScript (XSS safety)', () => {
       'scheduleEditorAgentId',
       'schedulerAdminOnly',
       'schedulerEnabled',
+        'uiDebugLogging',
     ];
     expect(Object.keys(parsed).sort()).toEqual(expectedKeys.sort());
   });
