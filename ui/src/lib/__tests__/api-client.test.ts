@@ -239,6 +239,27 @@ describe('APIClient — console output', () => {
     expect(logSpy).not.toHaveBeenCalled();
   });
 
+  describe.each([false, true])('with uiDebugLogging=%s', (uiDebugLogging) => {
+    it.each([null, undefined])('does not log response content when data is %s', async (data) => {
+      const appWindow = window as unknown as { __APP_CONFIG__?: { uiDebugLogging: boolean } };
+      appWindow.__APP_CONFIG__ = { uiDebugLogging };
+      try {
+        mockFetch.mockResolvedValue({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: () => Promise.resolve(JSON.stringify({ success: true, data, error: secretBody })),
+        });
+
+        await expect(apiClient.getConversation('conv-1')).rejects.toThrow(secretBody);
+        expect(allOutput()).not.toContain(secretBody);
+        expect(errorSpy).toHaveBeenCalledWith('[APIClient] Result data is undefined/null');
+      } finally {
+        delete appWindow.__APP_CONFIG__;
+      }
+    });
+  });
+
   it('does not log the error body on a non-OK response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,

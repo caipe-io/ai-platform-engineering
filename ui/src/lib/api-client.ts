@@ -131,13 +131,7 @@ class APIClient {
     }
 
     if (result.data === undefined || result.data === null) {
-      console.error(`[APIClient] Result data is undefined/null:`, {
-        result,
-        success: result.success,
-        error: result.error,
-        hasData: result.data !== undefined,
-        dataValue: result.data
-      });
+      console.error('[APIClient] Result data is undefined/null');
       throw new Error(result.error || 'Response data is undefined');
     }
 
