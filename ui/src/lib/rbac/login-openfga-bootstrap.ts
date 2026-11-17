@@ -37,7 +37,6 @@ export interface LoginOpenFgaBootstrapInput {
 }
 
 const OPENFGA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}$/;
-// assisted-by Codex Codex-sonnet-4-6
 const OIDC_ADMIN_RECONCILER = "oidc-admin-login-reconciliation";
 const LEGACY_LOGIN_BOOTSTRAP = "login-bootstrap";
 

@@ -861,7 +861,7 @@ describe('auth-config', () => {
         groups: ['caipe-users'],
       })
 
-      const result = await (authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>)({
+      const result = await runJwt({
         token: {
           sub: 'sub-former-admin',
           email: 'former-admin@example.com',
