@@ -8,6 +8,7 @@ on:
       - '.github/workflows/helm-chart-test.yml'
       - 'tests/test_caipe_ui_oidc_endpoint.py'
       - 'tests/test_harness_helm.py'
+      - 'tests/test_mcp_external_secrets_helm.py'
       - 'deploy/harness-engine/squid.conf'
   pull_request:
     branches: [ main, develop, 'release/**' ]
@@ -16,6 +17,7 @@ on:
       - '.github/workflows/helm-chart-test.yml'
       - 'tests/test_caipe_ui_oidc_endpoint.py'
       - 'tests/test_harness_helm.py'
+      - 'tests/test_mcp_external_secrets_helm.py'
       - 'deploy/harness-engine/squid.conf'
   schedule:
     # Run tests daily at 2 AM UTC
@@ -58,6 +60,9 @@ jobs:
 
     - name: Test optional durable runtime contracts
       run: uv run --no-project --with pytest==9.1.1 --with PyYAML==6.0.3 pytest -q tests/test_harness_helm.py
+
+    - name: Test standalone and parent MCP ExternalSecrets
+      run: uv run --no-project --with pytest==9.1.1 --with PyYAML==6.0.3 pytest -q tests/test_mcp_external_secrets_helm.py
 
     - name: Add required Helm repositories
       run: |
