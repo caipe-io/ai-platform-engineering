@@ -6,6 +6,12 @@ jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { sub: mockSubj
 
 beforeEach(() => { localStorage.clear(); mockSubject = "first-user"; });
 
+function dispatchStorageEvent(key: string | null) {
+  const event = new Event("storage");
+  Object.defineProperty(event, "key", { value: key });
+  window.dispatchEvent(event);
+}
+
 it("defaults to Grid and restores an explicit List preference for only its user", () => {
   const { result, rerender } = renderHook(() => useAgentCatalogView());
   expect(result.current[0]).toBe("grid");
@@ -51,12 +57,12 @@ it("ignores invalid saved sizes and synchronizes changes from another tab", () =
   expect(result.current[0]).toBe("balanced");
   act(() => {
     localStorage.setItem(key, "compact");
-    window.dispatchEvent(new StorageEvent("storage", { key }));
+    dispatchStorageEvent(key);
   });
   expect(result.current[0]).toBe("compact");
   act(() => {
     localStorage.clear();
-    window.dispatchEvent(new StorageEvent("storage", { key: null }));
+    dispatchStorageEvent(null);
   });
   expect(result.current[0]).toBe("balanced");
 });
