@@ -14,7 +14,7 @@ import httpx2 as httpx
 from harness_engine.acp_events import EXTENSION
 from harness_engine.adapters.base import ExecutionUnconfirmedError
 from harness_engine.adapters.claude_sdk import ClaudeSDKAdapter
-from harness_engine.config import Settings
+from harness_engine.config import ClaudeWorkerProfile, Settings
 from harness_engine.models import (
     AdapterEvaluation,
     AgentBlueprint,
@@ -33,6 +33,7 @@ from harness_engine.models import (
 from harness_engine.sessions import EventAssignedProviderSessionManager
 
 logger = logging.getLogger(__name__)
+MODEL_DISCOVERY_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass
@@ -73,22 +74,28 @@ class RemoteClaudeSDKAdapter:
     async def deployment_models(self, subject: str) -> dict[str, str]:
         """Read only sanitized model metadata; old workers need not support discovery."""
         models = {}
-        async with httpx.AsyncClient(transport=self._transport, timeout=5.0) as client:
-            for alias, profile in self._deployment_profiles.items():
+        async with httpx.AsyncClient(transport=self._transport, timeout=MODEL_DISCOVERY_TIMEOUT_SECONDS) as client:
+            async def discover(alias: str, profile: ClaudeWorkerProfile) -> None:
                 try:
                     response = await client.get(profile.url.rstrip("/") + "/api/v1/profiles", headers={
                         "Authorization": f"Bearer {profile.token.get_secret_value()}",
                         "X-Harness-Engine-Subject": subject,
                     })
                     if response.status_code != 200:
-                        continue
+                        return
                     data = response.json()
                     for item in data.get("profiles", []):
                         if item.get("id") == profile.profile_id and isinstance(item.get("model"), str):
                             models[alias] = item["model"]
                 except (httpx.HTTPError, ValueError, TypeError, AttributeError):
                     # Discovery does not change execution or block profile administration.
-                    continue
+                    return
+            try:
+                async with asyncio.timeout(MODEL_DISCOVERY_TIMEOUT_SECONDS):
+                    await asyncio.gather(*(discover(alias, profile) for alias, profile in self._deployment_profiles.items()))
+            except TimeoutError:
+                # Keep fast-worker results when another worker misses the batch deadline.
+                pass
         return models
 
     @property

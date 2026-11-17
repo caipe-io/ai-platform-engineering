@@ -22,7 +22,7 @@ export function ClaudeACPSettings({ descriptor, profileId }: { descriptor: Harne
     </dl>
     <details className="text-xs text-muted-foreground">
       <summary className="cursor-pointer font-medium text-foreground">Access and recovery</summary>
-      <p className="mt-2">Your sign-in and sharing permissions apply. Each tool call is checked against your access.</p>
+      <p className="mt-2">Your sign-in and sharing permissions apply. Native tools follow the deployment&apos;s permission mode. Selected MCP tools are checked against your access.</p>
       <p className="mt-2">If the worker stops, the current response is interrupted. Continuing the session requires its saved workspace.</p>
       <p className="mt-2">Profile changes apply to new chats. Existing chats keep their saved settings.</p>
     </details>

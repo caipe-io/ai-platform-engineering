@@ -169,6 +169,11 @@ agent keeps its own identity and access checks, while each app still checks
 launch access. An assistant with an app-owned `streamPath` must have a unique
 agent ID so its stream routes to exactly one app.
 
+Ask Tome uses Spring Glide when minimizing to its launcher (1.05 seconds),
+with a subtle landing pulse and a reverse glide when reopened (0.75 seconds).
+The window stays mounted so an unsent draft survives minimizing. Reduced-motion
+preferences skip all movement; other app assistants retain their existing behavior.
+
 The themed conversation picker below New Chat defaults to All chats and offers
 Web chats, API chats, Autonomous runs, Scheduled runs, and Webhook runs in that
 order, with icons and search. Automation choices appear when their platform

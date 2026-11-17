@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hmac
 import json
@@ -32,6 +33,7 @@ from harness_engine.models import (
     CreateRunRequest,
     EventPage,
     ExecutionIdentity,
+    HarnessDescriptor,
     LookupRunRequest,
     RegisteredAgentCoreProfile,
     RegisteredClaudeProfile,
@@ -100,6 +102,9 @@ def create_app(
         session_manager,
         DefaultPromptCompiler(),
     )
+    for adapter in resolved_adapters:
+        if isinstance(adapter, DeepAgentsAdapter):
+            adapter.runtime.configure_subagent_dispatch(coordinator, resolved_repository)
 
     async def refresh_operator_profiles() -> None:
         claude_profiles = await resolved_repository.list_claude_profiles()
@@ -173,17 +178,18 @@ def create_app(
     ) -> dict[str, object]:
         if x_harness_engine_admin != "true":
             raise HTTPException(403, "Platform administrator required")
-        descriptors = []
-        for adapter in resolved_adapters:
-            if isinstance(adapter, (ClaudeSDKAdapter, RemoteClaudeSDKAdapter)):
-                descriptor = adapter.descriptor
-                if isinstance(adapter, RemoteClaudeSDKAdapter):
-                    models = await adapter.deployment_models(subject)
-                    descriptor = descriptor.model_copy(update={"profiles": [
-                        p.model_copy(update={"model": models[p.id]}) if p.id in models else p
-                        for p in descriptor.profiles
-                    ]})
-                descriptors.append(descriptor)
+        async def describe(adapter: ClaudeSDKAdapter | RemoteClaudeSDKAdapter) -> HarnessDescriptor:
+            descriptor = adapter.descriptor
+            if isinstance(adapter, RemoteClaudeSDKAdapter):
+                models = await adapter.deployment_models(subject)
+                descriptor = descriptor.model_copy(update={"profiles": [
+                    p.model_copy(update={"model": models[p.id]}) if p.id in models else p
+                    for p in descriptor.profiles
+                ]})
+            return descriptor
+
+        descriptors = await asyncio.gather(*(describe(adapter) for adapter in resolved_adapters
+                                            if isinstance(adapter, (ClaudeSDKAdapter, RemoteClaudeSDKAdapter))))
         return {"success": True, "data": {
             "profiles": await resolved_repository.list_claude_profiles(), "harnesses": descriptors,
         }}
@@ -212,7 +218,12 @@ def create_app(
             raise HTTPException(409, "Profile IDs are immutable; choose a new ID") from exc
         except PyMongoError as exc:
             raise HTTPException(503, "Profile could not be saved") from exc
-        await refresh_operator_profiles()
+        try:
+            await refresh_operator_profiles()
+        except Exception as exc:
+            # Publication is committed; an optional read must not suppress its
+            # success response and the BFF's corresponding audit event.
+            logger.warning("Operator profile saved but catalog refresh failed (%s)", type(exc).__name__)
         return {"success": True, "data": profile}
 
     @app.post("/api/v1/admin/agentcore-connections", status_code=status.HTTP_201_CREATED)

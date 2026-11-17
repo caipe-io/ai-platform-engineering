@@ -4,7 +4,6 @@ from typing import Any
 
 import pytest
 from deepagents import create_deep_agent
-from deepagents.middleware.subagents import SubAgentMiddleware
 from langchain_core.callbacks.manager import CallbackManagerForLLMRun
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
@@ -61,20 +60,7 @@ def test_general_purpose_recovery_override_is_applied_last() -> None:
 
 
 @pytest.mark.asyncio
-async def test_general_purpose_subagent_repairs_content_block_orphan(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    processed_subagents: list[dict[str, Any]] = []
-
-    class _CapturingSubAgentMiddleware(SubAgentMiddleware):
-        def __init__(self, **kwargs: Any) -> None:
-            super().__init__(**kwargs)
-            processed_subagents.extend(self._get_subagents())
-
-    monkeypatch.setattr(
-        "deepagents.graph.SubAgentMiddleware",
-        _CapturingSubAgentMiddleware,
-    )
+async def test_general_purpose_subagent_repairs_content_block_orphan() -> None:
     model = _CapturingFakeModel(responses=[
         AIMessage(content="partial", response_metadata={"stop_reason": "max_tokens"}),
         AIMessage(content="Recovered response"),
@@ -85,15 +71,21 @@ async def test_general_purpose_subagent_repairs_content_block_orphan(
         tools=[],
         interrupt_on={},
     )
-    create_deep_agent(
-        model=model,
+    # Fork mode exercises the inherited interrupted history through the public
+    # task interface instead of inspecting upstream middleware internals.
+    subagent_specs[0]["mode"] = "fork"
+    parent = _CapturingFakeModel(responses=[
+        AIMessage(content="", tool_calls=[{"name": "task", "args": {
+            "description": "Continue the interrupted conversation.", "subagent_type": "general-purpose"}, "id": "delegate-call"}]),
+        AIMessage(content="Parent complete"),
+    ])
+    graph = create_deep_agent(
+        model=parent,
         tools=[],
         subagents=subagent_specs,
     )
 
-    assert [subagent["name"] for subagent in processed_subagents] == ["general-purpose"]
-
-    result = await processed_subagents[0]["runnable"].ainvoke(
+    result = await graph.ainvoke(
         {
             "messages": [
                 AIMessage(
@@ -111,7 +103,9 @@ async def test_general_purpose_subagent_repairs_content_block_orphan(
         }
     )
 
-    assert result["messages"][-1].content == "Recovered response"
+    assert result["messages"][-1].content == "Parent complete"
+    assert any(isinstance(message, ToolMessage) and message.tool_call_id == "delegate-call"
+        and message.content == "Recovered response" for message in result["messages"])
     assert len(model.captured_messages) == 2
     assert "No tools from this response" in model.captured_messages[1][-2].content
     captured = model.captured_messages[0]

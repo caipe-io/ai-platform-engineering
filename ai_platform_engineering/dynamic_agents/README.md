@@ -113,6 +113,12 @@ app_context_prompt:
 
 ## Running Locally
 
+Persistent runtimes ignore empty pending-checkpoint write batches. Compiled local
+subgraphs can emit these acknowledgements after a successful model response;
+the pinned MongoDB saver would otherwise submit an invalid empty bulk write and
+cause the task to retry. Nonempty writes, serialization, persistence, and database
+errors retain their upstream behavior. In-memory runtimes are unchanged.
+
 ### Prerequisites
 
 - Python 3.14
@@ -529,6 +535,21 @@ dynamic_agents/
 - Credentials resolve on every invocation. Registry edits invalidate cached runtimes on the next request.
 - Agent Card discovery and calls use the official A2A SDK with JSON-RPC or HTTP+JSON negotiation.
 - Calls use the registered endpoint. Register a gateway URL to gate A2A calls; `AGENT_GATEWAY_URL` configures MCP routing only.
+
+### Native remote subagents (opt-in)
+
+The runtime pins Deep Agents **0.7.37**. Dynamic Agents and the Deep Agents
+Harness Engine image resolve the same version through their lockfiles.
+
+- Set `features.remote_agents_as_subagents: true` on an agent configuration to register its selected A2A entries as LangChain `CompiledSubAgent` runnables. Set it separately on a configured local subagent to enable that subagent's remote delegation.
+- Existing configurations keep the named-tool path. The flag defaults to false and is omitted from legacy serialized settings; no migration or package upgrade is required.
+- The supervisor uses upstream `task(description, subagent_type="remote_<registry-id>")`. LangChain owns dispatch, isolated message state, tracing and result delivery; no extra model is created for the remote adapter.
+- Both modes share the official A2A SDK transport, per-invocation caller credentials, deadline, origin checks, response/output limits and streaming negotiation. Partial output is attributed to the enclosing task, including nested delegation.
+- To require human approval, configure `interrupt_on.builtin.task`. Enabling native mode with existing remote-tool approval rules fails validation: migrate those rules explicitly so the change cannot bypass an approval. Task-level approval also applies to local delegations.
+- The middleware editor preserves the opt-in flag when editing other features. This initial rollout is configured through the agent API/configuration; it does not add an editor toggle.
+- This phase supports synchronous, bounded text delegation. Parent tool middleware receives execution failures as an explicit error result rather than automatically resubmitting an uncertain remote command.
+- Local cancellation unwinds the graph and closes the A2A client. It does **not** prove the remote task stopped. Persisted remote task/context IDs, acknowledged remote cancellation, input/auth-required continuation, durable child runs and ACP delegation remain separate milestones. Native mode reports input/auth-required tasks as unsupported continuations, never completed work.
+- Harness Engine remains the execution authority. LangSmith Agent Server is not introduced. Remaining delivery stages are tracked in [#3381](https://github.com/caipe-io/ai-platform-engineering/issues/3381).
 
 ### Standalone examples
 
