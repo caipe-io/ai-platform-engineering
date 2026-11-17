@@ -18,6 +18,11 @@ skills/
 
 ## Available Skills
 
+### [caipe-regression-suite](./caipe-regression-suite/)
+Run feature E2E/backward-compatibility checks or review release readiness against
+the maintained matrix. Record live, CI and unexecuted coverage separately; include
+legacy agents, each enabled runtime, workflows, skills and bot flows explicitly.
+
 ### 📝 [update-docs](./update-docs/)
 Audit and sync all documentation surfaces after a release or feature addition.
 Checks release blog posts, homepage version strings, Docusaurus version config,

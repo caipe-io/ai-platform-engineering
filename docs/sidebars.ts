@@ -204,6 +204,16 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'development/caipe-regression-suite',
+          label: 'Regression & Release Readiness',
+        },
+        {
+          type: 'doc',
+          id: 'development/caipe-regression-screen-coverage',
+          label: 'Screen & API Coverage',
+        },
+        {
+          type: 'doc',
           id: 'development/prebuild-flow',
           label: 'Prebuild Flow',
         },
