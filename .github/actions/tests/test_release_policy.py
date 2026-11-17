@@ -198,3 +198,38 @@ def test_finalization_does_not_delete_git_tags() -> None:
       script = step.get("run", "")
       assert not re.search(r"gh\s+api[^\n]*(?:-X|--method)\s+DELETE[^\n]*git/refs/tags", script)
       assert not re.search(r"git\s+push[^\n]*(?:--delete|:refs/tags/)", script)
+
+
+@pytest.mark.parametrize(
+  ("version", "valid"),
+  [
+    ("1.1.0", True),
+    ("v1.1.0", True),
+    ("1.1.0-rc.1", False),
+    ("1.1.0-dev.1", False),
+    ("1.1.0-hotfix.1", False),
+    ("canary", False),
+    ("01.1.0", False),
+    ("", False),
+  ],
+)
+def test_release_post_rejects_prereleases_before_producing_metadata(
+  repository: Path, version: str, valid: bool,
+) -> None:
+  workflow = yaml.safe_load((ROOT / ".github/workflows/docs-release.yml").read_text())
+  steps = workflow["jobs"]["create-release-post"]["steps"]
+  script = next(step["run"] for step in steps if step.get("id") == "meta")
+  output = repository / "outputs"
+  result = subprocess.run(
+    ["bash", "-c", script],
+    cwd=repository,
+    env={**os.environ, "NEW_VERSION": version, "GITHUB_OUTPUT": str(output)},
+    text=True,
+    capture_output=True,
+  )
+  assert (result.returncode == 0) is valid, result.stdout + result.stderr
+  if valid:
+    values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    assert values["new_version"] == version.removeprefix("v")
+  else:
+    assert not output.exists()

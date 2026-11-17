@@ -72,7 +72,10 @@ publishes the release after those builds pass.
 
 ## Step 4 — Generate release docs
 
-`docs-release.yml` triggers automatically on the `x.y.z` tag and opens a PR with a generated release blog post. Review and merge it.
+`docs-release.yml` is manually dispatched and accepts only stable `x.y.z`
+versions (an optional leading `v` is normalized). RC, dev, hotfix, and canary
+inputs are rejected before release-post metadata is generated. For a new minor
+series, generate, review, and merge its post before the stable release step.
 
 To run manually:
 

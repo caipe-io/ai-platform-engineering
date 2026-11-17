@@ -6,6 +6,7 @@ on:
       - '.github/actions/**'
       - '.github/workflows/ci-*.yml'
       - '.github/workflows/release-*.yml'
+      - '.github/workflows/docs-release.yml'
       - 'CHANGELOG.md'
       - 'pyproject.toml'
   push:
@@ -14,6 +15,7 @@ on:
       - '.github/actions/**'
       - '.github/workflows/ci-*.yml'
       - '.github/workflows/release-*.yml'
+      - '.github/workflows/docs-release.yml'
       - 'CHANGELOG.md'
       - 'pyproject.toml'
 
