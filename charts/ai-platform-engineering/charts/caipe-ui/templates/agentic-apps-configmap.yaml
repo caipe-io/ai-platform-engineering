@@ -1,5 +1,4 @@
-{{- $agenticAppsEnabled := eq (index .Values.config "AGENTIC_APPS_INSTALL_ENABLED" | default "false" | toString) "true" -}}
-{{- if $agenticAppsEnabled }}
+{{- if and (eq (include "caipe-ui.agenticApps.managedMount" .) "true") (not .Values.agenticApps.existingConfigMap) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,7 +8,7 @@ metadata:
 data:
   # The catalog is intentionally empty by default. Operators add app packages
   # and installations through deployment configuration.
-  agentic-apps.yaml: |
+  {{ .Values.agenticApps.configMapKey | quote }}: |
     agentic_apps:
       packages: []
       installations: []

@@ -83,3 +83,20 @@ Determine if ingress is enabled - global takes precedence
 {{- .Values.global.image.tag | default .Chart.AppVersion -}}
 {{- end -}}
 
+{{/*
+Only mount a chart-managed catalog when an operator mount does not already
+provide the configured file. A directory mount also owns every file below it.
+*/}}
+{{- define "caipe-ui.agenticApps.managedMount" -}}
+{{- $enabled := eq (index .Values.config "AGENTIC_APPS_INSTALL_ENABLED" | default "false" | toString) "true" -}}
+{{- $path := index .Values.config "AGENTIC_APPS_CONFIG_PATH" | default "/etc/caipe-ui-agentic-apps/agentic-apps.yaml" | clean -}}
+{{- $customMount := false -}}
+{{- range .Values.volumeMounts -}}
+  {{- $mount := .mountPath | clean -}}
+  {{- if or (eq $mount "/") (eq $path $mount) (hasPrefix (printf "%s/" $mount) $path) -}}
+    {{- $customMount = true -}}
+  {{- end -}}
+{{- end -}}
+{{- and $enabled (not $customMount) -}}
+{{- end -}}
+
