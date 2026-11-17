@@ -13,8 +13,8 @@
 {{- $reservedEnv := list "HARNESS_ENGINE_INTERNAL_TOKEN" "HARNESS_ENGINE_MONGODB_URI" "HARNESS_ENGINE_STORAGE_BACKEND" "HARNESS_ENGINE_MONGODB_DATABASE" -}}
 {{- if eq .component "cli-acp" -}}
 {{- $reservedEnv = append $reservedEnv "HARNESS_ENGINE_CLAUDE_CLI_ISOLATION" -}}
-{{- if not (has ($w.isolation | default "landlock") (list "landlock" "disabled")) -}}
-{{- fail "cli-acp isolation must be landlock or disabled" -}}
+{{- if not (has ($w.isolation | default "landlock") (list "landlock" "artifacts" "disabled")) -}}
+{{- fail "cli-acp isolation must be landlock, artifacts or disabled" -}}
 {{- end -}}
 {{- end -}}
 {{- $name := include "ai-platform-engineering.harnessName" . -}}

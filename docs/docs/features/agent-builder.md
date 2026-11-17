@@ -147,6 +147,10 @@ and skills later without rebuilding the agent.
 - **Advanced → Subagents** provides one picker for local Deep Agents, configured
   Harness children (including ACP), and registered A2A agents. Removing a selection
   removes the parent's reference, not the remote agent or its credentials.
+- Each picker catalog becomes usable independently. Requests and response-body
+  reads time out after ten seconds; refresh cancels pending reads and retries
+  without dropping saved references. Only CAIPE choices exclude the parent ID;
+  an A2A entry with the same ID remains a distinct agent.
 - Harness children require the Engine delegation capability. Older backends keep
   those choices disabled. ACP chat uses the configured worker directly; A2A
   delegation currently runs through a Deep Agents supervisor.

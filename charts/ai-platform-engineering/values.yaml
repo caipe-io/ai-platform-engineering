@@ -1965,6 +1965,7 @@ harnessEngine:
       enabled: false
       # Requires Linux Landlock ABI 6+; never silently falls back to unisolated execution.
       # "disabled" is an explicit operator opt-out for a trusted single-user worker.
+      # "artifacts" requires research profiles with an empty native-tool allowlist.
       isolation: landlock
       image:
         repository: ghcr.io/caipe-io/caipe-claude-cli-acp-worker
