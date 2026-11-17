@@ -206,17 +206,45 @@ describe("DynamicAgentEditor — platform default grant preview", () => {
     });
 
     expect(screen.getByLabelText("Operator profile")).toHaveValue(JSON.stringify(["claude_agent_sdk", "safe"]));
-    expect(screen.getByText(/Profiles are managed by your administrator/)).toBeInTheDocument();
+    expect(screen.getByText(/Profiles set the model, permissions, and limits/)).toBeInTheDocument();
 
     fireEvent.focus(screen.getByRole("button", { name: "About operator profiles" }));
     expect(screen.getByRole("tooltip")).toHaveTextContent(
-      "An operator profile is an administrator-managed execution configuration",
+      "Choose an admin-managed setup for this agent.",
     );
     expect(screen.getByRole("tooltip")).toHaveTextContent(
-      "without exposing credentials or infrastructure identifiers",
+      "Credentials stay private.",
     );
     fireEvent.click(screen.getByRole("button", { name: /Advanced/i }));
     expect(screen.getByLabelText("Maximum turns")).toHaveValue("20");
+  });
+
+  it("uses an automatically selected managed profile's turn default and preserves edited drafts", async () => {
+    const fetchMock = mockFetch(null, true);
+    const implementation = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url, init) => {
+      const response = await implementation(url, init);
+      if (!String(url).endsWith("/api/harness-engine/harnesses")) return response;
+      const body = await response.json();
+      Object.assign(body.data.harnesses[0].profiles[0], {
+        id: "managed-example", source: "managed", default_max_turns: 75,
+      });
+      return jsonResponse(body);
+    });
+    render(<DynamicAgentEditor agent={editAgent} onCancel={jest.fn()} onSave={jest.fn()} />);
+    await flushAsync();
+    fireEvent.change(screen.getByLabelText("Execution harness"), { target: { value: "claude_agent_sdk" } });
+    expect(screen.getByLabelText("Operator profile")).toHaveValue(JSON.stringify(["claude_agent_sdk", "managed-example"]));
+    fireEvent.click(screen.getByRole("button", { name: /Advanced/i }));
+    const turns = screen.getByLabelText("Maximum turns");
+    expect(turns).toHaveValue("75");
+    fireEvent.change(turns, { target: { value: "80" } });
+    fireEvent.blur(turns);
+    fireEvent.click(screen.getByRole("button", { name: /Basic Info/i }));
+    fireEvent.change(screen.getByLabelText("Execution harness"), { target: { value: "dynamic_agents" } });
+    fireEvent.change(screen.getByLabelText("Execution harness"), { target: { value: "claude_agent_sdk" } });
+    fireEvent.click(screen.getByRole("button", { name: /Advanced/i }));
+    expect(screen.getByLabelText("Maximum turns")).toHaveValue("80");
   });
 
   it("validates a provider blueprint before updating existing agent metadata", async () => {
@@ -374,10 +402,10 @@ it.each([["claude-acp", "claude_code_acp"], ["claude-cli-acp", "claude_code_cli_
   await flushAsync();
   if (harnessId === "claude_code_acp") fireEvent.click(screen.getByLabelText("Show advanced runtimes"));
   fireEvent.change(screen.getByLabelText("Execution harness"), { target: { value: harnessId } });
-  expect(screen.getByRole("region", { name: "Claude configuration" })).toHaveTextContent("Responses continue when you refresh");
+  expect(screen.getByRole("region", { name: "Claude configuration" })).toHaveTextContent("Refreshing or reconnecting won't stop a running response");
   expect(screen.getByLabelText("Operator profile")).toHaveValue("safe");
-  fireEvent.click(screen.getByText("Access and authentication"));
-  expect(screen.getByText(/Tool access is checked for every call/)).toBeInTheDocument();
+  fireEvent.click(screen.getByText("Access and recovery"));
+  expect(screen.getByText(/Native tools follow the deployment's permission mode/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Tools/ })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("checkbox", { name: /existing conversations keep/i }));
   fireEvent.click(screen.getByRole("button", { name: /Save Changes/i }));

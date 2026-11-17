@@ -661,3 +661,69 @@ migration so they enforce the same `execution_thread_leases` ownership fence.
   tools, checkpoint persistence and event replay remain real.
 - These tests do not certify model quality or live Slack/Webex delivery. App-owned
   assistants retain their own declared stream and lifecycle.
+
+
+### Manage Claude operator profiles in Agent Builder
+
+Platform administrators can choose **Manage operator profiles** next to the
+operator profile picker for Claude SDK, remote SDK, SDK ACP, and CLI ACP agents.
+Creating a profile requires both `admin_ui:admin` and platform
+`system_config:admin`. Publication is audited by the BFF.
+
+- Choose an existing deployment-owned worker configuration.
+- Set a unique `managed-` profile ID, display name, execution model ID, and
+  default maximum turns (1–100). Use a model ID supported by the worker's
+  existing provider; publication does not probe model availability.
+- Select the new profile and save the agent. New conversations use that
+  configuration; existing conversations retain their pinned agent version.
+- To revise a profile, copy its settings and publish a new ID. Profiles are
+  immutable and cannot retarget an existing conversation.
+
+Profiles persist in `harness_claude_profiles` in the Engine database. Engine
+replicas refresh them before catalog, validation, publication, and run admission.
+Environment profiles remain the default; no migration or Helm change is required.
+Managed profiles inherit the base worker's credentials, endpoint, workspace,
+permission mode, native-tool allowlist, and isolation policy. Those settings
+cannot be changed in the editor. Agent authors may override the profile's turn
+**default**, within the same 1–100 bounds; this is not a mandatory minimum duration.
+
+Upgrade both the Engine/UI and workers before using managed remote profiles.
+Workers advertise support for the authenticated operator-model field; older
+workers still work with deployment profiles but reject managed profiles before
+execution. The Engine derives the model from the persisted admin profile, not
+from an agent author's draft or per-turn override. Worker model discovery is
+read-only and authenticated; unavailable or older workers may not display their
+base model. Model policy updates do not grant any additional MCP permissions.
+
+### Harness-owned subagents
+
+Deep Agents supervisors can select published Claude SDK, remote SDK, SDK ACP,
+Claude Code CLI ACP and AgentCore agents as compiled subagents. Harness Engine
+admits an independent child run using the child's published version, prompt,
+operator profile and session manager. No extra model or new worker is needed.
+This requires Engine execution; the compatibility service rejects these
+references instead of reconstructing a different model.
+
+- Caller agent-use authorization is checked at graph construction and each invocation.
+- Cached graphs resolve caller identity at invocation; credentials never enter graph state.
+- Each delegated task has a separate, deterministic conversation/request identity.
+- Child text and tool start/result events stream inside the delegated task; only
+  its final report returns to the supervisor. Child events remain in the Engine journal.
+  Progress snapshots are cumulative and bounded separately from the final report.
+  A report requires explicit `result.updated.final_content`: SDK workers use the
+  native SDK result, CLI ACP workers use the prompt response's
+  `_meta["caipe.io/harness"].final_content`, and managed AgentCore uses the
+  `messageStop: end_turn` boundary. Custom AgentCore SSE needs a JSON `result` or
+  `response` string; plain deltas remain streamable but cannot certify a final report.
+  Other ACP executables must supply the same optional metadata for delegation.
+  Without it, direct chat is unchanged and the supervisor receives an explicit
+  no-retry error instead of preamble text presented as a completed report.
+- `SubAgentRef.timeout_seconds` defaults to 120 (1–600). Stop/deadline requests
+  child cancellation through the existing adapter; uncertain workers keep their reservations.
+  Caller cleanup waits at most 100 ms; Engine retains an asynchronous reconciliation
+  task to cancel a late admission, including a committed run with a delayed receipt.
+  Reconciliation lasts for the Engine process lifetime; crash recovery is not added.
+- Existing Deep Agents children and A2A settings keep their current execution paths.
+- ACP interactive permissions remain declined. A paused child is reported to the
+  supervisor as requiring attention; parent-driven child approval/resume and
+  automatic recovery of a failed parent are not implemented by this bridge.

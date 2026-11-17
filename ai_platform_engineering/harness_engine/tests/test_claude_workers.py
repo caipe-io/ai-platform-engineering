@@ -428,6 +428,21 @@ async def test_sdk_partial_tokens_are_not_duplicated_by_the_completed_message(se
     assert events[-1].result == {"content": "hello"}
 
 
+async def test_sdk_final_result_excludes_streamed_preamble(settings: Settings) -> None:
+    async def query(**_: Any) -> AsyncIterator[Any]:
+        yield AssistantMessage(content=[TextBlock(text="Investigating first. ")], model="example")
+        yield AssistantMessage(content=[TextBlock(text="Final report")], model="example")
+        completion = result()
+        completion.result = "Final report"
+        yield completion
+
+    ctx = context()
+    ctx.blueprint.tools.bindings = []
+    events = [event async for event in ClaudeSDKAdapter(settings, query_fn=query).execute(ctx)]
+    assert [event.data["text"] for event in events[:-1] if event.event_type == "content.delta"] == ["Investigating first. ", "Final report"]
+    assert events[-1].result == {"content": "Final report", "final_content": "Final report"}
+
+
 async def test_sdk_rejects_an_unselected_builtin_tool(settings: Settings) -> None:
     async def query(**_: Any) -> AsyncIterator[Any]:
         yield AssistantMessage(

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AssistantOptions, AssistantConfiguration } from "../../../app-sdk/assistant-options.mjs";
 import { useAssistantComposerOptions } from "./AssistantComposerOptions";
+import { useAssistantDockMotion } from "@/hooks/use-assistant-dock-motion";
 import { AssistantConversationToolbar } from "./AssistantConversationToolbar";
 import HostConversationActions from "@/native-extensions/HostConversationActions";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -79,6 +80,7 @@ export function AgenticAppAssistantOverlay({
   const containerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const launcherRef = useRef<HTMLButtonElement>(null);
+  const renderPanel = useAssistantDockMotion(open, appId === "tome", panelRef, launcherRef);
   const resizeRef = useRef<{ pointerId: number; x: number; y: number; width: number; height: number; maxWidth: number; maxHeight: number } | null>(null);
   const [historyRevision, setHistoryRevision] = useState(0);
   const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration);
@@ -355,7 +357,7 @@ export function AgenticAppAssistantOverlay({
 
   return (
     <div ref={containerRef} className="pointer-events-none fixed inset-x-4 bottom-4 top-18 z-40 flex min-h-0 flex-col items-end justify-end gap-3 sm:inset-x-6 sm:bottom-6" style={{ bottom: configuration?.bottomInset }}>
-      {open ? (
+      {renderPanel ? (
         <Tabs value={view} onValueChange={value => setView(value as typeof view)} asChild>
         <section
           ref={panelRef}
@@ -454,6 +456,7 @@ export function AgenticAppAssistantOverlay({
       <button
         ref={launcherRef}
         type="button"
+        aria-expanded={open}
         aria-label={`Open ${bubbleLabel}`}
         className="pointer-events-auto inline-flex shrink-0 items-center gap-2 rounded-full border border-cyan-200/30 bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-200"
         onClick={() => onOpenChange(!open)}

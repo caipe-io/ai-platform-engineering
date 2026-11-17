@@ -18,6 +18,7 @@ from harness_engine.models import (
     AgentVersion,
     ProviderResource,
     RegisteredAgentCoreProfile,
+    RegisteredClaudeProfile,
     RunEvent,
     RunRecord,
     RunStatus,
@@ -67,6 +68,12 @@ class RunRepository(Protocol):
         raise NotImplementedError
 
     async def close(self) -> None:
+        raise NotImplementedError
+
+    async def list_claude_profiles(self) -> list[RegisteredClaudeProfile]:
+        raise NotImplementedError
+
+    async def create_claude_profile(self, profile: RegisteredClaudeProfile) -> None:
         raise NotImplementedError
 
     async def list_agentcore_profiles(self) -> list[RegisteredAgentCoreProfile]:
@@ -179,6 +186,7 @@ class InMemoryRunRepository:
         self._sessions: dict[str, SessionBinding] = {}
         self._provider_resources: dict[str, ProviderResource] = {}
         self._agentcore_profiles: dict[str, RegisteredAgentCoreProfile] = {}
+        self._claude_profiles: dict[str, RegisteredClaudeProfile] = {}
         self._runs: dict[str, RunRecord] = {}
         self._events: dict[str, list[RunEvent]] = defaultdict(list)
         self._conditions: dict[str, asyncio.Condition] = defaultdict(asyncio.Condition)
@@ -189,6 +197,15 @@ class InMemoryRunRepository:
 
     async def close(self) -> None:
         return None
+
+    async def list_claude_profiles(self) -> list[RegisteredClaudeProfile]:
+        return [profile.model_copy(deep=True) for profile in self._claude_profiles.values()]
+
+    async def create_claude_profile(self, profile: RegisteredClaudeProfile) -> None:
+        async with self._lock:
+            if profile.profile_id in self._claude_profiles:
+                raise RevisionConflictError(profile.profile_id)
+            self._claude_profiles[profile.profile_id] = profile.model_copy(deep=True)
 
     async def list_agentcore_profiles(self) -> list[RegisteredAgentCoreProfile]:
         return [profile.model_copy(deep=True) for profile in self._agentcore_profiles.values()]
@@ -490,6 +507,7 @@ class MongoRunRepository:
             )
             self._db.harness_provider_resources.create_index("agent_id", unique=True)
             self._db.harness_agentcore_profiles.create_index("profile_id", unique=True)
+            self._db.harness_claude_profiles.create_index("profile_id", unique=True)
             self._db.harness_sessions.create_index("binding_id", unique=True)
             self._db.harness_sessions.create_index(
                 "native_state_key", unique=True, name="exclusive_native_producer",
@@ -520,6 +538,16 @@ class MongoRunRepository:
 
     async def close(self) -> None:
         await asyncio.to_thread(self._client.close)
+
+    async def list_claude_profiles(self) -> list[RegisteredClaudeProfile]:
+        docs = await asyncio.to_thread(lambda: list(self._db.harness_claude_profiles.find({}, {"_id": 0})))
+        return [RegisteredClaudeProfile.model_validate(doc) for doc in docs]
+
+    async def create_claude_profile(self, profile: RegisteredClaudeProfile) -> None:
+        try:
+            await asyncio.to_thread(self._db.harness_claude_profiles.insert_one, profile.model_dump(mode="python"))
+        except DuplicateKeyError as exc:
+            raise RevisionConflictError(profile.profile_id) from exc
 
     async def list_agentcore_profiles(self) -> list[RegisteredAgentCoreProfile]:
         docs = await asyncio.to_thread(lambda: list(self._db.harness_agentcore_profiles.find({}, {"_id": 0})))
