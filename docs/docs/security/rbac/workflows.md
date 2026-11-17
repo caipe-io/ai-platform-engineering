@@ -85,6 +85,23 @@ This is the **once-per-session** flow. After it completes, the user holds a Keyc
   resource authorization checks. See [Authentication flow](../auth-flow.md)
   for the broader browser-session flow.
 
+### Removing login-derived admin access
+
+- Login-derived super-admin membership is recorded as a managed `oidc_claim`
+  source, including the configured provider and admin group. Legacy
+  `login-bootstrap` sources are also recognized as login-managed.
+- A new login or the existing refreshed-claim group check reconciles current
+  claims. Losing the admin group retires login-managed sources and removes
+  their super-admin membership and baseline admin tuples, including when the
+  user no longer passes the application admission group.
+- Independent active admin sources and `BOOTSTRAP_ADMIN_EMAILS` retain their
+  access. A failed tuple cleanup is retried on a later reconciliation even
+  when its provenance source was already marked removed.
+- Refreshed claims are rechecked on the existing four-hour interval. This is
+  not an immediate identity-provider logout or a background sweep of inactive
+  users. Current roles are also persisted during request identity bookkeeping;
+  a role transition bypasses its short write-deduplication window.
+
 ### Broker account setup
 
 The default Keycloak "first broker login" flow shows a "Review Profile" page and, if a local account with the same email already exists, a "Confirm Link Account" page. **Both are eliminated** by the custom flow patched in by `init-idp.sh`:
