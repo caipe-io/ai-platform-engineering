@@ -10,11 +10,14 @@ import httpx2 as httpx
 import mongomock
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
+from pymongo.errors import AutoReconnect
 
 from harness_engine.acp_events import EXTENSION
 from harness_engine.adapters.claude_remote import RemoteClaudeSDKAdapter
 from harness_engine.adapters.claude_sdk import ClaudeSDKAdapter
 from harness_engine.claude_worker import create_worker_app
+from harness_engine.config import Settings
 from harness_engine.main import create_app
 from harness_engine.models import RegisteredClaudeProfile
 from harness_engine.repository import InMemoryRunRepository, MongoRunRepository
@@ -62,6 +65,92 @@ def test_profile_authorization_immutability_and_replica_refresh(settings, monkey
             assert client.post(path, headers=admin(), json={**profile(), **changes}).status_code == 422
         assert client.post(path, headers=admin(), json={**profile(), "profile_id": "managed-other", "base_profile_id": "missing"}).status_code == 400
         assert client.post(path, headers=admin(), json={**profile(), "profile_id": "managed-other", "base_profile_id": "managed-example-v1"}).status_code == 400
+
+
+@pytest.mark.parametrize("refresh_error", [AutoReconnect, ValueError, RuntimeError])
+def test_committed_profile_publication_succeeds_when_immediate_refresh_fails(settings: Settings, refresh_error: type[Exception]) -> None:
+    class FlakyRepository(InMemoryRunRepository):
+        fail_refresh: bool = False
+
+        async def create_claude_profile(self, saved: RegisteredClaudeProfile) -> None:
+            await super().create_claude_profile(saved)
+            self.fail_refresh = True
+
+        async def list_claude_profiles(self) -> list[RegisteredClaudeProfile]:
+            if self.fail_refresh:
+                self.fail_refresh = False
+                raise refresh_error("Temporary catalog read failure")
+            return await super().list_claude_profiles()
+
+    repo = FlakyRepository()
+    app = create_app(settings=settings, repository=repo)
+    path = "/api/v1/admin/operator-profiles"
+    with TestClient(app) as client:
+        response = client.post(path, headers=admin(), json=profile())
+        assert response.status_code == 201
+        assert response.json()["data"]["profile_id"] == "managed-example-v1"
+        restored = client.get(path, headers=admin())
+        assert restored.status_code == 200
+        assert restored.json()["data"]["profiles"][0]["profile_id"] == "managed-example-v1"
+        native = next(h for h in restored.json()["data"]["harnesses"] if h["id"] == "claude_agent_sdk")
+        assert any(p["id"] == "managed-example-v1" and p["model"] == "example-model-large" for p in native["profiles"])
+        assert client.post(path, headers=admin(), json=profile()).status_code == 409
+
+
+async def test_deployment_model_discovery_runs_concurrently_and_preserves_partial_results(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("harness_engine.adapters.claude_remote.MODEL_DISCOVERY_TIMEOUT_SECONDS", .1)
+    seen: set[str] = set()
+    all_started = asyncio.Event()
+    cancelled: set[str] = set()
+    config = settings.model_copy(update={"claude_worker_profiles_json": SecretStr(json.dumps({
+        alias: {"url": f"http://{alias}.example.test", "token": "test-worker-secret", "profile_id": "safe"}
+        for alias in ("ready", "slow", "unavailable")
+    }))})
+
+    async def worker(request: httpx.Request) -> httpx.Response:
+        alias = request.url.host.split(".")[0]
+        assert request.headers["authorization"] == "Bearer test-worker-secret"
+        assert request.headers["x-harness-engine-subject"] == "test-user"
+        seen.add(alias)
+        if len(seen) == 3:
+            all_started.set()
+        await all_started.wait()
+        if alias == "ready":
+            return httpx.Response(200, json={"profiles": [{"id": "safe", "model": "example-model"}]})
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.add(alias)
+        raise AssertionError("Unreachable")
+
+    remote = RemoteClaudeSDKAdapter(config, httpx.MockTransport(worker))
+    assert await asyncio.wait_for(remote.deployment_models("test-user"), 1) == {"ready": "example-model"}
+    assert seen == {"ready", "slow", "unavailable"}
+    assert cancelled == {"slow", "unavailable"}
+
+
+async def test_operator_catalog_discovers_remote_adapters_concurrently(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    first = RemoteClaudeSDKAdapter(configured_worker(settings))
+    second = RemoteClaudeSDKAdapter(configured_worker(settings), claude_acp=True)
+    seen: set[str] = set()
+    all_started = asyncio.Event()
+
+    async def discover(adapter: RemoteClaudeSDKAdapter, subject: str) -> dict[str, str]:
+        assert subject == "test-user"
+        seen.add(adapter.descriptor.id)
+        if len(seen) == 2:
+            all_started.set()
+        await asyncio.wait_for(all_started.wait(), 1)
+        return {}
+
+    monkeypatch.setattr(first, "deployment_models", lambda subject: discover(first, subject))
+    monkeypatch.setattr(second, "deployment_models", lambda subject: discover(second, subject))
+    app = create_app(settings=settings, repository=InMemoryRunRepository(), adapters=[first, second])
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://engine.example.test") as client:
+            response = await client.get("/api/v1/admin/operator-profiles", headers=admin())
+    assert response.status_code == 200
+    assert len(response.json()["data"]["harnesses"]) == 2
 
 
 async def test_remote_profile_model_reaches_worker_without_changing_base(settings):

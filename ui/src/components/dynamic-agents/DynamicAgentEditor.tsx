@@ -620,9 +620,11 @@ export function DynamicAgentEditor({
     setHarnessSwitchConfirmed(false);
     setHarnessId(nextHarnessId);
     const draft = harnessDrafts.current.get(nextHarnessId);
-    setHarnessOptions(draft?.options ?? {});
     const descriptor = harnessDescriptors.find((item) => item.id === nextHarnessId);
-    setHarnessProfileId(draft?.profileId ?? descriptor?.profiles.find((profile) => profile.available)?.id ?? "");
+    const profileId = draft?.profileId ?? descriptor?.profiles.find((profile) => profile.available)?.id ?? "";
+    const profile = descriptor?.profiles.find(item => item.id === profileId);
+    setHarnessProfileId(profileId);
+    setHarnessOptions(draft?.options ?? (profile?.source === "managed" ? { max_turns: profile.default_max_turns ?? 20 } : {}));
   }, [harnessDescriptors, harnessId, harnessOptions, harnessProfileId]);
 
   async function selectCreatedOperatorProfile(profileId: string, maxTurns: number) {
