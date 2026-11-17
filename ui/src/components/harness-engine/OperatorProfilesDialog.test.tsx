@@ -80,3 +80,24 @@ it("rejects a reused profile ID across runtimes without overwriting it", async (
   expect(await screen.findByRole("alert")).toHaveTextContent("already exists");
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
+
+it("retries selection after a committed creation and reload without posting the profile again", async () => {
+  const published = { profile_id: "managed-100", max_turns: 100 };
+  const created = jest.fn().mockRejectedValueOnce(new Error("Catalog unavailable")).mockResolvedValueOnce(undefined);
+  const close = jest.fn();
+  const fetcher = jest.spyOn(global, "fetch").mockResolvedValueOnce(reply({ data: profileCatalog }))
+    .mockResolvedValueOnce(reply({ data: published }))
+    .mockResolvedValueOnce(reply({ data: { ...profileCatalog, profiles: [{ ...published, harness_id: "claude_code_cli_acp" }] } }));
+  render(<OperatorProfilesDialog open onOpenChange={close} harnessId="claude_code_cli_acp" onCreated={created} />);
+  await fillProfile();
+  fireEvent.click(screen.getByRole("button", { name: "Create and select profile" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Profile was saved. Catalog unavailable");
+  expect(screen.queryByLabelText("New profile ID")).not.toBeInTheDocument();
+  expect(close).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Reload profiles" }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3));
+  fireEvent.click(screen.getByRole("button", { name: "Retry selection" }));
+  await waitFor(() => expect(close).toHaveBeenCalledWith(false));
+  expect(created.mock.calls).toEqual([["managed-100", 100], ["managed-100", 100]]);
+  expect(fetcher.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+});

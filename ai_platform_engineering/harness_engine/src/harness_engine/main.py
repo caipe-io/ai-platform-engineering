@@ -106,17 +106,22 @@ def create_app(
         if isinstance(adapter, DeepAgentsAdapter):
             adapter.runtime.configure_subagent_dispatch(coordinator, resolved_repository)
 
+    profile_refresh_lock = asyncio.Lock()
+
     async def refresh_operator_profiles() -> None:
-        claude_profiles = await resolved_repository.list_claude_profiles()
-        for adapter in resolved_adapters:
-            if isinstance(adapter, (ClaudeSDKAdapter, RemoteClaudeSDKAdapter)):
-                adapter.set_registered_profiles(claude_profiles)
-        profiles = await resolved_repository.list_agentcore_profiles()
-        targets = {profile.profile_id: profile.target for profile in profiles}
-        for adapter in resolved_adapters:
-            if isinstance(adapter, AgentCoreAdapter):
-                adapter.set_registered_profiles(targets)
-        resolved_agentcore_provisioner.set_registered_profiles(targets)
+        # Keep the read inside the lock so an older snapshot cannot replace a
+        # newer profile catalog after concurrent publication.
+        async with profile_refresh_lock:
+            claude_profiles = await resolved_repository.list_claude_profiles()
+            for adapter in resolved_adapters:
+                if isinstance(adapter, (ClaudeSDKAdapter, RemoteClaudeSDKAdapter)):
+                    adapter.set_registered_profiles(claude_profiles)
+            profiles = await resolved_repository.list_agentcore_profiles()
+            targets = {profile.profile_id: profile.target for profile in profiles}
+            for adapter in resolved_adapters:
+                if isinstance(adapter, AgentCoreAdapter):
+                    adapter.set_registered_profiles(targets)
+            resolved_agentcore_provisioner.set_registered_profiles(targets)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:

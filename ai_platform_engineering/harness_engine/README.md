@@ -677,6 +677,10 @@ Creating a profile requires both `admin_ui:admin` and platform
   the profile list preserves the current draft.
 - Select the new profile and save the agent. New conversations use that
   configuration; existing conversations retain their pinned agent version.
+- If creation succeeds but selection fails, **Retry selection** selects the
+  saved profile without publishing it again or discarding the agent draft.
+- Changing profiles updates the displayed turn default. Only an explicit author
+  override carries across profile selections.
 - To revise a profile, copy its settings and publish a new ID. Profiles are
   immutable and cannot retarget an existing conversation.
 

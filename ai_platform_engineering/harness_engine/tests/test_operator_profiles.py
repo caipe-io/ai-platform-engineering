@@ -153,6 +153,57 @@ async def test_operator_catalog_discovers_remote_adapters_concurrently(settings:
     assert len(response.json()["data"]["harnesses"]) == 2
 
 
+async def test_catalog_refresh_cannot_install_a_stale_snapshot_after_publication(settings: Settings) -> None:
+    class SnapshotRepository(InMemoryRunRepository):
+        hold_next_read = False
+
+        async def list_claude_profiles(self) -> list[RegisteredClaudeProfile]:
+            snapshot = await super().list_claude_profiles()
+            if self.hold_next_read:
+                self.hold_next_read = False
+                captured.set()
+                await release.wait()
+            return snapshot
+
+    captured, release = asyncio.Event(), asyncio.Event()
+    repo = SnapshotRepository()
+    native = ClaudeSDKAdapter(settings)
+    app = create_app(settings=settings, repository=repo, adapters=[native])
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://engine.example.test") as client:
+            repo.hold_next_read = True
+            older = asyncio.create_task(client.get("/api/v1/harnesses", headers=auth_headers()))
+            await asyncio.wait_for(captured.wait(), 1)
+            publication = asyncio.create_task(client.post("/api/v1/admin/operator-profiles", headers=admin(), json=profile()))
+            try:
+                with pytest.raises(TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(publication), .1)
+            finally:
+                release.set()
+                older_response, saved_response = await asyncio.gather(older, publication)
+            assert older_response.status_code == 200
+            assert saved_response.status_code == 201
+            assert any(p.id == "managed-example-v1" for p in native.descriptor.profiles)
+
+
+@pytest.mark.parametrize("failure, expected", [("http", "status=503"), ("connection", "error=ConnectError"), ("malformed", "error=AttributeError")])
+async def test_worker_discovery_logs_context_without_credentials(settings: Settings, caplog: pytest.LogCaptureFixture, failure: str, expected: str) -> None:
+    sensitive = "private-worker-credential-and-response"
+
+    async def worker(request: httpx.Request) -> httpx.Response:
+        if failure == "connection":
+            raise httpx.ConnectError(sensitive, request=request)
+        if failure == "http":
+            return httpx.Response(503, text=sensitive)
+        return httpx.Response(200, json={"profiles": [sensitive]})
+
+    remote = RemoteClaudeSDKAdapter(configured_worker(settings), httpx.MockTransport(worker))
+    caplog.set_level("WARNING", logger="harness_engine.adapters.claude_remote")
+    assert await remote.deployment_models(sensitive) == {}
+    assert "alias=remote" in caplog.text and expected in caplog.text
+    assert sensitive not in caplog.text and "test-worker-secret" not in caplog.text
+
+
 async def test_remote_profile_model_reaches_worker_without_changing_base(settings):
     seen = []
 

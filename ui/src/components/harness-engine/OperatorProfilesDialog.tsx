@@ -44,11 +44,12 @@ export function OperatorProfilesDialog({ open, onOpenChange, harnessId, onCreate
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
+  const [createdProfile, setCreatedProfile] = React.useState<Pick<Profile, "profile_id" | "max_turns"> | null>(null);
   const pending = React.useRef(false);
   const [attempted, setAttempted] = React.useState(false);
   const [reload, setReload] = React.useState(0);
   React.useEffect(() => {
-    if (open) { setAttempted(false); setId(""); setName(""); setModel(""); setBaseId(""); setTurns(20); }
+    if (open) { setAttempted(false); setId(""); setName(""); setModel(""); setBaseId(""); setTurns(20); setCreatedProfile(null); }
   }, [open, harnessId]);
   React.useEffect(() => {
     if (!open) return;
@@ -78,18 +79,26 @@ export function OperatorProfilesDialog({ open, onOpenChange, harnessId, onCreate
     event.preventDefault();
     if (pending.current) return;
     setAttempted(true); setError(null);
-    if (Object.values(validation).some(Boolean)) return;
+    if (!createdProfile && Object.values(validation).some(Boolean)) return;
     pending.current = true; setSaving(true);
+    let published = createdProfile;
     try {
-      const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
-        profile_id: profileId, harness_id: harnessId, base_profile_id: baseId,
-        display_name: name.trim(), model: model.trim(), max_turns: turns,
-      }) });
-      const result = await response.json();
-      if (!response.ok || !result.success) throw new Error(profileError(result, "Profile could not be saved. Reload profiles and try again."));
-      await onCreated(result.data.profile_id, result.data.max_turns);
+      if (!published) {
+        const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+          profile_id: profileId, harness_id: harnessId, base_profile_id: baseId,
+          display_name: name.trim(), model: model.trim(), max_turns: turns,
+        }) });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(profileError(result, "Profile could not be saved. Reload profiles and try again."));
+        published = { profile_id: result.data.profile_id, max_turns: result.data.max_turns };
+        setCreatedProfile(published);
+      }
+      await onCreated(published.profile_id, published.max_turns);
       onOpenChange(false);
-    } catch (cause) { setError(getErrorMessage(cause, "Operator profiles are unavailable")); }
+    } catch (cause) {
+      const detail = getErrorMessage(cause, "Operator profiles are unavailable");
+      setError(published ? `Profile was saved. ${detail} Retry selection without creating another profile.` : detail);
+    }
     finally { pending.current = false; setSaving(false); }
   }
   return <Dialog open={open} onOpenChange={value => { if (!saving) onOpenChange(value); }}>
@@ -98,6 +107,8 @@ export function OperatorProfilesDialog({ open, onOpenChange, harnessId, onCreate
         <DialogHeader><DialogTitle>Operator profiles</DialogTitle>
           <DialogDescription>Create a model and turn default for this runtime. Save a new profile ID for each revision; existing agents and conversations keep their selected profile.</DialogDescription>
         </DialogHeader>
+        {createdProfile && <p role="status" className="text-sm">Profile <code>{createdProfile.profile_id}</code> was saved. Select it to continue with your agent draft.</p>}
+        {!createdProfile && <fieldset className="space-y-4" disabled={saving}>
         {saved.length > 0 && <div className="space-y-2"><Label>Revise an existing profile</Label>
           <SearchablePicker options={saved} getOptionKey={p => p.profile_id} getOptionLabel={p => p.display_name}
             onSelect={p => { setBaseId(p.base_profile_id); setName(p.display_name); setModel(p.model); setTurns(p.max_turns); setId(""); }}
@@ -124,8 +135,9 @@ export function OperatorProfilesDialog({ open, onOpenChange, harnessId, onCreate
         </div>
         {attempted && validation.base && <p role="alert" className="text-sm text-destructive">{validation.base}</p>}
         <p className="text-xs text-muted-foreground">Connections, credentials, workspace isolation, and tool permissions remain managed by the deployment. A new profile is available to authors of this runtime.</p>
+        </fieldset>}
         {error && <div role="alert" className="text-sm text-destructive">{error} <Button type="button" variant="ghost" onClick={() => setReload(v => v + 1)} disabled={saving}>Reload profiles</Button></div>}
-        <DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button><Button type="submit" disabled={saving || loading || !baseId}>{saving ? "Saving…" : "Create and select profile"}</Button></DialogFooter>
+        <DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button><Button type="submit" disabled={saving || (!createdProfile && (loading || !baseId))}>{saving ? "Saving…" : createdProfile ? "Retry selection" : "Create and select profile"}</Button></DialogFooter>
       </form>
     </DialogContent>
   </Dialog>;
