@@ -9,9 +9,12 @@ successResponse,
 withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
+import { findAgenticAppAssistantStream } from "@/lib/agentic-apps/assistant-stream";
 import { filterResourcesByPermission,requireAgentPermission } from "@/lib/rbac/resource-authz";
 import type { DynamicAgentConfig } from "@/types/dynamic-agent";
 import { NextRequest } from "next/server";
+
+import { getHarnessToolReadiness } from "@/lib/harness-tool-readiness";
 
 const COLLECTION_NAME = "dynamic_agents";
 
@@ -29,7 +32,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   const { searchParams } = new URL(request.url);
   const agentId = searchParams.get("id");
 
-  if (!agentId) {
+  if (!agentId && searchParams.get("create") !== "true") {
     throw new ApiError("Agent ID is required", 400);
   }
 
@@ -38,11 +41,11 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     const collection = await getCollection<DynamicAgentConfig>(COLLECTION_NAME);
 
     // Get the parent agent
-    const parentAgent = await collection.findOne({ _id: agentId });
-    if (!parentAgent) {
-      throw new ApiError("Agent not found", 404);
+    if (agentId) {
+      const parentAgent = await collection.findOne({ _id: agentId });
+      if (!parentAgent) throw new ApiError("Agent not found", 404);
+      await requireAgentPermission(session, agentId, "write");
     }
-    await requireAgentPermission(session, agentId, "write");
 
     // Get all enabled agents (enabled: true OR enabled field doesn't exist, which defaults to true)
     const allAgents = await collection.find({ 
@@ -50,12 +53,22 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     }).toArray();
 
     // Find agents that would create a cycle
-    const ancestors = getAncestorAgentIds(agentId, allAgents);
+    const ancestors = agentId ? getAncestorAgentIds(agentId, allAgents) : new Set<string>();
 
     // Filter out self and ancestors before checking ReBAC can_use on candidates.
     const candidates = allAgents.filter((agent) => {
       if (agent._id === agentId) return false; // Can't delegate to self
       if (ancestors.has(agent._id)) return false; // Would create a cycle
+      try {
+        // App-owned assistants require their app's execution path; they cannot
+        // be reconstructed as local graphs or dispatched as Harness children.
+        if (findAgenticAppAssistantStream(String(agent._id))) return false;
+      } catch (error) {
+        const category = error instanceof Error && error.message === "Assistant app is unavailable" ? "app_unavailable"
+          : error instanceof Error && error.message === "Multiple installed apps claim the assistant" ? "ambiguous_binding" : "routing_snapshot_error";
+        console.warn("[available-subagents] App binding excluded", { agentId: String(agent._id), category });
+        return false;
+      } // Unavailable/ambiguous app bindings fail closed.
       return true;
     });
 
@@ -65,9 +78,12 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       id: (agent) => String(agent._id),
     });
 
+    const readiness = await getHarnessToolReadiness(usableCandidates);
     const available = usableCandidates
       .map((agent) => ({
         id: agent._id,
+        ...(readiness.has(agent._id) && { execution_readiness: readiness.get(agent._id) }),
+        execution_harness_id: agent.execution_harness_id || "dynamic_agents",
         name: agent.name,
         description: agent.description,
         visibility: agent.visibility,

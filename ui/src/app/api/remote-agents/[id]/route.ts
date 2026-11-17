@@ -7,6 +7,7 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { getCollection } from "@/lib/mongodb";
+import { isAgentFramework } from "@/lib/agent-framework";
 import { normalizeRemoteAgentCredentialSource } from "@/lib/remote-agent-auth";
 import { Document } from "mongodb";
 import { NextRequest } from "next/server";
@@ -25,6 +26,10 @@ export const PUT = withErrorHandler(async (request: NextRequest, context: { para
   const { id } = await context.params;
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   const update: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: user.email };
+  if (body.framework !== undefined) {
+    if (!isAgentFramework(body.framework)) throw new ApiError("Unknown agent framework", 400, "INVALID_REMOTE_AGENT_FRAMEWORK");
+    update.framework = body.framework;
+  }
   if (body.timeout_seconds !== undefined) {
     const timeout = Number(body.timeout_seconds);
     if (!Number.isInteger(timeout) || timeout < 1 || timeout > 600) {

@@ -49,18 +49,15 @@ jest.mock("@/components/dynamic-agents/BuiltinToolsPicker", () => ({
 jest.mock("@/components/dynamic-agents/MiddlewarePicker", () => ({
   MiddlewarePicker: () => <div data-testid="middleware-picker" />,
 }));
-jest.mock("@/components/dynamic-agents/RemoteAgentsPicker", () => ({
-  RemoteAgentsPicker: ({ onChange, timeoutValues }: { onChange: (ids: string[]) => void; timeoutValues: Record<string, number> }) => (
+jest.mock("@/components/dynamic-agents/DelegatedAgentsPicker", () => ({
+  DelegatedAgentsPicker: ({ remote }: { remote: { onChange: (ids: string[]) => void; timeoutValues: Record<string, number> } }) => (
     <div>
-      <span data-testid="remote-timeouts">{JSON.stringify(timeoutValues)}</span>
-      <button type="button" onClick={() => onChange(["remote-secondary"])}>Deselect primary remote agent</button>
+      <span data-testid="remote-timeouts">{JSON.stringify(remote.timeoutValues)}</span>
+      <button type="button" onClick={() => remote.onChange(["remote-secondary"])}>Deselect primary remote agent</button>
     </div>
   ),
 }));
 
-jest.mock("@/components/dynamic-agents/SubagentPicker", () => ({
-  SubagentPicker: () => <div data-testid="subagent-picker" />,
-}));
 jest.mock("@/components/dynamic-agents/SkillsSelector", () => ({
   SkillsSelector: () => <div data-testid="skills-selector" />,
 }));

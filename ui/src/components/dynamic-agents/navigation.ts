@@ -6,6 +6,7 @@ import { Bot,Cpu,KeyRound,MessageSquare,Server } from "lucide-react";
 
 export const BASE_DYNAMIC_AGENT_TABS = [
   "agents",
+  "remote-agents",
   "mcp-servers",
   "model-providers",
   "llm-models",

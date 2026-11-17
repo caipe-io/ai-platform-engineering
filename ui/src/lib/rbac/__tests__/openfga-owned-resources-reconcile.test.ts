@@ -28,7 +28,7 @@ jest.mock("../openfga", () => ({
   isOpenFgaReconciliationEnabled: () => mockIsOpenFgaReconciliationEnabled(),
   readOpenFgaTuples: (...args: unknown[]) => mockReadOpenFgaTuples(...args),
   listOpenFgaObjects: (...args: unknown[]) => mockListOpenFgaObjects(...args),
-  TEAM_TOOL_WILDCARD_SENTINEL_OBJECT: "tool:*",
+  TEAM_TOOL_WILDCARD_SENTINEL_OBJECT: "tool:__all_mcp_servers_intent__",
 }));
 
 jest.mock("@/lib/mongodb", () => ({
@@ -57,7 +57,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockIsOpenFgaReconciliationEnabled.mockReturnValue(true);
   mockReconcileTupleDiff.mockResolvedValue({ enabled: true, writes: 0, deletes: 4 });
-  // Default: no `tool:*` wildcard-sentinel teams and no team agents, so the
+  // Default: no `tool:__all_mcp_servers_intent__` wildcard-sentinel teams and no team agents, so the
   // wildcard backfill is a no-op unless a test opts in via seedWildcardTeam().
   mockReadOpenFgaTuples.mockResolvedValue(tuplePage([]));
   mockListOpenFgaObjects.mockResolvedValue({ objects: [] });
@@ -231,12 +231,12 @@ describe("deleteAllMcpToolRelationshipTuples", () => {
 
 describe("reconcileMcpServerRelationships", () => {
   // Wildcard intent + team agents now live in OpenFGA (the `team.resources`
-  // array is gone): a `tool:*` sentinel caller marks the team as "all servers",
+  // array is gone): a `tool:__all_mcp_servers_intent__` sentinel caller marks the team as "all servers",
   // and `team#member user agent:<id>` lists its agents.
   function seedWildcardTeam(): void {
     mockReadOpenFgaTuples.mockImplementation(async (options: { tuple?: { object?: string } }) => {
-      if (options?.tuple?.object === "tool:*") {
-        return tuplePage([{ user: "team:platform#member", relation: "caller", object: "tool:*" }]);
+      if (options?.tuple?.object === "tool:__all_mcp_servers_intent__") {
+        return tuplePage([{ user: "team:platform#member", relation: "caller", object: "tool:__all_mcp_servers_intent__" }]);
       }
       return tuplePage([]);
     });
@@ -263,7 +263,7 @@ describe("reconcileMcpServerRelationships", () => {
     });
 
     expect(mockReadOpenFgaTuples).toHaveBeenCalledWith(
-      expect.objectContaining({ tuple: { object: "tool:*" } }),
+      expect.objectContaining({ tuple: { object: "tool:__all_mcp_servers_intent__" } }),
     );
     expect(mockReconcileTupleDiff).toHaveBeenCalledWith(
       {
@@ -298,7 +298,7 @@ describe("reconcileMcpServerRelationships", () => {
     });
 
     expect(mockReadOpenFgaTuples).toHaveBeenCalledWith(
-      expect.objectContaining({ tuple: { object: "tool:*" } }),
+      expect.objectContaining({ tuple: { object: "tool:__all_mcp_servers_intent__" } }),
     );
     const diff = mockReconcileTupleDiff.mock.calls[0][0];
     expect(diff).toEqual(

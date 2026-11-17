@@ -1,6 +1,7 @@
 export type HarnessRunStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
 
 export interface HarnessRun {
+  parent_run_id?: string | null;
   run_id: string;
   owner_subject?: string;
   agent_id: string;
@@ -57,6 +58,9 @@ export interface HarnessProfile {
   display_name: string;
   description: string;
   available: boolean;
+  model?: string | null;
+  default_max_turns?: number;
+  source?: "deployment" | "managed";
 }
 
 export interface HarnessDescriptor {

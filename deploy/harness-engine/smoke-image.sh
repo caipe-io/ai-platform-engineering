@@ -61,7 +61,7 @@ from harness_engine.config import Settings
 async def main() -> None:
     async with managed_acp_process(
         ACPEventClient(), Settings().claude_acp_command,
-        env={"PATH": os.environ["PATH"], "HOME": "/workspace"},
+        env={"PATH": os.environ["PATH"], "HOME": "/workspace", "PYTHONPATH": "/app/src"},
         cwd=Path("/workspace"), run_id="startup-check",
     ) as connection:
         assert (await connection.initialize(protocol_version=1)).protocol_version == 1

@@ -1,4 +1,4 @@
-import { interruptedAuthReason,interruptedTurnFallbackText } from "@/lib/chat-interrupt";
+import { interruptedAuthReason,interruptedTurnFallbackText,isAgentReadinessError } from "@/lib/chat-interrupt";
 import { StreamError } from "@/lib/streaming";
 import { APIClientError } from "@/lib/api-client";
 
@@ -57,4 +57,10 @@ describe("interruptedAuthReason", () => {
       interruptedAuthReason(new StreamError("denied", 403, undefined, "missing_role", "contact_admin")),
     ).toBeUndefined();
   });
+});
+
+it("distinguishes a blocked admission from auth/network interruptions", () => {
+  expect(isAgentReadinessError(new StreamError("Not ready", 409, "HARNESS_AGENT_NOT_READY"))).toBe(true);
+  expect(isAgentReadinessError(new StreamError("Unavailable", 503))).toBe(false);
+  expect(isAgentReadinessError(new Error("HARNESS_AGENT_NOT_READY"))).toBe(false);
 });

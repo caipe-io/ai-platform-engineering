@@ -72,6 +72,7 @@ class DeepAgentsAdapter:
                 "skills",
                 "model.configured",
                 "multi_agent.delegation",
+                "multi_agent.harness_delegation",
                 "deep_agents.middleware",
                 "remote_agents",
                 "workflows",
