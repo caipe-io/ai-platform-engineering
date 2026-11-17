@@ -21,6 +21,11 @@
 
 ## [Project Documentation](https://caipe.io/)
 
+## Code of Conduct
+
+All participants are expected to follow the [CAIPE Code of Conduct](CODE_OF_CONDUCT.md).
+Please read it for community standards and guidance on reporting concerns.
+
 ## 🤝 Contributing
 
 We’d love your contributions! To get started:
