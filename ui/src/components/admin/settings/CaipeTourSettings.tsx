@@ -43,7 +43,7 @@ export function CaipeTourSettings({ readOnly = false }: { readOnly?: boolean }):
   return <SettingsCard title="CAIPE Tour" description="Choose which tours are available to your users. Permissions and enabled features still apply; users can turn tours off for their own account.">
     {!loaded && <p role="status" className="text-sm text-muted-foreground">Loading CAIPE Tour policy…</p>}
     <div className="grid gap-3 sm:grid-cols-2">
-      {(Object.entries(PRODUCT_TOURS) as [ProductTourId, typeof PRODUCT_TOURS[ProductTourId]][]).map(([id, tour]) => <label key={id} className="flex items-start gap-3 rounded-lg border p-3">
+      {(Object.entries(PRODUCT_TOURS) as [ProductTourId, typeof PRODUCT_TOURS[ProductTourId]][]).sort(([, a], [, b]) => a.title.localeCompare(b.title)).map(([id, tour]) => <label key={id} className="flex items-start gap-3 rounded-lg border p-3">
         <input type="checkbox" className="mt-1 h-4 w-4 shrink-0 accent-primary" checked={selected.includes(id)} disabled={disabled} onChange={(event) => { const checked = event.target.checked; setMessage(null); setSelected((ids) => normalizeEnabledTours(checked ? [...ids, id] : ids.filter((item) => item !== id))); }} />
         <span className="min-w-0"><span className="text-sm font-medium">{tour.title}</span><span className="mt-1 block text-xs text-muted-foreground">{tour.description}</span></span>
       </label>)}

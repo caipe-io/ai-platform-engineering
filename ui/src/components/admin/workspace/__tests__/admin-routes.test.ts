@@ -32,11 +32,18 @@ describe("admin route registry", () => {
     expect(findAdminDestinationByPath("/admin/security/access-operations")?.id).toBe("access-operations");
     expect(findAdminDestinationByPath("/admin/security/rbac-audit")).toBeUndefined();
     expect(findAdminDestinationByPath("/admin/security/access-explorer")).toBeUndefined();
+    expect(findAdminDestinationByPath("/admin/configuration/tour")?.id).toBe("tour");
     expect(findAdminDestinationByPath("/admin/configuration/defaults")?.id).toBe("defaults");
     expect(findAdminDestinationByPath("/admin/configuration/setup-wizard")?.id).toBe("setup-wizard");
     expect(findAdminDestinationByPath("/admin/configuration/announcements")?.id).toBe("announcements");
     expect(findAdminDestinationByPath("/admin/platform/defaults")).toBeUndefined();
     expect(findAdminDestinationByPath("/admin/platform/autonomous")).toBeUndefined();
+  });
+
+  it("alphabetizes the Platform configuration destinations", () => {
+    expect(ADMIN_CATEGORIES.find((category) => category.id === "configuration")?.destinations.map((destination) => destination.label)).toEqual([
+      "Announcements", "Defaults", "Setup Wizard", "Tour",
+    ]);
   });
 
   it("filters destinations by access and removes empty categories", () => {

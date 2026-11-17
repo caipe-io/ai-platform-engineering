@@ -301,6 +301,7 @@ export function AppHeader() {
           >
             <p className="px-3 py-2 text-xs font-medium text-muted-foreground">Explore at your pace</p>
             {(Object.entries(PRODUCT_TOURS) as [ProductTourId, typeof PRODUCT_TOURS[ProductTourId]][])
+              .sort(([, a], [, b]) => a.title.localeCompare(b.title))
               .filter(([id, tour]) => {
                 if (!tourPolicy.enabledTours.includes(id)) return false;
                 if (tour.agentWorkspace) return config.dynamicAgentsEnabled && config.storageMode === "mongodb" && (isAdmin || canAccessDynamicAgents);

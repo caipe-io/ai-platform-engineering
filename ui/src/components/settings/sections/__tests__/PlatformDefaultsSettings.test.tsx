@@ -6,8 +6,6 @@ import { fireEvent,render,screen,waitFor } from "@testing-library/react";
 
 import { PlatformDefaultsSettings } from "../PlatformDefaultsSettings";
 
-jest.mock("@/components/admin/settings/CaipeTourSettings", () => ({ CaipeTourSettings: () => null }));
-
 const AGENTS = [
   { _id: "sre",name: "Basic SRE",description: "Handles SRE workflows" },
   { _id: "kb",name: "Knowledge Base Agent",description: "Answers from knowledge bases" },

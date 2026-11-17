@@ -18,6 +18,14 @@ it("loads the saved checks and saves only the selected tour IDs", async () => {
   render(<CaipeTourSettings />);
   const workspace = await screen.findByRole("checkbox", { name: /Workspace tour/ });
   await waitFor(() => expect(workspace).toBeEnabled());
+  expect(screen.getAllByRole("checkbox").map((checkbox) => checkbox.getAttribute("aria-label") || checkbox.closest("label")?.textContent)).toEqual([
+    expect.stringMatching(/^Add a model/),
+    expect.stringMatching(/^Add an agent/),
+    expect.stringMatching(/^Add an MCP server/),
+    expect.stringMatching(/^Chat with an agent/),
+    expect.stringMatching(/^Connect credentials/),
+    expect.stringMatching(/^Workspace tour/),
+  ]);
   expect(workspace).toBeChecked();
   expect(screen.getByRole("checkbox", { name: /Chat with an agent/ })).toBeChecked();
   expect(screen.getByRole("checkbox", { name: /Add a model/ })).not.toBeChecked();
