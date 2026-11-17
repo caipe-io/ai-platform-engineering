@@ -15,6 +15,9 @@ openFgaSubject,
 type UniversalRebacTupleDiffInput,
 } from "./tuple-builders";
 import { organizationObjectId } from "./organization";
+import { TEAM_TOOL_WILDCARD_SENTINEL_OBJECT } from "./team-tool-wildcard";
+
+export { TEAM_TOOL_WILDCARD_SENTINEL_OBJECT } from "./team-tool-wildcard";
 
 export { getOpenFgaStoreId, isOpenFgaConfigured, resetOpenFgaStoreIdCacheForTests } from "@/lib/authz/engines/openfga-client";
 
@@ -131,19 +134,7 @@ function resourceTuples(
 const MCP_TOOL_WILDCARD_SUFFIX = "_*";
 const MCP_TOOL_SLASH_WILDCARD_SUFFIX = "/*";
 
-/**
- * Marker object recording that a team opted into the "all MCP servers" tool
- * wildcard. AgentGateway only ever checks per-server objects (`tool:<server>/*`)
- * so this `tool:*` object is never consulted at runtime — it exists purely so
- * `tool_wildcard` intent lives in OpenFGA (the single source of truth) rather
- * than the dropped `team.resources` array. A `team:<slug>#member caller tool:*`
- * tuple is the authoritative "wildcard on" signal: the per-team resources route
- * writes/clears it, and the MCP-server reconciler reads its callers to know
- * which teams a freshly-added server must be auto-granted to.
- */
-export const TEAM_TOOL_WILDCARD_SENTINEL_OBJECT = "tool:*";
-
-/** The `team:<slug>#member caller tool:*` sentinel tuple for a team. */
+/** Record wildcard intent separately from the per-server runtime grants. */
 export function teamToolWildcardSentinelTuple(teamSlug: string): OpenFgaTupleKey {
   return { user: `team:${teamSlug}#member`, relation: "caller", object: TEAM_TOOL_WILDCARD_SENTINEL_OBJECT };
 }
