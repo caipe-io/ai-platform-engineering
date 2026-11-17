@@ -25,6 +25,7 @@ describe("RemoteAgentRegistry", () => {
     const onParentSubmit = jest.fn((event: React.FormEvent) => event.preventDefault());
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
+      if (url === "/api/dynamic-agents/available-subagents?create=true") return jsonResponse({ agents: [] });
       if (url === "/api/remote-agents/discovery") return jsonResponse({ namespaces: [] });
       if (url === "/api/remote-agents") {
         if (init?.method === "POST") {
@@ -57,7 +58,7 @@ describe("RemoteAgentRegistry", () => {
       </form>,
     );
 
-    await screen.findByText("No remote A2A agents are registered.");
+    await screen.findByText("No A2A or configured ACP agents are available.");
     expect(container.querySelectorAll("form")).toHaveLength(1);
 
     fireEvent.change(screen.getByLabelText("Agent URL"), {
@@ -84,6 +85,7 @@ describe("RemoteAgentRegistry", () => {
     const onParentSubmit = jest.fn((event: React.FormEvent) => event.preventDefault());
     const fetchMock = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
+      if (url === "/api/dynamic-agents/available-subagents?create=true") return jsonResponse({ agents: [] });
       if (url === "/api/credentials/secrets") return jsonResponse([{ id: "secret-example", name: "Example secret" }]);
       if (url === "/api/credentials/oauth-connectors") return jsonResponse([{ provider: "example", name: "Example provider" }]);
       if (url === "/api/remote-agents/probe") return jsonResponse({ name: "Example Agent", description: "Example" });
@@ -96,7 +98,7 @@ describe("RemoteAgentRegistry", () => {
     });
     global.fetch = fetchMock;
     render(<form onSubmit={onParentSubmit}><RemoteAgentRegistry /></form>);
-    await screen.findByText("No remote A2A agents are registered.");
+    await screen.findByText("No A2A or configured ACP agents are available.");
     fireEvent.change(screen.getByLabelText("Credential source"), { target: { value: kind } });
     fireEvent.change(screen.getByLabelText("Header name"), { target: { value: "X-Agent-Token" } });
     if (kind === "secret_ref") {
@@ -123,6 +125,7 @@ describe("RemoteAgentRegistry", () => {
     const pending = new Promise((resolve) => { finish = resolve; });
     const item = { _id: "remote-example", name: "Example Agent", endpoint: "https://agent.example.test", timeout_seconds: 120 };
     const fetchMock = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (_input.toString().includes("available-subagents")) return jsonResponse({ agents: [] });
       if (init?.method === method) return pending;
       return jsonResponse({ items: method === "PUT" ? [item] : [], can_manage_registry: true });
     });
@@ -133,7 +136,7 @@ describe("RemoteAgentRegistry", () => {
       fireEvent.click(await screen.findByRole("button", { name: "Edit Example Agent" }));
       input = screen.getAllByLabelText("Name")[0];
     } else {
-      await screen.findByText("No remote A2A agents are registered.");
+      await screen.findByText("No A2A or configured ACP agents are available.");
       input = screen.getByLabelText("Name");
       fireEvent.change(input, { target: { value: item.name } });
       fireEvent.change(screen.getByLabelText("Agent URL"), { target: { value: item.endpoint } });

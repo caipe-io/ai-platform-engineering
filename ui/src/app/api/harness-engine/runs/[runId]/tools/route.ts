@@ -39,6 +39,9 @@ export const POST = withErrorHandler(async (
   const body = await request.json().catch(() => null);
   if (!body || !["list", "call"].includes(body.operation)) throw new ApiError("Expected list or call", 400);
   const run = (await access.response.json()).data;
+  if (access.delegationParent && (access.delegationParent.status !== "running" || access.delegationParent.cancellation_requested)) {
+    throw new ApiError("Delegated tools require an active parent run", 409);
+  }
   if (run.status !== "running" || run.cancellation_requested ||
       !["claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp", "claude_code_cli_acp"].includes(run.harness_id)) {
     throw new ApiError("Tools require an active Claude run", 409);

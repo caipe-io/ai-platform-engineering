@@ -139,7 +139,7 @@ function DynamicAgentsPageContent() {
     conversations: "Review agent conversations and manage their checkpoint history.",
     "llm-models": "Register the provider and model identifiers available to agents.",
     "mcp-servers": "Configure MCP connections and authorize each tool call through AgentGateway.",
-    "remote-agents": "Register A2A agents manually, read Agent Cards, or discover agents from URLs and Kubernetes Services.",
+    "remote-agents": "Chat with configured ACP agents, or register and discover A2A agents for delegation.",
     "model-providers": "Save the provider credentials agents need to use each model.",
   }[activeTab] ?? activeNavigationItem.description ?? "";
   const agentHomeHref = hrefForTab("agents");

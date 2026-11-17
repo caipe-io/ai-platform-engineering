@@ -1,6 +1,7 @@
 export type HarnessRunStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
 
 export interface HarnessRun {
+  parent_run_id?: string | null;
   run_id: string;
   owner_subject?: string;
   agent_id: string;
