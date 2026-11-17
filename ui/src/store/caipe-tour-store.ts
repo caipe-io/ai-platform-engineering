@@ -1,13 +1,15 @@
 "use client";
 
 import { create } from "zustand";
-import { normalizeEnabledTours, ALL_PRODUCT_TOUR_IDS } from "@/lib/caipe-tour-policy";
+import { isCaipeTourEnabled, normalizeEnabledTours, ALL_PRODUCT_TOUR_IDS } from "@/lib/caipe-tour-policy";
 import type { ProductTourId } from "@/lib/product-tour-catalog";
 import type { ProductTourPayload } from "@/lib/product-tour";
 
 interface CaipeTourPreferences {
   loaded: boolean;
   enabled: boolean;
+  platformEnabled: boolean;
+  setPlatformEnabled: (enabled: boolean) => void;
   enabledTours: ProductTourId[];
   error: string | null;
   receive: (payload: ProductTourPayload) => void;
@@ -19,11 +21,13 @@ let requestVersion = 0;
 export const useCaipeTourStore = create<CaipeTourPreferences>((set, get) => ({
   loaded: false,
   enabled: true,
+  platformEnabled: true,
+  setPlatformEnabled: (platformEnabled) => { requestVersion++; set({ platformEnabled }); },
   enabledTours: [...ALL_PRODUCT_TOUR_IDS],
   error: null,
   receive: (payload) => {
     requestVersion++;
-    set({ loaded: true, enabled: payload.tours_enabled !== false, enabledTours: normalizeEnabledTours(payload.enabled_tours), error: null });
+    set({ loaded: true, enabled: payload.tours_enabled !== false, platformEnabled: isCaipeTourEnabled(payload.platform_enabled), enabledTours: normalizeEnabledTours(payload.enabled_tours), error: null });
   },
   refresh: async () => {
     const version = ++requestVersion;
@@ -38,6 +42,6 @@ export const useCaipeTourStore = create<CaipeTourPreferences>((set, get) => ({
   },
   reset: () => {
     requestVersion++;
-    set({ loaded: false, enabled: true, enabledTours: [...ALL_PRODUCT_TOUR_IDS], error: null });
+    set({ loaded: false, enabled: true, platformEnabled: true, enabledTours: [...ALL_PRODUCT_TOUR_IDS], error: null });
   },
 }));

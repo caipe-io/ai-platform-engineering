@@ -25,6 +25,7 @@ export interface ProductTourPayload {
   tour_id?: ProductTourId;
   enabled?: boolean;
   tours_enabled?: boolean;
+  platform_enabled?: boolean;
   enabled_tours?: ProductTourId[];
   auto_start: boolean;
   eligible: boolean;

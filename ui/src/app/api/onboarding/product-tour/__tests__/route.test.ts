@@ -200,6 +200,16 @@ describe("product tour route", () => {
     expect(userSettings.updateOne).not.toHaveBeenCalled();
   });
 
+  it.each(["start", "progress", "reset", "complete"])("blocks %s when the platform switch is off and keeps the allowlist", async (action) => {
+    platformConfig.findOne.mockResolvedValue({ caipe_tour: { enabled: false, enabled_tours: ["workspace", "chat"] } });
+    const { GET, PATCH } = await import("../route");
+    expect((await (await GET(request())).json()).data).toMatchObject({ enabled: false, platform_enabled: false, tours_enabled: true, enabled_tours: ["workspace", "chat"], auto_start: false });
+    await expect(PATCH(request({ method: "PATCH", body: JSON.stringify({ action }) }))).rejects.toMatchObject({ statusCode: 403, code: "TOUR_DISABLED" });
+    expect(userSettings.updateOne).not.toHaveBeenCalled();
+    const personal = await (await PATCH(request({ method: "PATCH", body: JSON.stringify({ action: "set_enabled", enabled: true }) }))).json();
+    expect(personal.data).toMatchObject({ enabled: false, platform_enabled: false, tours_enabled: true });
+  });
+
   it("persists only the caller's opt-out and preserves tour progress", async () => {
     const { PATCH } = await import("../route");
     const body = await (await PATCH(request({ method: "PATCH", body: JSON.stringify({ action: "set_enabled", enabled: false }) }))).json();

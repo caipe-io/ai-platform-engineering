@@ -1,4 +1,4 @@
-import { normalizeEnabledTours } from "@/lib/caipe-tour-policy";
+import { isCaipeTourEnabled, normalizeEnabledTours } from "@/lib/caipe-tour-policy";
 import {
   ApiError,
   successResponse,
@@ -28,7 +28,7 @@ import { NextRequest } from "next/server";
 interface PlatformConfigDocument extends Document {
   _id: string;
   setup_wizard?: unknown;
-  caipe_tour?: { enabled_tours?: unknown };
+  caipe_tour?: { enabled?: unknown; enabled_tours?: unknown };
 }
 
 interface ProductTourPatchBody {
@@ -85,12 +85,14 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     ]);
     const eligible = id !== "workspace" || normalizeSetupWizardState(platform?.setup_wizard).status === "completed";
     const state = savedState(settings, id);
+    const platformEnabled = isCaipeTourEnabled(platform?.caipe_tour?.enabled);
     const enabledTours = normalizeEnabledTours(platform?.caipe_tour?.enabled_tours);
     const toursEnabled = settings.preferences?.caipe_tour_enabled !== false;
-    const enabled = toursEnabled && enabledTours.includes(id);
+    const enabled = platformEnabled && toursEnabled && enabledTours.includes(id);
     return successResponse({
       tour_id: id,
       enabled,
+      platform_enabled: platformEnabled,
       tours_enabled: toursEnabled,
       enabled_tours: enabledTours,
       auto_start: enabled && id === "workspace" && getServerConfig().setupWizardEnabled && eligible && (state.status === "not_started" || state.status === "in_progress"),
@@ -116,13 +118,14 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       platformConfig.findOne({ _id: SETUP_WIZARD_CONFIG_ID }),
       getOrCreateUserSettings(user.email),
     ]);
+    const platformEnabled = isCaipeTourEnabled(platform?.caipe_tour?.enabled);
     const enabledTours = normalizeEnabledTours(platform?.caipe_tour?.enabled_tours);
     const settings = await getCollection<UserSettings>("user_settings");
     if (action === "set_enabled") {
       await settings.updateOne({ user_id: user.email }, { $set: { "preferences.caipe_tour_enabled": body.enabled, updated_at: new Date() } });
-      return successResponse({ tour_id: id, enabled: body.enabled && enabledTours.includes(id), tours_enabled: body.enabled, enabled_tours: enabledTours, auto_start: false, eligible: true, state: savedState(existing, id) });
+      return successResponse({ tour_id: id, enabled: platformEnabled && body.enabled && enabledTours.includes(id), platform_enabled: platformEnabled, tours_enabled: body.enabled, enabled_tours: enabledTours, auto_start: false, eligible: true, state: savedState(existing, id) });
     }
-    if (existing.preferences?.caipe_tour_enabled === false || !enabledTours.includes(id)) {
+    if (!platformEnabled || existing.preferences?.caipe_tour_enabled === false || !enabledTours.includes(id)) {
       throw new ApiError("This CAIPE Tour is disabled", 403, "TOUR_DISABLED");
     }
     const previous = savedState(existing, id);
@@ -165,6 +168,6 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       },
     );
 
-    return successResponse({ tour_id: id, state: next, enabled: true, tours_enabled: true, enabled_tours: enabledTours });
+    return successResponse({ tour_id: id, state: next, enabled: true, platform_enabled: true, tours_enabled: true, enabled_tours: enabledTours });
   });
 });

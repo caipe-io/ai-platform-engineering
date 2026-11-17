@@ -43,6 +43,38 @@ SDK negotiates JSON-RPC or HTTP+JSON from the Agent Card.
 
 :::
 
+## Unified agent catalog
+
+Open **Agents** for CAIPE-created assistants and connected A2A specialists.
+Configured ACP agents appear once, as their existing CAIPE configuration.
+Use **Grid** for compact cards with a soft gradient header or **List** for
+management rows. The browser remembers the view separately for each signed-in
+account. Source and runtime/connection filters apply before shared pagination.
+Existing `?tab=remote-agents` links open the unified catalog.
+
+The avatar retains the agent's saved gradient, with a stable per-agent fallback.
+Its small badge identifies the known harness first: Claude Agent SDK / Claude
+Code use Claude, Deep Agents uses Deep Agents, and AgentCore uses AgentCore.
+The model provider does not select this badge. An unknown remote harness uses
+the A2A icon; A2A/ACP connection labels remain separate. App-owned assistants
+retain their app identity. Chat headers, chat lists, cards and the subagent picker
+reuse the same badge resolver.
+
+For registered A2A services, admins can set optional **Framework** display
+metadata (Claude Code, Claude Agent SDK, Google ADK, Deep Agents, or AgentCore).
+That label never changes execution, credentials, or tool permissions.
+**Connect agent**, discovery, registration, and editing reuse the registry dialogs.
+
+- **A2A:** registry managers can run **Test connection** with the saved authentication.
+  The result shows latency, advertised capabilities, skills, and the full Agent Card.
+  This reads metadata; it does not execute an agent task. Results are local to the
+  current page and reset on refresh.
+- **CAIPE-created, including ACP:** **Chat** opens a new conversation using the existing agent and operator
+  profile. Agents with known readiness problems stay disabled and explain what needs
+  attention. Configuration readiness does not guarantee provider availability.
+- Select registered specialists in **Agent Builder → Advanced → Subagents** to delegate
+  work. Catalog browsing and testing do not change agent permissions or registrations.
+
 ## Watch the demo
 
 <a href="https://app.vidcast.io/share/70f22189-0a44-42d3-b601-b5730504a8e3">
@@ -114,7 +146,7 @@ Agent Builder guides you through six steps:
 | **Tools** | Registered MCP tools and CAIPE built-in tools |
 | **Knowledge** | Individual data sources and reusable collections |
 | **Skills** | Reusable instructions and packaged capabilities |
-| **Advanced** | Subagents, remote A2A agents, human approval rules, middleware, and workflow access |
+| **Advanced** | Subagents (CAIPE, configured ACP, and registered A2A agents), human approval rules, middleware, and workflow access |
 
 After you save an agent, you can test it in chat without redeploying the runtime.
 You can also clone it, enable or disable it, and export it as YAML.
@@ -132,6 +164,49 @@ You can also clone it, enable or disable it, and export it as YAML.
 
 Start with the smallest useful capability set. You can add tools, knowledge,
 and skills later without rebuilding the agent.
+
+## Remote agents and subagents
+
+- **Agents** lists discoverable CAIPE agents and registered A2A entries in one
+  catalog. Disabled CAIPE agents remain manageable, with Chat disabled. A registry
+  outage shows an explicit warning while authorized CAIPE results stay usable.
+- ACP entries refer to existing CAIPE agents. **Chat** starts their normal
+  conversation; **Open agent** opens their saved configuration with the usual
+  permission checks. Operator profiles, native sessions, and credentials stay in
+  their existing configuration. They are not copied into the A2A registry.
+- A2A Agent Card discovery and registration remain specific to A2A endpoints.
+  Arbitrary ACP endpoints and full ACP conformance are not implied by this view.
+- **Advanced → Subagents** provides one picker for local Deep Agents, configured
+  Harness children (including ACP), and registered A2A agents. Removing a selection
+  removes the parent's reference, not the remote agent or its credentials.
+- Claude SDK and ACP entries with a selected MCP server that is disabled or
+  missing show **Needs attention**. Chat and new subagent selections are disabled;
+  saved references remain visible. The owner can open the agent and repair its
+  tool configuration without granting new access.
+- Before a new Claude run, Gateway checks the conversation's pinned tool set
+  against current server availability and agent grants. A rejected admission
+  reports **Agent configuration needs attention**, links to agent settings, and
+  offers no blind retry. The error classification survives a chat reload.
+  Retry is hidden on both the rejected response and its user-message bubbles;
+  other turns retain their normal actions.
+  Existing request replay and recovery controls remain available. This checks
+  configuration metadata and initializes permitted MCP catalogs through the
+  existing caller/agent gateway path. It never invokes tools. Credential and
+  permission denials retain the existing unavailable-tool behavior. Execution-time
+  authorization checks remain authoritative.
+  Session-based MCP catalog reads send the initialized notification before
+  listing tools and follow pagination within the shared readiness deadline.
+  Repeated cursors or catalogs exceeding 100 pages fail instead of producing a
+  partial catalog. Empty successful notification responses are accepted even
+  when labeled JSON. Failures log only agent/server IDs and a bounded diagnostic
+  category, excluding credentials and private upstream details.
+- Each picker catalog becomes usable independently. Requests and response-body
+  reads time out after ten seconds; refresh cancels pending reads and retries
+  without dropping saved references. Only CAIPE choices exclude the parent ID;
+  an A2A entry with the same ID remains a distinct agent.
+- Harness children require the Engine delegation capability. Older backends keep
+  those choices disabled. ACP chat uses the configured worker directly; A2A
+  delegation currently runs through a Deep Agents supervisor.
 
 ## Knowledge and tool scope
 

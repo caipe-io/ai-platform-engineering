@@ -128,7 +128,7 @@ class RemoteAgentCredentialSource(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    kind: Literal["caller_token", "secret_ref", "provider_connection"] = "caller_token"
+    kind: Literal["none", "caller_token", "secret_ref", "provider_connection"] = "caller_token"
     target: Literal["header"] = "header"
     name: str = Field(default="Authorization", min_length=1, max_length=256, pattern=r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
     secret_ref: str | None = None
@@ -279,6 +279,7 @@ class SubAgentRef(BaseModel):
     """
 
     agent_id: str = Field(..., description="MongoDB ObjectId of the subagent")
+    timeout_seconds: int = Field(120, ge=1, le=600, description="Deadline for a Harness-owned child run")
     name: str = Field(..., description="Routing identifier (e.g., 'code-reviewer')")
     description: str = Field(
         ...,
@@ -529,6 +530,11 @@ class FeaturesConfig(BaseModel):
     same type where the registry allows it.
     """
 
+    remote_agents_as_subagents: bool = Field(
+        False, strict=True, exclude_if=lambda value: not value,
+        description="Opt in to native Deep Agents task delegation for selected A2A agents"
+    )
+
     middleware: list[MiddlewareEntry] = Field(
         default_factory=list,
         description="Ordered list of middleware entries",
@@ -696,6 +702,7 @@ class DynamicAgentConfig(DynamicAgentConfigBase):
     """Full dynamic agent config as stored in MongoDB."""
 
     id: str = Field(..., alias="_id", description="Unique ID")
+    execution_harness_id: str | None = Field(None, description="Published execution runtime; absent means Deep Agents")
     owner_id: str = Field(..., description="Creator's email")
     is_system: bool = Field(False, description="System-provided agent (non-deletable)")
     config_driven: bool = Field(False, description="Whether this agent was loaded from config.yaml")

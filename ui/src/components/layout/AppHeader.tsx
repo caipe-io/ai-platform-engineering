@@ -286,7 +286,7 @@ export function AppHeader() {
 
       {/* Status & Actions */}
       <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5">
-        {tourPolicy.loaded && tourPolicy.enabled && tourPolicy.enabledTours.length > 0 && <Popover open={tourMenuOpen} onOpenChange={setTourMenuOpen}>
+        {tourPolicy.loaded && tourPolicy.platformEnabled && tourPolicy.enabled && tourPolicy.enabledTours.length > 0 && <Popover open={tourMenuOpen} onOpenChange={setTourMenuOpen}>
           <PopoverTrigger asChild>
             <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" aria-label="CAIPE Tour">
               <Compass className="h-4 w-4" />

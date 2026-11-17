@@ -271,10 +271,10 @@ describe("ProductTourGate", () => {
     expect(screen.getByRole("heading", { name: "Choose who you want to work with" })).toBeInTheDocument();
   });
 
-  it("closes an active tour when the personal switch is turned off", async () => {
+  it.each(["personal", "platform"] as const)("closes an active tour when the %s switch is turned off", async (scope) => {
     render(<ProductTourGate />);
     await screen.findByRole("heading", { name: "Your workspace is ready" });
-    act(() => useCaipeTourStore.getState().receive({ ...tourPayload().data, tours_enabled: false }));
+    act(() => useCaipeTourStore.getState().receive({ ...tourPayload().data, ...(scope === "platform" ? { platform_enabled: false } : { tours_enabled: false }) }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     act(() => requestProductTour(true));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

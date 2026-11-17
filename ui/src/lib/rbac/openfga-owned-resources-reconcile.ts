@@ -84,7 +84,7 @@ async function reconcileOwnedResource(
 
 /**
  * `team:<slug>` member usersets that opted into the all-MCP-servers wildcard,
- * read from the `tool:*` sentinel (the single source of truth now that the
+ * read from the `tool:__all_mcp_servers_intent__` sentinel (the single source of truth now that the
  * `team.resources.tool_wildcard` flag is gone). Returns slugs only.
  */
 async function listToolWildcardTeamSlugs(): Promise<string[]> {

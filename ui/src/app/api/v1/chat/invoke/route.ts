@@ -427,6 +427,21 @@ async function handleScheduledInvoke(
     isServiceAccount: false,
     traceparent: traceContext.traceparent,
     userContextHeader: ownerUserContextHeader(scheduledRun.email),
+    // The scheduler secret authenticates only the trigger. Downstream MCP checks
+    // use the DB-resolved owner and its freshly exchanged token, never the caller.
+    authenticatedUser: {
+      user: { email: scheduledRun.email, name: scheduledRun.email, role: "user" },
+      session: {
+        sub: scheduledRun.sub,
+        user: { email: scheduledRun.email, name: scheduledRun.email },
+        accessToken: ownerToken,
+        role: "user",
+        org: "default",
+        principalType: "oidc_user",
+        authMethod: "bearer",
+        isServiceAccount: false,
+      },
+    },
   };
 
   // Enforce agent#use as the owner — the same gate as an interactive run, so a

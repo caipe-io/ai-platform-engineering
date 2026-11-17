@@ -11,3 +11,8 @@ export function normalizeEnabledTours(value: unknown, strict = false): ProductTo
   }
   return ALL_PRODUCT_TOUR_IDS.filter((id) => value.includes(id));
 }
+
+/** An absent runtime switch keeps existing installations enabled. */
+export function isCaipeTourEnabled(value: unknown): boolean {
+  return value === undefined || value === true;
+}

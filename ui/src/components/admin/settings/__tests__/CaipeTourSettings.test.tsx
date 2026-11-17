@@ -3,14 +3,20 @@ import { CaipeTourSettings } from "../CaipeTourSettings";
 import { useCaipeTourStore } from "@/store/caipe-tour-store";
 
 function installMock(fail = false) {
-  global.fetch = jest.fn(async (url, init) => ({
-    ok: !(fail && init?.method === "PATCH"),
-    json: async () => init?.method === "PATCH"
-      ? fail ? { error: "Save unavailable" } : { success: true, data: { caipe_tour: JSON.parse(String(init.body)).caipe_tour } }
-      : String(url).includes("platform-config")
-        ? { success: true, data: { caipe_tour: { enabled_tours: ["workspace", "chat"] } } }
-        : { success: true, data: { state: {}, enabled_tours: ["chat"], tours_enabled: true } },
-  })) as jest.Mock;
+  let platformEnabled = true;
+  global.fetch = jest.fn(async (url, init) => {
+    const patch = init?.method === "PATCH";
+    const policy = patch ? JSON.parse(String(init.body)).caipe_tour : null;
+    if (patch && !fail && typeof policy.enabled === "boolean") platformEnabled = policy.enabled;
+    return {
+      ok: !(fail && patch),
+      json: async () => patch
+        ? fail ? { error: "Save unavailable" } : { success: true, data: { caipe_tour: policy } }
+        : String(url).includes("platform-config")
+          ? { success: true, data: { caipe_tour: { enabled: platformEnabled, enabled_tours: ["workspace", "chat"] } } }
+          : { success: true, data: { state: {}, platform_enabled: platformEnabled, enabled_tours: ["chat"], tours_enabled: true } },
+    };
+  }) as jest.Mock;
 }
 beforeEach(() => { useCaipeTourStore.getState().reset(); installMock(); });
 
@@ -50,6 +56,7 @@ it("does not allow changes in View as", async () => {
   render(<CaipeTourSettings readOnly />);
   await waitFor(() => expect(screen.queryByText(/Loading CAIPE Tour policy/)).not.toBeInTheDocument());
   for (const checkbox of screen.getAllByRole("checkbox")) expect(checkbox).toBeDisabled();
+  expect(screen.getByRole("switch", { name: "Enable CAIPE Tour" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Save tours" })).toBeDisabled();
 });
 
@@ -61,4 +68,33 @@ it("keeps edits available to retry after a failed save", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("Save unavailable");
   expect(screen.getByRole("button", { name: "Save tours" })).toBeEnabled();
   expect(screen.queryByText("CAIPE Tour availability saved.")).not.toBeInTheDocument();
+});
+
+it("switches off immediately without saving or clearing draft tour selections", async () => {
+  render(<CaipeTourSettings />);
+  const control = screen.getByRole("switch", { name: "Enable CAIPE Tour" });
+  await waitFor(() => expect(control).toBeEnabled());
+  const workspace = screen.getByRole("checkbox", { name: /Workspace tour/ });
+  fireEvent.click(workspace);
+  fireEvent.click(control);
+  await screen.findByText("CAIPE Tour is off. Your tour selections are kept.");
+  expect(control).toHaveAttribute("aria-checked", "false");
+  expect(workspace).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: /Chat with an agent/ })).toBeChecked();
+  expect(screen.getByRole("button", { name: "Save tours" })).toBeEnabled();
+  expect(global.fetch).toHaveBeenCalledWith("/api/admin/platform-config", expect.objectContaining({ body: JSON.stringify({ caipe_tour: { enabled: false } }) }));
+  expect(useCaipeTourStore.getState().platformEnabled).toBe(false);
+  fireEvent.click(control);
+  await screen.findByText("CAIPE Tour is on.");
+  expect(control).toHaveAttribute("aria-checked", "true");
+  expect(workspace).not.toBeChecked();
+});
+
+it("retains the switch state if the runtime update fails", async () => {
+  installMock(true); render(<CaipeTourSettings />);
+  const control = screen.getByRole("switch", { name: "Enable CAIPE Tour" });
+  await waitFor(() => expect(control).toBeEnabled());
+  fireEvent.click(control);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Save unavailable");
+  expect(control).toHaveAttribute("aria-checked", "true");
 });

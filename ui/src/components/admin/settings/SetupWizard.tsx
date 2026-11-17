@@ -1458,7 +1458,7 @@ export function SetupWizardSettings({ readOnly = false }: { readOnly?: boolean }
                     {payload.state.status === "not_started" ? "Start setup" : payload.state.status === "completed" ? "Run setup again" : "Resume setup"}
                     <ChevronRight className="ml-2 h-4 w-4" />
                   </Button>
-                  {tourPolicy.loaded && tourPolicy.enabled && tourPolicy.enabledTours.includes("workspace") && <Button variant="ghost" onClick={() => requestProductTour(true)}><Compass className="mr-2 h-4 w-4" />Take CAIPE Tour</Button>}
+                  {tourPolicy.loaded && tourPolicy.platformEnabled && tourPolicy.enabled && tourPolicy.enabledTours.includes("workspace") && <Button variant="ghost" onClick={() => requestProductTour(true)}><Compass className="mr-2 h-4 w-4" />Take CAIPE Tour</Button>}
                 </div>
                 <p className="flex items-center gap-2 text-xs text-muted-foreground"><span className="h-1.5 w-1.5 rounded-full bg-primary" />{setupStatusLabel(payload.state.status)} · Your progress is saved. Leave whenever you like.</p>
               </div>
