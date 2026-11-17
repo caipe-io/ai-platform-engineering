@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { SettingsCard } from "@/components/settings/shared/SettingsCard";
 import {
   PRODUCT_TOUR_REQUEST_EVENT,
+  PRODUCT_TOUR_AGENT_CREATED_EVENT,
   requestProductTour,
   type ProductTourPayload,
   type ProductTourState,
@@ -43,7 +44,11 @@ function errorMessage(payload: unknown, fallback: string): string {
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: "no-store", ...init });
   const payload = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(errorMessage(payload, `Request failed (${response.status})`));
+  if (!response.ok || payload?.success !== true || !payload.data?.state) {
+    throw new Error(errorMessage(payload, response.ok
+      ? "Tour progress is unavailable"
+      : `Request failed (${response.status})`));
+  }
   return payload as T;
 }
 
@@ -80,12 +85,18 @@ export function ProductTourDialog({
   const [starting, setStarting] = useState(open && initialPayload?.state.status === "not_started");
   const [error, setError] = useState<string | null>(null);
   const startRequest = useRef<Promise<void>>(Promise.resolve());
+  const progressRequest = useRef<Promise<unknown>>(Promise.resolve());
+  const progressVersion = useRef(0);
+  const observedAgentStep = useRef<string | null | undefined>(undefined);
+  const agentCreated = useRef(false);
 
   useEffect(() => {
     if (!open) return;
     setMinimized(false);
     setError(null);
     setStep(initialPayload?.state.current_step ?? 1);
+    observedAgentStep.current = undefined;
+    agentCreated.current = false;
     if (initialPayload?.state.status === "not_started") {
       setStarting(true);
       startRequest.current = patchTour("start", initialPayload.state.current_step, tourId)
@@ -99,25 +110,57 @@ export function ProductTourDialog({
     }
   }, [initialPayload, open, tourId]);
 
-  const move = async (nextStep: number) => {
+  const move = useCallback(async (nextStep: number) => {
+    const version = ++progressVersion.current;
     setSaving(true);
     setError(null);
     try {
       await startRequest.current;
-      await patchTour("progress", nextStep, tourId);
-      setStep(nextStep);
+      const request = progressRequest.current.catch(() => undefined)
+        .then(() => patchTour("progress", nextStep, tourId));
+      progressRequest.current = request;
+      await request;
+      if (progressVersion.current === version) setStep(nextStep);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not save tour progress");
+      if (progressVersion.current === version) setError(reason instanceof Error ? reason.message : "Could not save tour progress");
     } finally {
-      setSaving(false);
+      if (progressVersion.current === version) setSaving(false);
     }
-  };
+  }, [tourId]);
+
+  useEffect(() => {
+    if (!open || tourId !== "add-agent") return;
+    const update = () => {
+      if (agentCreated.current) return;
+      const builderStep = document.querySelector("[data-tour-agent-step]")?.getAttribute("data-tour-agent-step") ?? null;
+      if (observedAgentStep.current === builderStep) return;
+      observedAgentStep.current = builderStep;
+      const next = builderStep === "basic" ? 2 : builderStep === "instructions" ? 3 : builderStep ? 4 : 1;
+      // Guidance follows the real form without clicking or bypassing its controls.
+      setStep(next);
+      void move(next);
+    };
+    const created = () => {
+      agentCreated.current = true;
+      setStep(5);
+      void move(5);
+    };
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-tour-agent-step"] });
+    window.addEventListener(PRODUCT_TOUR_AGENT_CREATED_EVENT, created);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener(PRODUCT_TOUR_AGENT_CREATED_EVENT, created);
+    };
+  }, [move, open, tourId]);
 
   const dismiss = async () => {
     setSaving(true);
     setError(null);
     try {
       await startRequest.current;
+      await progressRequest.current.catch(() => undefined);
       await patchTour("dismiss", step, tourId);
     } catch {
       setError("Tour closed, but dismissal could not be saved. It may appear again next time.");
@@ -132,6 +175,7 @@ export function ProductTourDialog({
     setError(null);
     try {
       await startRequest.current;
+      await progressRequest.current;
       await patchTour("complete", steps.length, tourId);
       onOpenChange(false);
     } catch (reason) {
@@ -145,8 +189,11 @@ export function ProductTourDialog({
   const Icon = TOUR_ICONS[active.icon];
 
   useEffect(() => {
+    if (open && !minimized) panelRef.current?.focus({ preventScroll: true });
+  }, [open, minimized]);
+
+  useEffect(() => {
     if (!open || minimized) return;
-    panelRef.current?.focus({ preventScroll: true });
     const update = () => {
       const element = document.querySelector(active.target);
       const rect = element?.getBoundingClientRect();
@@ -170,7 +217,7 @@ export function ProductTourDialog({
   }, [active.target, minimized, open, pathname]);
 
   if (!open) return error ? <p role="status" className="fixed bottom-4 left-4 z-[80] max-w-sm rounded-xl border bg-card p-4 text-sm shadow-lg">{error}</p> : <></>;
-  if (minimized) return <Button className="fixed bottom-20 right-4 z-[80] rounded-full shadow-lg" onClick={() => setMinimized(false)}><Compass className="mr-2 h-4 w-4" />{tour.title} · Resume tour · {step} of {steps.length}</Button>;
+  if (minimized) return <div className="flex shrink-0 justify-end border-t p-2 xl:w-14 xl:border-l xl:border-t-0"><Button variant="outline" className="rounded-full xl:h-10 xl:w-10 xl:p-0" aria-label={`${tour.title} · Resume tour · ${step} of ${steps.length}`} onClick={() => setMinimized(false)}><Compass className="h-4 w-4" /><span className="ml-2 xl:sr-only">{tour.title} · Resume tour · {step} of {steps.length}</span></Button></div>;
 
   return (
     <>
@@ -183,7 +230,7 @@ export function ProductTourDialog({
         aria-describedby="product-tour-description"
         tabIndex={-1}
         onKeyDown={(event) => { if (event.key === "Escape" && !saving && !starting) { event.stopPropagation(); void dismiss(); } }}
-        className="fixed bottom-4 right-4 z-[80] w-[min(400px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-primary/20 bg-card/95 shadow-2xl shadow-black/20 outline-none backdrop-blur-xl sm:bottom-6 sm:right-6"
+        className="relative z-[70] flex max-h-[45dvh] w-full shrink-0 flex-col overflow-hidden border-t border-primary/20 bg-card outline-none xl:max-h-none xl:w-[22rem] xl:border-l xl:border-t-0"
       >
         <div className="flex items-center gap-3 border-b px-5 py-4">
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary"><Icon className="h-4 w-4" /></span>
@@ -191,7 +238,7 @@ export function ProductTourDialog({
           <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Minimize tour" onClick={() => setMinimized(true)}><Minus className="h-3.5 w-3.5" /></Button>
           <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Close tour" disabled={saving || starting} onClick={() => void dismiss()}><X className="h-3.5 w-3.5" /></Button>
         </div>
-        <div className="max-h-[calc(100dvh-15rem)] overflow-y-auto px-5 py-5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
           <h2 id="product-tour-title" className="text-xl font-semibold tracking-tight">{active.title}</h2>
           <p id="product-tour-description" className="mt-3 text-sm leading-6 text-muted-foreground">{active.description}</p>
           <ul className="mt-4 space-y-2.5">
@@ -199,6 +246,7 @@ export function ProductTourDialog({
           </ul>
           {active.expected && <p className="mt-4 rounded-lg bg-primary/5 px-3 py-2 text-xs leading-5"><span className="font-medium text-primary">Look for: </span>{active.expected}</p>}
           {active.href && <GuardedNavigationLink href={active.href} className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">{active.action}<ArrowUpRight className="h-3.5 w-3.5" /></GuardedNavigationLink>}
+          {tourId === "add-agent" && step < 5 && <p role="status" className="mt-4 text-xs text-muted-foreground">Use the agent form’s Next, Previous, and Create Agent buttons. This guide follows the form automatically.</p>}
           {error && <p role="alert" className="mt-3 text-xs text-destructive">{error}</p>}
         </div>
         <div className="border-t px-5 py-4">
@@ -208,9 +256,9 @@ export function ProductTourDialog({
           <div className="flex items-center justify-between gap-2">
             <Button type="button" size="sm" variant="ghost" onClick={() => void dismiss()} disabled={saving || starting}>Skip tour</Button>
             <div className="flex gap-2">
-              {step > 1 && <Button type="button" size="sm" variant="outline" onClick={() => void move(step - 1)} disabled={saving || starting}><ChevronLeft className="mr-1 h-3.5 w-3.5" />Back</Button>}
+              {step > 1 && tourId !== "add-agent" && <Button type="button" size="sm" variant="outline" onClick={() => void move(step - 1)} disabled={saving || starting}><ChevronLeft className="mr-1 h-3.5 w-3.5" />Back</Button>}
               {step < steps.length
-                ? <Button type="button" size="sm" onClick={() => void move(step + 1)} disabled={saving || starting}>{saving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}Next<ChevronRight className="ml-1 h-3.5 w-3.5" /></Button>
+                ? tourId !== "add-agent" && <Button type="button" size="sm" onClick={() => void move(step + 1)} disabled={saving || starting}>{saving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}Next<ChevronRight className="ml-1 h-3.5 w-3.5" /></Button>
                 : <Button type="button" size="sm" onClick={() => void complete()} disabled={saving || starting}>{saving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}Finish tour</Button>}
             </div>
           </div>

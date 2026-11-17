@@ -291,12 +291,12 @@ export const PRODUCT_TOURS: Record<ProductTourId, ProductTourDefinition> = {
         expected: "The prompt describes the agent’s purpose and limits.",
       },
       {
-        eyebrow: "Tools",
+        eyebrow: "Tools & context",
         icon: "server",
-        title: "Select only the tools it needs",
-        target: '[data-tour="agent-tools"]',
+        title: "Review tools and optional context",
+        target: '[data-tour-agent-step] h3',
         description:
-          "Under MCP Tool Access, select the servers needed for the job, then choose Create Agent.",
+          "Select the tools needed for the job. Knowledge, Skills, and Advanced settings are optional. Review the configuration, then choose Create Agent.",
         points: [
           "A model-only agent can start without extra tools.",
           "Review the configuration before saving.",

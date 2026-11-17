@@ -283,7 +283,7 @@ export function AppHeader() {
       </div>
 
       {/* Status & Actions */}
-      <div className="ml-auto flex shrink-0 items-center gap-1.5">
+      <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5 sm:shrink-0 sm:flex-nowrap">
         <Popover open={tourMenuOpen} onOpenChange={setTourMenuOpen}>
           <PopoverTrigger asChild>
             <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" aria-label="Tour">

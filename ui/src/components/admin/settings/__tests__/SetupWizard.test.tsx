@@ -267,6 +267,69 @@ describe("SetupWizardSettings", () => {
     if (failure === "conflict") expect((global.fetch as jest.Mock).mock.calls.some(([url]) => url === "/api/v1/chat/invoke")).toBe(false);
   });
 
+  it("creates a separate starter on a name conflict and tests only the returned ID", async () => {
+    const originalFetch = global.fetch;
+    let creates = 0;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/dynamic-agents") {
+        creates++;
+        return creates === 1 ? response({ error: "Already exists" }, 409)
+          : response({ success: true, data: { _id: "new-starter-id" } }, 201);
+      }
+      if (url === "/api/chat/conversations") return response({ success: true, data: { conversation: { _id: "example-chat" } } });
+      if (url === "/api/v1/chat/invoke") return response({ success: true, content: "Ready" });
+      return originalFetch(input, init);
+    }) as jest.Mock;
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+    await screen.findByRole("heading", { name: "Try your agent" });
+    fireEvent.click(screen.getByRole("button", { name: /create agent and run test/i }));
+    await screen.findByText("Your starter agent is working");
+    const calls = (global.fetch as jest.Mock).mock.calls;
+    const posts = calls.filter(([url]) => url === "/api/dynamic-agents");
+    expect(posts).toHaveLength(2);
+    const first = JSON.parse(posts[0][1].body);
+    const second = JSON.parse(posts[1][1].body);
+    expect(second.name).toMatch(new RegExp(`^${first.name} \(.*\)$`));
+    expect({ ...second, name: first.name }).toEqual(first);
+    expect(posts.every(([, init]) => init.method === "POST")).toBe(true);
+    const invoke = calls.find(([url]) => url === "/api/v1/chat/invoke");
+    expect(JSON.parse(invoke![1].body).agent_id).toBe("new-starter-id");
+  });
+
+  it("retries the smoke test using only this dialog's newly created, unchanged agent", async () => {
+    const originalFetch = global.fetch;
+    let invokes = 0;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/dynamic-agents") return response({ success: true, data: { _id: "fresh-agent" } }, 201);
+      if (url === "/api/chat/conversations") return response({ success: true, data: { conversation: { _id: "example-chat" } } });
+      if (url === "/api/v1/chat/invoke") return ++invokes === 1
+        ? response({ error: "Temporary failure" }, 503) : response({ success: true, content: "Ready" });
+      return originalFetch(input, init);
+    }) as jest.Mock;
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+    await screen.findByRole("heading", { name: "Try your agent" });
+    fireEvent.click(screen.getByRole("button", { name: /create agent and run test/i }));
+    await screen.findByRole("alert");
+    await waitFor(() => expect(screen.getByRole("button", { name: /create agent and run test/i })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /create agent and run test/i }));
+    await screen.findByText("Your starter agent is working");
+    expect((global.fetch as jest.Mock).mock.calls.filter(([url]) => url === "/api/dynamic-agents")).toHaveLength(1);
+    expect(invokes).toBe(2);
+  });
+
+  it("requires a confirmed created ID instead of falling back to an existing starter", async () => {
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => String(input) === "/api/dynamic-agents"
+      ? response({ success: true, data: {} }, 201) : originalFetch(input, init)) as jest.Mock;
+    render(<SetupWizardDialog open onOpenChange={jest.fn()} />);
+    await screen.findByRole("heading", { name: "Try your agent" });
+    fireEvent.click(screen.getByRole("button", { name: /create agent and run test/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("not confirmed");
+    expect((global.fetch as jest.Mock).mock.calls.some(([url]) => url === "/api/v1/chat/invoke")).toBe(false);
+  });
+
   it("loads the selected model even when the optional MCP catalog fails", async () => {
     const originalFetch = global.fetch;
     global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {

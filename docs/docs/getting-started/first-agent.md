@@ -41,6 +41,8 @@ connected accounts, and automation can be added later.
 5. **Try your agent:** review the selection and run the test. Success means the
    agent returned a response. If it fails, check provider access and platform
    health, then retry. **Test later** saves your place without claiming success.
+   If a starter with that name already exists, setup creates a separately named
+   starter from your current choices and keeps the existing agent unchanged.
 
 ## Provider credentials
 
@@ -125,7 +127,9 @@ Manual setup in Admin and tour replay in Settings remain available.
 
 Choose **Tour → Workspace tour** in the top-right application header, or
 **Take a tour** on the Setup Wizard page.
-The guide highlights the navigation while you keep using the workspace. Use
+The guide docks beside the workspace on wide screens and below it on smaller
+screens, leaving the workspace controls available. It highlights navigation while
+you keep using the workspace. Use
 **Next** and **Back** to explore Home, Chat, Skills, and personal settings; links
 open the related workspace using the usual unsaved-change protection.
 
@@ -146,7 +150,9 @@ The top-right **Tour** menu includes short guides for:
 
 Each task tour saves its own progress to your account and starts only when requested.
 Choosing an unfinished task resumes it; choosing a completed or skipped task starts
-it again. Use **Next** after performing each action. **Finish tour** records guide
+it again. The agent guide follows the builder automatically: use the form’s
+**Next**, **Previous**, and **Create Agent** buttons. Other tours use the guide’s
+**Next** after each action. **Finish tour** records guide
 completion; it does not verify or create the resource. Model, MCP, and agent guides
 appear when the agent workspace is enabled and your account has access. Connected
 credentials guidance appears when account connections and persistent storage are enabled.

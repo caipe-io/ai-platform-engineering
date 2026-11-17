@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { requestProductTour } from "@/lib/product-tour";
+import { PRODUCT_TOUR_AGENT_CREATED_EVENT, requestProductTour } from "@/lib/product-tour";
 import { ProductTourDialog, ProductTourGate } from "../ProductTour";
 
 const mockGetConfig = jest.fn();
@@ -74,6 +74,16 @@ describe("ProductTourGate", () => {
     mockGetConfig.mockReturnValue(false);
     render(<ProductTourGate />);
     expect(global.fetch).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it.each([null, { success: true, data: {} }, { success: false, data: null }])("keeps the workspace usable for an incomplete tour response: %p", async (payload) => {
+    global.fetch = jest.fn(() => response(payload));
+    render(<ProductTourGate />);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    act(() => requestProductTour());
+    expect(await screen.findByRole("alert")).toHaveTextContent("Tour progress is unavailable");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
@@ -188,7 +198,6 @@ describe("ProductTourGate", () => {
   it.each([
     ["add-model", "Save provider details"],
     ["add-mcp", "Start a server connection"],
-    ["add-agent", "Create an agent for one purpose"],
     ["chat", "Choose who you want to work with"],
     ["credentials", "Connect an account for your tools"],
   ] as const)("opens the %s tour independently of automatic onboarding", async (id, heading) => {
@@ -206,6 +215,56 @@ describe("ProductTourGate", () => {
     await waitFor(() => expect(global.fetch).toHaveBeenCalledWith("/api/onboarding/product-tour", expect.objectContaining({
       body: JSON.stringify({ action: "progress", tour_id: id, current_step: 2 }),
     })));
+  });
+
+  it("returns a resumed agent guide to the start when its unsaved form is gone", async () => {
+    render(<ProductTourDialog open initialPayload={{ ...tourPayload("in_progress", false).data, tour_id: "add-agent", state: { ...tourPayload().data.state, status: "in_progress", current_step: 3 } }} onOpenChange={jest.fn()} />);
+    expect(await screen.findByRole("heading", { name: "Create an agent for one purpose" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Next" })).not.toBeInTheDocument();
+  });
+
+  it("follows the real agent form in both directions without a second Next button", async () => {
+    const initial = { ...tourPayload("in_progress", false).data, tour_id: "add-agent" as const };
+    const form = document.createElement("div");
+    form.setAttribute("data-tour-agent-step", "basic");
+    document.body.append(form);
+    try {
+      render(<ProductTourDialog open initialPayload={initial} onOpenChange={jest.fn()} />);
+      expect(await screen.findByRole("heading", { name: "Choose its model and audience" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Next" })).not.toBeInTheDocument();
+      expect(screen.getByRole("dialog")).not.toHaveClass("fixed");
+      for (const [step, title] of [
+        ["instructions", "Describe the job clearly"],
+        ["tools", "Review tools and optional context"],
+        ["knowledge", "Review tools and optional context"],
+        ["skills", "Review tools and optional context"],
+        ["advanced", "Review tools and optional context"],
+        ["basic", "Choose its model and audience"],
+      ]) {
+        await act(async () => form.setAttribute("data-tour-agent-step", step));
+        expect(await screen.findByRole("heading", { name: title })).toBeInTheDocument();
+      }
+      await act(async () => form.remove());
+      expect(await screen.findByRole("heading", { name: "Create an agent for one purpose" })).toBeInTheDocument();
+    } finally { form.remove(); }
+  });
+
+  it("advances to the conversation only after the agent is saved", async () => {
+    const form = document.createElement("div");
+    form.setAttribute("data-tour-agent-step", "advanced");
+    document.body.append(form);
+    try {
+      render(<ProductTourDialog open initialPayload={{ ...tourPayload("in_progress", false).data, tour_id: "add-agent" }} onOpenChange={jest.fn()} />);
+      await screen.findByRole("heading", { name: "Review tools and optional context" });
+      await act(async () => {
+        window.dispatchEvent(new Event(PRODUCT_TOUR_AGENT_CREATED_EVENT));
+        form.remove();
+      });
+      expect(await screen.findByRole("heading", { name: "Test the agent you created" })).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByRole("button", { name: "Finish tour" })).toBeEnabled());
+      const saves = (global.fetch as jest.Mock).mock.calls.filter(([, init]) => init?.method === "PATCH");
+      expect(JSON.parse(saves.at(-1)![1].body)).toMatchObject({ action: "progress", current_step: 5, tour_id: "add-agent" });
+    } finally { form.remove(); }
   });
 
   it("resumes task progress without resetting it", async () => {
