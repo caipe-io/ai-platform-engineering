@@ -14,6 +14,8 @@ import {
 import { getConfig } from "@/lib/config";
 import { GuardedNavigationLink } from "@/components/layout/GuardedNavigationLink";
 import { cn } from "@/lib/utils";
+import { pushWithNavigationProgress } from "@/lib/navigation-progress";
+import { useUnsavedChangesStore } from "@/store/unsaved-changes-store";
 import {
   Check,
   ChevronLeft,
@@ -25,7 +27,7 @@ import {
   ArrowUpRight,
   Loader2,
 } from "lucide-react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 interface ApiEnvelope<T> {
@@ -77,6 +79,11 @@ export function ProductTourDialog({
   const tour = PRODUCT_TOURS[tourId];
   const steps = tour.steps;
   const pathname = usePathname();
+  const router = useRouter();
+  const { hasUnsavedChanges, requestNavigation } = useUnsavedChangesStore();
+  const navigationStep = useRef<number | null>(null);
+  const homeRequested = useRef(false);
+  const [completed, setCompleted] = useState(false);
   const panelRef = useRef<HTMLElement>(null);
   const [minimized, setMinimized] = useState(false);
   const [spotlight, setSpotlight] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
@@ -93,10 +100,13 @@ export function ProductTourDialog({
   useEffect(() => {
     if (!open) return;
     setMinimized(false);
+    setCompleted(false);
+    navigationStep.current = null;
+    homeRequested.current = false;
     setError(null);
     setStep(initialPayload?.state.current_step ?? 1);
     observedAgentStep.current = undefined;
-    agentCreated.current = false;
+    agentCreated.current = initialPayload?.state.current_step === 5;
     if (initialPayload?.state.status === "not_started") {
       setStarting(true);
       startRequest.current = patchTour("start", initialPayload.state.current_step, tourId)
@@ -156,6 +166,7 @@ export function ProductTourDialog({
   }, [move, open, tourId]);
 
   const dismiss = async () => {
+    if (completed) { onOpenChange(false); return; }
     setSaving(true);
     setError(null);
     try {
@@ -177,7 +188,7 @@ export function ProductTourDialog({
       await startRequest.current;
       await progressRequest.current;
       await patchTour("complete", steps.length, tourId);
-      onOpenChange(false);
+      setCompleted(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not complete the tour");
     } finally {
@@ -189,8 +200,28 @@ export function ProductTourDialog({
   const Icon = TOUR_ICONS[active.icon];
 
   useEffect(() => {
+    if (!open || minimized || completed || navigationStep.current === step) return;
+    navigationStep.current = step;
+    // Form-only steps inherit their workspace; never reopen a form or replace
+    // a conversation that is already on the requested page.
+    const href = steps.slice(0, step).findLast((item) => item.href)?.href;
+    if (!href) return;
+    const target = new URL(href, window.location.origin);
+    const currentQuery = new URLSearchParams(window.location.search);
+    const samePage = pathname === target.pathname
+      || (target.pathname === "/chat" && pathname.startsWith("/chat/"));
+    if (samePage && [...target.searchParams].every(([key, value]) => currentQuery.get(key) === value)) return;
+    if (hasUnsavedChanges) requestNavigation(href);
+    else pushWithNavigationProgress(router, href);
+  }, [completed, hasUnsavedChanges, minimized, open, pathname, requestNavigation, router, step, steps]);
+
+  useEffect(() => {
+    if (completed && homeRequested.current && pathname === "/") onOpenChange(false);
+  }, [completed, onOpenChange, pathname]);
+
+  useEffect(() => {
     if (open && !minimized) panelRef.current?.focus({ preventScroll: true });
-  }, [open, minimized]);
+  }, [open, minimized, completed]);
 
   useEffect(() => {
     if (!open || minimized) return;
@@ -239,21 +270,28 @@ export function ProductTourDialog({
           <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Close tour" disabled={saving || starting} onClick={() => void dismiss()}><X className="h-3.5 w-3.5" /></Button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-          <h2 id="product-tour-title" className="text-xl font-semibold tracking-tight">{active.title}</h2>
-          <p id="product-tour-description" className="mt-3 text-sm leading-6 text-muted-foreground">{active.description}</p>
+          <h2 id="product-tour-title" className="text-xl font-semibold tracking-tight">{completed ? "Tour complete" : active.title}</h2>
+          <p id="product-tour-description" className="mt-3 text-sm leading-6 text-muted-foreground">{completed ? "You’re all set. Return to Home or keep working here." : active.description}</p>
           <ul className="mt-4 space-y-2.5">
-            {active.points.map((point) => <li key={point} className="flex items-start gap-2.5 text-xs leading-5"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />{point}</li>)}
+            {!completed && active.points.map((point) => <li key={point} className="flex items-start gap-2.5 text-xs leading-5"><Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />{point}</li>)}
           </ul>
-          {active.expected && <p className="mt-4 rounded-lg bg-primary/5 px-3 py-2 text-xs leading-5"><span className="font-medium text-primary">Look for: </span>{active.expected}</p>}
-          {active.href && <GuardedNavigationLink href={active.href} className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">{active.action}<ArrowUpRight className="h-3.5 w-3.5" /></GuardedNavigationLink>}
-          {tourId === "add-agent" && step < 5 && <p role="status" className="mt-4 text-xs text-muted-foreground">Use the agent form’s Next, Previous, and Create Agent buttons. This guide follows the form automatically.</p>}
+          {!completed && active.expected && <p className="mt-4 rounded-lg bg-primary/5 px-3 py-2 text-xs leading-5"><span className="font-medium text-primary">Look for: </span>{active.expected}</p>}
+          {!completed && active.href && <GuardedNavigationLink href={active.href} className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">Reopen page<ArrowUpRight className="h-3.5 w-3.5" /></GuardedNavigationLink>}
+          {!completed && tourId === "add-agent" && step < 5 && <p role="status" className="mt-4 text-xs text-muted-foreground">Use the agent form’s Next, Previous, and Create Agent buttons. This guide follows the form automatically.</p>}
           {error && <p role="alert" className="mt-3 text-xs text-destructive">{error}</p>}
         </div>
         <div className="border-t px-5 py-4">
           <div className="mb-4 flex gap-1.5" aria-label={`Tour step ${step} of ${steps.length}`}>
             {steps.map((item, index) => <span key={item.eyebrow} className={cn("h-1 flex-1 rounded-full transition-colors", index < step ? "bg-primary" : "bg-muted")} />)}
           </div>
-          <div className="flex items-center justify-between gap-2">
+          {completed ? <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" size="sm" variant="outline" onClick={() => onOpenChange(false)}>Stay here</Button>
+            <Button size="sm" asChild><GuardedNavigationLink href="/" onClick={(event) => {
+              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+              homeRequested.current = true;
+              if (!event.defaultPrevented) onOpenChange(false);
+            }}>Back to Home</GuardedNavigationLink></Button>
+          </div> : <div className="flex items-center justify-between gap-2">
             <Button type="button" size="sm" variant="ghost" onClick={() => void dismiss()} disabled={saving || starting}>Skip tour</Button>
             <div className="flex gap-2">
               {step > 1 && tourId !== "add-agent" && <Button type="button" size="sm" variant="outline" onClick={() => void move(step - 1)} disabled={saving || starting}><ChevronLeft className="mr-1 h-3.5 w-3.5" />Back</Button>}
@@ -261,7 +299,7 @@ export function ProductTourDialog({
                 ? tourId !== "add-agent" && <Button type="button" size="sm" onClick={() => void move(step + 1)} disabled={saving || starting}>{saving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}Next<ChevronRight className="ml-1 h-3.5 w-3.5" /></Button>
                 : <Button type="button" size="sm" onClick={() => void complete()} disabled={saving || starting}>{saving && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}Finish tour</Button>}
             </div>
-          </div>
+          </div>}
         </div>
       </section>
     </>

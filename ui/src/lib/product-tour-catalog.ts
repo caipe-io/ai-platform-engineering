@@ -43,6 +43,8 @@ export const PRODUCT_TOURS: Record<ProductTourId, ProductTourDefinition> = {
     steps: [
       {
         eyebrow: "Welcome",
+        href: "/",
+        action: "Explore Home",
         target: '[aria-label="Application navigation"]',
         title: "Your workspace is ready",
         description:

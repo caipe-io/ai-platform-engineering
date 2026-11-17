@@ -130,8 +130,10 @@ Choose **Tour → Workspace tour** in the top-right application header, or
 The guide docks beside the workspace on wide screens and below it on smaller
 screens, leaving the workspace controls available. It highlights navigation while
 you keep using the workspace. Use
-**Next** and **Back** to explore Home, Chat, Skills, and personal settings; links
-open the related workspace using the usual unsaved-change protection.
+**Next** and **Back** to explore Home, Chat, Skills, and personal settings.
+The tour opens each step’s page automatically, including the correct workspace
+tab. Existing chats and forms on that page stay open. Unsaved drafts use the
+usual discard confirmation; canceling leaves the draft in place.
 
 Minimize the guide to a **Resume tour** button, or close it whenever you like.
 Progress is saved to your account. Replay it from the header or Settings.
@@ -152,8 +154,9 @@ Each task tour saves its own progress to your account and starts only when reque
 Choosing an unfinished task resumes it; choosing a completed or skipped task starts
 it again. The agent guide follows the builder automatically: use the form’s
 **Next**, **Previous**, and **Create Agent** buttons. Other tours use the guide’s
-**Next** after each action. **Finish tour** records guide
-completion; it does not verify or create the resource. Model, MCP, and agent guides
+**Next** after each action. **Finish tour** records guide completion and offers
+**Back to Home** or **Stay here**. Returning Home also respects unsaved drafts.
+Finishing a tour does not verify or create the resource. Model, MCP, and agent guides
 appear when the agent workspace is enabled and your account has access. Connected
 credentials guidance appears when account connections and persistent storage are enabled.
 The underlying screens enforce the permissions required for each action.

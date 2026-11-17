@@ -1,15 +1,17 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { PRODUCT_TOUR_AGENT_CREATED_EVENT, requestProductTour } from "@/lib/product-tour";
 import { ProductTourDialog, ProductTourGate } from "../ProductTour";
+import { useUnsavedChangesStore } from "@/store/unsaved-changes-store";
 
 const mockGetConfig = jest.fn();
 jest.mock("@/lib/config", () => ({ getConfig: () => mockGetConfig() }));
 
 const mockPush = jest.fn();
+let mockPathname = "/";
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
-  usePathname: () => "/",
+  usePathname: () => mockPathname,
 }));
 
 function response(data: unknown, status = 200): Promise<Response> {
@@ -39,6 +41,9 @@ function tourPayload(status = "not_started", autoStart = true) {
 describe("ProductTourGate", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPathname = "/";
+    window.history.replaceState({}, "", "/");
+    useUnsavedChangesStore.setState({ hasUnsavedChanges: false, pendingNavigationHref: null });
     mockGetConfig.mockReturnValue(true);
     global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input) !== "/api/onboarding/product-tour") {
@@ -312,12 +317,89 @@ describe("ProductTourGate", () => {
     expect(screen.queryByRole("heading", { name: "Your workspace is ready" })).not.toBeInTheDocument();
   });
 
-  it("finishes only the guide without navigating away from a draft", async () => {
+  it.each([
+    ["add-model", "/dynamic-agents?tab=model-providers"],
+    ["add-agent", "/dynamic-agents?tab=agents"],
+    ["add-mcp", "/dynamic-agents?tab=mcp-servers"],
+    ["chat", "/chat"],
+    ["credentials", "/credentials/connections"],
+  ] as const)("opens the destination for %s automatically", async (tour_id, href) => {
+    render(<ProductTourDialog open initialPayload={{ ...tourPayload("in_progress", false).data, tour_id }} onOpenChange={jest.fn()} />);
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith(href));
+  });
+
+  it("changes tabs on the same route, and keeps form-only steps on that tab", async () => {
+    mockPathname = "/dynamic-agents";
+    window.history.replaceState({}, "", "/dynamic-agents?tab=model-providers");
+    render(<ProductTourDialog open initialPayload={{ ...tourPayload("in_progress", false).data, tour_id: "add-model" }} onOpenChange={jest.fn()} />);
+    expect(mockPush).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "Next" }));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith("/dynamic-agents?tab=llm-models"));
+    window.history.replaceState({}, "", "/dynamic-agents?tab=llm-models");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Next" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByRole("heading", { name: "Match the provider identifiers" });
+    expect(mockPush).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the current chat and does not navigate again when the guide resumes", async () => {
+    mockPathname = "/chat/example";
+    render(<ProductTourDialog open initialPayload={{ ...tourPayload("in_progress", false).data, tour_id: "chat" }} onOpenChange={jest.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Minimize tour" }));
+    fireEvent.click(screen.getByRole("button", { name: /Resume tour/ }));
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("requests the existing discard guard once, and respects cancellation", async () => {
+    mockPathname = "/dynamic-agents";
+    useUnsavedChangesStore.setState({ hasUnsavedChanges: true });
+    render(<ProductTourDialog open initialPayload={{ ...tourPayload("in_progress", false).data, tour_id: "chat" }} onOpenChange={jest.fn()} />);
+    await waitFor(() => expect(useUnsavedChangesStore.getState().pendingNavigationHref).toBe("/chat"));
+    act(() => useUnsavedChangesStore.getState().cancelNavigation());
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(useUnsavedChangesStore.getState().pendingNavigationHref).toBeNull();
+  });
+
+  it("offers Home after saving completion and lets the user stay", async () => {
+    mockPathname = "/chat/example";
     const onOpenChange = jest.fn();
     render(<ProductTourDialog open initialPayload={{ ...tourPayload("in_progress", false).data, tour_id: "chat", state: { ...tourPayload().data.state, status: "in_progress", current_step: 4 } }} onOpenChange={onOpenChange} />);
     fireEvent.click(await screen.findByRole("button", { name: "Finish tour" }));
-    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    await screen.findByRole("heading", { name: "Tour complete" });
+    expect(screen.getByRole("link", { name: "Back to Home" })).toHaveAttribute("href", "/");
+    expect(onOpenChange).not.toHaveBeenCalled();
     expect(mockPush).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Stay here" }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps the guide open if completion could not be saved", async () => {
+    mockPathname = "/chat/example";
+    const originalFetch = global.fetch;
+    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => init?.method === "PATCH" && JSON.parse(String(init.body)).action === "complete"
+      ? response({ error: "Save unavailable" }, 503) : originalFetch(input, init));
+    const onOpenChange = jest.fn();
+    render(<ProductTourDialog open initialPayload={{ ...tourPayload("in_progress", false).data, tour_id: "chat", state: { ...tourPayload().data.state, status: "in_progress", current_step: 4 } }} onOpenChange={onOpenChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "Finish tour" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Save unavailable");
+    expect(screen.queryByRole("link", { name: "Back to Home" })).not.toBeInTheDocument();
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("preserves a draft when the user cancels returning Home", async () => {
+    mockPathname = "/dynamic-agents";
+    window.history.replaceState({}, "", "/dynamic-agents?tab=agents");
+    const onOpenChange = jest.fn();
+    render(<ProductTourDialog open initialPayload={{ ...tourPayload("in_progress", false).data, tour_id: "workspace", state: { ...tourPayload().data.state, status: "in_progress", current_step: 5 } }} onOpenChange={onOpenChange} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Finish tour" }));
+    await screen.findByRole("heading", { name: "Tour complete" });
+    act(() => useUnsavedChangesStore.setState({ hasUnsavedChanges: true }));
+    fireEvent.click(screen.getByRole("link", { name: "Back to Home" }));
+    expect(useUnsavedChangesStore.getState().pendingNavigationHref).toBe("/");
+    expect(onOpenChange).not.toHaveBeenCalled();
+    act(() => useUnsavedChangesStore.getState().cancelNavigation());
+    expect(screen.getByRole("heading", { name: "Tour complete" })).toBeInTheDocument();
   });
 
 });
