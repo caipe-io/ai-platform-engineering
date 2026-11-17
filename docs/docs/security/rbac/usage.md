@@ -14,6 +14,19 @@ COMPOSE_PROFILES='rbac,caipe-ui,caipe-mongodb' \
 docker compose -f docker-compose.dev.yaml ps keycloak
 ```
 
+## First-agent setup and token audiences
+
+The Setup Wizard requires Admin UI access and `system_config:platform_settings`
+permission. View as previews disable setup mutations. The starter-agent smoke
+test uses the signed-in user's chat permissions and the normal BFF on-behalf-of
+exchange. Configure `OIDC_ACCEPTED_AUDIENCES` to include the platform resource
+server audience when browser-client and runtime audiences differ; this does not
+bypass token validation or resource authorization.
+
+For no-ingress installs, the UI, runtime, and RAG validate the browser-facing
+Keycloak issuer while discovery and signing-key requests use the in-cluster
+address. The local ingestor uses that same advertised issuer for its client.
+
 ## Conversation History Compatibility
 
 Chat API routes accept both UUID conversation IDs and bounded legacy opaque IDs.

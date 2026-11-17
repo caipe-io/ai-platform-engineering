@@ -400,7 +400,7 @@ export function LLMModelsTab({
               <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
               Refresh
             </Button>
-            <Button size="sm" onClick={() => setIsCreating(true)}>
+            <Button data-tour="add-model" size="sm" onClick={() => setIsCreating(true)}>
               <Plus className="h-4 w-4 mr-2" />
               Add Model
             </Button>

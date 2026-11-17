@@ -537,7 +537,9 @@ describe("DynamicAgentsTab search + pagination", () => {
     const onCreateAgent = jest.fn();
     const { rerender } = render(<DynamicAgentsTab creating={false} onCreateAgent={onCreateAgent} />);
     await screen.findByText("Ops Helper");
-    fireEvent.click(screen.getByRole("button", { name: "Create CAIPE Agent", exact: true }));
+    const createButton = screen.getByRole("button", { name: "Create CAIPE Agent", exact: true });
+    expect(createButton).toHaveAttribute("data-tour", "add-agent");
+    fireEvent.click(createButton);
     expect(onCreateAgent).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("dynamic-agent-editor")).not.toBeInTheDocument();
     rerender(<DynamicAgentsTab creating onCreateAgent={onCreateAgent} />);

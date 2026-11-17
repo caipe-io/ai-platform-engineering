@@ -1,0 +1,16 @@
+{{- $agenticAppsEnabled := eq (index .Values.config "AGENTIC_APPS_INSTALL_ENABLED" | default "false" | toString) "true" -}}
+{{- if $agenticAppsEnabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "caipe-ui.fullname" . }}-agentic-apps
+  labels:
+    {{- include "caipe-ui.labels" . | nindent 4 }}
+data:
+  # The catalog is intentionally empty by default. Operators add app packages
+  # and installations through deployment configuration.
+  agentic-apps.yaml: |
+    agentic_apps:
+      packages: []
+      installations: []
+{{- end }}

@@ -461,7 +461,7 @@ export function DynamicAgentsTab({
             Refresh
           </Button>
           {remote.toolbar}
-          <Button size="sm" className="h-auto min-h-10 whitespace-normal px-2 py-2 text-xs leading-tight sm:h-9 sm:min-h-0 sm:whitespace-nowrap sm:px-3 sm:text-sm" onClick={startCreating}>
+          <Button data-tour="add-agent" size="sm" className="h-auto min-h-10 whitespace-normal px-2 py-2 text-xs leading-tight sm:h-9 sm:min-h-0 sm:whitespace-nowrap sm:px-3 sm:text-sm" onClick={startCreating}>
             <Plus className="mr-2 hidden h-4 w-4 sm:block" />
             Create CAIPE Agent
           </Button>

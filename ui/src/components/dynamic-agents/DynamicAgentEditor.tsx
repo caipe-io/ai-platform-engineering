@@ -45,6 +45,7 @@ import { useEditorDirtyTracking } from "@/hooks/use-editor-dirty-tracking";
 import { gradientThemes } from "@/lib/gradient-themes";
 import { getMarkdownComponents } from "@/lib/markdown-components";
 import { cn } from "@/lib/utils";
+import { PRODUCT_TOUR_AGENT_CREATED_EVENT } from "@/lib/product-tour";
 import { useUnsavedChangesStore } from "@/store/unsaved-changes-store";
 import type {
   AgentUIConfig,
@@ -1577,6 +1578,7 @@ export function DynamicAgentEditor({
         if (!data.success) {
           throw new Error(data.error || "Failed to create agent");
         }
+        window.dispatchEvent(new Event(PRODUCT_TOUR_AGENT_CREATED_EVENT));
       }
 
       // Clear unsaved-changes state BEFORE calling onSave(): the parent will
@@ -1727,7 +1729,7 @@ export function DynamicAgentEditor({
   };
 
   return (
-    <Card>
+    <Card data-tour-agent-step={!isEditing && !isCloning && !readOnly ? activeStep : undefined}>
       <CardHeader className="pb-2">
         <div className="flex items-start gap-3 sm:gap-4">
           <Button type="button" variant="ghost" size="icon" aria-label="Back to Agents" onClick={handleBackClick}>
@@ -2874,7 +2876,7 @@ export function DynamicAgentEditor({
                 {/* MCP Tools */}
                 <div className="space-y-4">
                   <div>
-                    <Label>MCP Tool Access</Label>
+                    <Label data-tour="agent-tools">MCP Tool Access</Label>
                     <p className="text-xs text-muted-foreground mb-4">
                       Select which MCP servers and tools this agent can use. If
                       no servers are selected, the agent will have no external
