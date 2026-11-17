@@ -41,6 +41,11 @@ export async function checkHarnessMcpReadiness(agentId: string, tools: string[],
         if (selectedTools.get(serverId)!.some(id => !catalog.tools.some(tool => `${serverId}.${tool.name}` === id || `${serverId}.${tool.namespaced_name}` === id))) return unavailable();
       } catch (error) {
         if (error instanceof ApiError && ["MCP_AUTH_REQUIRED", "MCP_CREDENTIAL_UNAVAILABLE", "MCP_TOOL_ACCESS_DENIED"].includes(error.code ?? "")) continue;
+        const category = controller.signal.aborted || (error instanceof Error || error instanceof DOMException) && error.name === "AbortError" ? "timeout"
+          : error instanceof ApiError
+            ? ["MCP_INIT_FAILED", "MCP_LIST_FAILED", "MCP_LIST_INVALID", "AGENT_CONTEXT_UNAVAILABLE"].includes(error.code ?? "") ? error.code : "mcp_error"
+            : error instanceof SyntaxError ? "invalid_response" : error instanceof TypeError ? "connection" : "unexpected";
+        console.warn("[harness-mcp-readiness] Catalog initialization failed", { agentId, serverId, category });
         return unavailable();
       }
     }

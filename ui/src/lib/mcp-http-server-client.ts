@@ -322,8 +322,18 @@ export async function listHttpMcpTools(input: {
       signal: input.signal,
     });
     rejectMcpAuthorization(initialized.status);
-    if (!initialized.ok || !initialized.sessionId) {
+    if (!initialized.ok || !initialized.sessionId || (initialized.payload as { error?: unknown } | null)?.error) {
       throw new ApiError(`MCP initialize failed with HTTP ${initialized.status}`, 502, "MCP_INIT_FAILED");
+    }
+
+    const ready = await mcpJsonRpc({
+      endpoint: input.server.endpoint, headers, sessionId: initialized.sessionId,
+      payload: { jsonrpc: "2.0", method: "notifications/initialized" },
+      timeoutMs: 5_000, signal: input.signal,
+    });
+    rejectMcpAuthorization(ready.status);
+    if (!ready.ok || (ready.payload as { error?: unknown } | null)?.error) {
+      throw new ApiError(`MCP initialized notification failed with HTTP ${ready.status}`, 502, "MCP_INIT_FAILED");
     }
 
     const listed = await mcpJsonRpc({

@@ -79,7 +79,7 @@ it("keeps an upstream failure ambiguous, sanitizes its body and never repeats th
   expect(fetchMock).toHaveBeenCalledTimes(3);
 });
 
-it.each([0, 1, 2].flatMap(stage => [401, 403].map(status => ({ stage, status }))))(
+it.each([0, 1, 2, 3].flatMap(stage => [401, 403].map(status => ({ stage, status }))))(
   "preserves catalog HTTP $status at stage $stage without retrying authentication",
   async ({ stage, status }) => {
     fetchMock.mockImplementation(async () => {
@@ -94,3 +94,56 @@ it.each([0, 1, 2].flatMap(stage => [401, 403].map(status => ({ stage, status }))
     expect(fetchMock).toHaveBeenCalledTimes(stage + 1);
   },
 );
+
+it("initializes a strict catalog session before listing tools, without invoking a tool", async () => {
+  let ready = false;
+  fetchMock.mockImplementation(async (_url, options: RequestInit) => {
+    const payload = JSON.parse(options.body as string);
+    const headers = options.headers as Record<string, string>;
+    if (payload.method === "initialize") return Response.json({ result: { protocolVersion: "2024-11-05" } }, { headers: { "mcp-session-id": "catalog-session" } });
+    if (payload.method === "notifications/initialized") {
+      expect(headers["mcp-session-id"]).toBe("catalog-session");
+      expect(headers.Authorization).toBe("Bearer example-user-token");
+      expect(payload).not.toHaveProperty("id");
+      ready = true;
+      return new Response(null, { status: 202 });
+    }
+    if (!headers["mcp-session-id"]) return new Response(null, { status: 400 });
+    expect(ready).toBe(true);
+    expect(headers["mcp-session-id"]).toBe("catalog-session");
+    return Response.json({ result: { tools: [{ name: "lookup", inputSchema: { type: "object" } }] } });
+  });
+  expect(await listHttpMcpTools(input)).toMatchObject({ tools: [{ name: "lookup" }], sessionId: "catalog-session" });
+  expect(fetchMock.mock.calls.map(([, options]) => JSON.parse(options.body).method)).toEqual([
+    "tools/list", "initialize", "notifications/initialized", "tools/list",
+  ]);
+});
+
+it.each([500, 200])("stops catalog discovery when its initialized notification fails with HTTP %s", async status => {
+  fetchMock.mockResolvedValueOnce(new Response(null, { status: 400 }))
+    .mockResolvedValueOnce(Response.json({ result: {} }, { headers: { "mcp-session-id": "catalog-session" } }))
+    .mockResolvedValueOnce(Response.json({ error: { message: "private-upstream-detail" } }, { status }));
+  await expect(listHttpMcpTools(input)).rejects.toMatchObject({ code: "MCP_INIT_FAILED" });
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+});
+
+it.each(["caller", "deadline"])("cancels an initialized notification on its %s abort boundary", async boundary => {
+  jest.useFakeTimers();
+  try {
+    const caller = new AbortController();
+    let started: () => void = () => {};
+    const notificationStarted = new Promise<void>(resolve => { started = resolve; });
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 400 }))
+      .mockResolvedValueOnce(Response.json({ result: {} }, { headers: { "mcp-session-id": "catalog-session" } }))
+      .mockImplementationOnce((_url, options: RequestInit) => new Promise((_resolve, reject) => {
+        options.signal!.addEventListener("abort", () => reject(new Error("request-aborted")), { once: true });
+        started();
+      }));
+    const rejection = expect(listHttpMcpTools({ ...input, signal: caller.signal })).rejects.toThrow("request-aborted");
+    await notificationStarted;
+    if (boundary === "caller") caller.abort();
+    else await jest.advanceTimersByTimeAsync(5_000);
+    await rejection;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  } finally { jest.useRealTimers(); }
+});

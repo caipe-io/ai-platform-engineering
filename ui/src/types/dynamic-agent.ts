@@ -296,6 +296,7 @@ export interface MiddlewareEntry {
  * are applied with their default params on the server side.
  */
 export interface FeaturesConfig {
+  remote_agents_as_subagents?: boolean;
   middleware: MiddlewareEntry[];
 }
 

@@ -21,7 +21,7 @@ export interface RemoteAgentsPickerProps {
 }
 
 export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPickerProps }) {
-  const { value = [], onChange = () => {}, timeoutValues = {}, onTimeoutChange = () => {}, disabled } = selection ?? {};
+  const { disabled } = selection ?? {};
   const { toast } = useToast();
   const includeAcp = !selection;
   const [acpAgents, setAcpAgents] = React.useState<AvailableSubagent[]>([]);
@@ -81,11 +81,6 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
 
   React.useEffect(() => { void loadItems(); void loadAcpAgents(); }, [loadItems, loadAcpAgents]);
 
-  const toggle = (id: string) => {
-    if (disabled) return;
-    onChange(value.includes(id) ? value.filter((item) => item !== id) : [...value, id]);
-  };
-
   const probeEndpoint = async (edit = false, registered?: RemoteAgentRegistryEntry) => {
     if (disabled || probing || mutationPending.current) return;
     setProbing(true);
@@ -130,7 +125,6 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || "Failed to add remote agent");
       setItems((current) => [...current, data.data].sort((a, b) => a.name.localeCompare(b.name)));
-      onChange([...new Set([...value, data.data._id])]);
       setName(""); setEndpoint(""); setDescription(""); setTimeoutSeconds(120); setStreaming(false); setProbedCard(null);
       setCredentialSource(selection ? defaultRemoteAgentAuth() : { kind: "none", target: "header", name: "Authorization" });
       toast("Remote A2A agent added", "success");
@@ -152,7 +146,6 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || "Failed to remove remote agent");
       setItems((current) => current.filter((entry) => entry._id !== item._id));
-      onChange(value.filter((id) => id !== item._id));
     } catch (error) {
       toast(`Could not remove remote A2A agent: ${error instanceof Error ? error.message : "Request failed"}`, "error");
     } finally {
@@ -202,7 +195,7 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
       </div>
       {acpError && <div role="alert" className="text-sm text-destructive">{acpError} <Button type="button" variant="outline" size="sm" onClick={() => void loadAcpAgents()}>Retry ACP agents</Button></div>}
       {acpLoading && <p role="status" className="text-sm text-muted-foreground">Loading configured ACP agents…</p>}
-      {!selection && canManage && <RemoteAgentDiscovery disabled={saving || probing} onChoose={(agent: DiscoveredAgent) => {
+      {canManage && <RemoteAgentDiscovery disabled={saving || probing} onChoose={(agent: DiscoveredAgent) => {
         setEndpoint(agent.endpoint); setName(agent.error ? "" : agent.name || "");
         setDescription(agent.description || ""); setStreaming(agent.supports_streaming === true);
         setCredentialSource({ kind: "none", target: "header", name: "Authorization" });
@@ -218,14 +211,13 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
             const item = entry.item;
             return <div key={entry.key} className="rounded-lg border p-3">
               <div className="flex items-start gap-3">
-                {selection && <input aria-label={`Allow ${item.name}`} type="checkbox" className="mt-1 h-4 w-4 accent-primary" checked={value.includes(item._id)} disabled={disabled} onChange={() => toggle(item._id)} />}
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">{item.name}<span className="ml-2 text-xs text-muted-foreground">A2A</span></div>
                   {item.streaming && <span className="text-xs text-muted-foreground">Streaming enabled</span>}
                   {item.description && <p className="text-xs text-muted-foreground">{item.description}</p>}
                   {canManage && item.endpoint && <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{item.endpoint}</p>}
                   <div className="mt-3 flex items-end gap-2">
-                    {selection ? <div className="w-36"><Label htmlFor={`timeout-${item._id}`} className="text-xs">Timeout (seconds)</Label><Input id={`timeout-${item._id}`} type="number" min={1} max={600} value={timeoutValues[item._id] ?? item.timeout_seconds ?? 120} disabled={disabled || !value.includes(item._id)} onChange={(event) => { const seconds = Number(event.target.value); if (Number.isInteger(seconds) && seconds >= 1 && seconds <= 600) onTimeoutChange(item._id, seconds); }} /></div> : <span className="text-xs text-muted-foreground">Default timeout: {item.timeout_seconds}s · {item.protocol_bindings?.join(", ") || "A2A"}</span>}
+                    <span className="text-xs text-muted-foreground">Default timeout: {item.timeout_seconds}s · {item.protocol_bindings?.join(", ") || "A2A"}</span>
                     {canManage && <>
                       <Button type="button" variant="outline" size="sm" disabled={disabled || saving || probing} onClick={() => void probeEndpoint(false, item)}>Read Agent Card</Button>
                       <Button type="button" variant="ghost" size="sm" disabled={disabled || saving} onClick={() => { setEditingId(item._id); setEditValues({ name: item.name, endpoint: item.endpoint || "", description: item.description || "", timeout_seconds: item.timeout_seconds || 120, streaming: item.streaming === true, credential_source: item.credential_source || defaultRemoteAgentAuth() }); }} aria-label={`Edit ${item.name}`}><Pencil className="h-4 w-4" /></Button>
@@ -295,7 +287,7 @@ export function RemoteAgentRegistry({ selection }: { selection?: RemoteAgentsPic
           />
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" size="sm" variant="outline" disabled={saving || probing || !endpoint.trim() || !isRemoteAgentAuthConfigured(credentialSource)} onClick={() => void probeEndpoint()}>{probing ? "Probing…" : "Discover Agent Card"}</Button>
-            <Button type="button" size="sm" disabled={saving || probing || !name.trim() || !endpoint.trim() || !isRemoteAgentAuthConfigured(credentialSource)} onClick={() => void addRemoteAgent()}><Plus className="mr-2 h-4 w-4" />{saving ? "Adding…" : selection ? "Add and select" : "Register agent"}</Button>
+            <Button type="button" size="sm" disabled={saving || probing || !name.trim() || !endpoint.trim() || !isRemoteAgentAuthConfigured(credentialSource)} onClick={() => void addRemoteAgent()}><Plus className="mr-2 h-4 w-4" />{saving ? "Adding…" : "Register agent"}</Button>
             {probedCard?.protocol_bindings?.length ? <span className="text-xs text-muted-foreground">A2A {probedCard.protocol_version || ""} · {probedCard.protocol_bindings.join(", ")} · {probedCard.supports_streaming ? "Streaming available" : "Complete responses only"}</span> : null}
           </div>
         </div>

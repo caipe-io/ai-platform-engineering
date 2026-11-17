@@ -53,7 +53,7 @@ def test_disabled_defaults_create_no_runtime(chart: Path) -> None:
     assert not docs(render(chart, "global.harnessEngine.enabled=false"))
 
 
-@pytest.mark.parametrize("isolation", [None, "disabled"])
+@pytest.mark.parametrize("isolation", [None, "landlock", "artifacts", "disabled"])
 def test_cli_isolation_default_and_explicit_opt_out(chart: Path, isolation: str | None) -> None:
     settings = worker_settings() + ["harnessEngine.workers.cli-acp.enabled=true",
                                    "harnessEngine.workers.cli-acp.tokenSecret.name=example-cli-token"]

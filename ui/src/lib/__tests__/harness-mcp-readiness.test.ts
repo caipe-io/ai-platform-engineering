@@ -9,16 +9,33 @@ jest.mock("@/lib/mcp-http-server-client", () => ({ listHttpMcpTools: (...args: u
 jest.mock("@/lib/rbac/resource-authz", () => ({ filterResourcesByPermission: (...args: unknown[]) => mockPermission(...args) }));
 const auth = { subject: "test-user", bearerToken: "caller-token", authenticatedUser: { session: { sub: "test-user", accessToken: "caller-token" } } } as never;
 beforeEach(() => { jest.resetAllMocks(); mockServers.mockReturnValue([{ _id: "primary", endpoint: "https://upstream.example.test/mcp", enabled: true }]); process.env.AGENT_GATEWAY_URL = "http://gateway.example.test:4000"; mockPermission.mockImplementation(async (_session, servers) => servers); mockList.mockResolvedValue({ tools: [{ name: "lookup" }] }); });
+beforeEach(() => { jest.spyOn(console, "warn").mockImplementation(() => {}); });
+afterEach(() => { jest.restoreAllMocks(); });
 it("lists once per authorized server with the real caller and agent, without invoking tools", async () => {
   expect(await checkHarnessMcpReadiness("example", ["primary.lookup", "primary.lookup"], auth)).toBeUndefined();
   expect(mockList).toHaveBeenCalledTimes(1);
   expect(mockList).toHaveBeenCalledWith(expect.objectContaining({ agentId: "example", session: expect.objectContaining({ sub: "test-user" }), server: expect.objectContaining({ endpoint: "http://gateway.example.test:4000/mcp/primary" }) }));
 });
-it.each([new ApiError("private endpoint detail", 502, "MCP_INIT_FAILED"), new Error("private endpoint detail")])("reports unreachable catalogs without exposing upstream details", async error => {
+it.each([
+  [new ApiError("private endpoint detail", 502, "MCP_INIT_FAILED"), "MCP_INIT_FAILED"],
+  [new ApiError("private endpoint detail", 502, "MCP_LIST_INVALID"), "MCP_LIST_INVALID"],
+  [new ApiError("private endpoint detail", 503, "AGENT_CONTEXT_UNAVAILABLE"), "AGENT_CONTEXT_UNAVAILABLE"],
+  [new ApiError("private endpoint detail", 502, "private-error-code"), "mcp_error"],
+  [new SyntaxError("private endpoint detail"), "invalid_response"],
+  [new TypeError("private endpoint detail"), "connection"],
+  [new DOMException("private endpoint detail", "AbortError"), "timeout"],
+  [new Error("private endpoint detail"), "unexpected"],
+])("reports unreachable catalogs with sanitized diagnostic category %s", async (error, category) => {
   mockList.mockRejectedValue(error);
   const result = await checkHarnessMcpReadiness("example", ["primary.lookup"], auth);
   expect(result).toMatchObject({ ready: false, code: "HARNESS_AGENT_NOT_READY" });
   expect(JSON.stringify(result)).not.toContain("private endpoint detail");
+  expect(console.warn).toHaveBeenCalledWith("[harness-mcp-readiness] Catalog initialization failed", { agentId: "example", serverId: "primary", category });
+  const logs = JSON.stringify(jest.mocked(console.warn).mock.calls);
+  expect(logs).not.toContain("private endpoint detail");
+  expect(logs).not.toContain("private-error-code");
+  expect(logs).not.toContain("caller-token");
+  expect(logs).not.toContain("upstream.example.test");
 });
 it("blocks missing tools without dispatching a run", async () => {
   mockList.mockResolvedValue({ tools: [] });
@@ -32,6 +49,7 @@ it("does not probe unauthorized servers or manufacture diagnostic access", async
 it.each(["MCP_AUTH_REQUIRED", "MCP_CREDENTIAL_UNAVAILABLE", "MCP_TOOL_ACCESS_DENIED"])("preserves existing unavailable-tool handling for %s", async code => {
   mockList.mockRejectedValue(new ApiError("Denied", 401, code));
   expect(await checkHarnessMcpReadiness("example", ["primary.lookup"], auth)).toBeUndefined();
+  expect(console.warn).not.toHaveBeenCalled();
 });
 it("does not connect for tool-free conversations", async () => {
   expect(await checkHarnessMcpReadiness("example", [], auth)).toBeUndefined();

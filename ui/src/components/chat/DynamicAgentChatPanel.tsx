@@ -2604,7 +2604,12 @@ export function ChatPanel({
 
                       // Queued user bubbles share one turnId and produce one response.
                       // Regenerate the whole batch; older messages may lack that binding.
+                      const turnResponse = msg.role === "assistant" ? msg
+                        : (msg.turnId ? arr.findLast(message => message.role === "assistant" && message.turnId === msg.turnId) : undefined)
+                          ?? (arr[index + 1]?.role === "assistant" ? arr[index + 1] : undefined);
+                      const configurationBlockedTurn = turnResponse?.error === "HARNESS_AGENT_NOT_READY";
                       const canRetryMessage = !panelReadOnly &&
+                        !configurationBlockedTurn &&
                         !isAutonomousHistory &&
                         !isThisConversationStreaming &&
                         !isRemoteResponse &&
