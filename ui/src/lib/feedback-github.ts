@@ -5,7 +5,7 @@ import { readVersionInfo } from "@/lib/version";
 import { ApiError } from "@/lib/api-middleware";
 import { getServerConfig } from "@/lib/config";
 import type { ConfiguredAgenticApp } from "@/types/agentic-app";
-import { FEEDBACK_SEVERITIES, platformFeedbackFeatures, type FeedbackDestination } from "@/lib/feedback-features";
+import { FEEDBACK_SEVERITIES, SERVICE_DESK_AREAS, SERVICE_DESK_DETAILS, SERVICE_DESK_SEVERITIES, SERVICE_DESK_TYPES, platformFeedbackFeatures, type FeedbackDestination, type ServiceDeskCapability, type ServiceDeskRequest } from "@/lib/feedback-features";
 
 export function platformFeedbackHandler(): "agent" | "github" {
   const handler = process.env.FEEDBACK_HANDLER;
@@ -35,10 +35,37 @@ function settings() {
     component: process.env.FEEDBACK_PLATFORM_LABEL || cfg.appName, features: platformFeedbackFeatures(process.env.FEEDBACK_FEATURES) };
 }
 
-export function platformFeedbackCapabilities(): { screenshotsEnabled?: boolean; destination: FeedbackDestination } {
+const SERVICE_DESK_DETAIL_FIELD_COUNT = Object.values(SERVICE_DESK_DETAILS).reduce((total, fields) => total + fields.length, 0);
+let warnedServiceDeskMisconfigured = false;
+
+function serviceDeskSettings() {
+  const env = process.env;
+  const repo = env.FEEDBACK_SERVICE_DESK_REPO || env.FEEDBACK_GITHUB_REPO;
+  const token = (env.FEEDBACK_SERVICE_DESK_TOKEN || env.FEEDBACK_GITHUB_TOKEN)?.trim();
+  return { repo, token, label: env.FEEDBACK_SERVICE_DESK_LABEL?.trim() || "service-desk" };
+}
+
+/** Opt-in with FEEDBACK_SERVICE_DESK_ENABLED=true or a dedicated repository; repository and token fall back to the feedback ones. A bad setting hides it instead of failing feedback. */
+export function serviceDeskCapabilities(): ServiceDeskCapability | undefined {
+  const env = process.env;
+  if (env.FEEDBACK_HANDLER !== "github" || !(env.FEEDBACK_SERVICE_DESK_ENABLED === "true" || env.FEEDBACK_SERVICE_DESK_REPO)) return undefined;
+  const { repo, token } = serviceDeskSettings();
+  const unusable = () => {
+    if (env.FEEDBACK_SERVICE_DESK_ENABLED === "true" && !warnedServiceDeskMisconfigured) {
+      warnedServiceDeskMisconfigured = true;
+      console.warn("FEEDBACK_SERVICE_DESK_ENABLED is true but the service desk token or repository is missing or invalid; Request help is hidden.");
+    }
+    return undefined;
+  };
+  if (!token) return unusable();
+  try { return { repository: repository(repo), areas: [...SERVICE_DESK_AREAS], severities: [...SERVICE_DESK_SEVERITIES], types: [...SERVICE_DESK_TYPES] }; }
+  catch { return unusable(); }
+}
+
+export function platformFeedbackCapabilities(): { screenshotsEnabled?: boolean; destination: FeedbackDestination; serviceDesk?: ServiceDeskCapability } {
   if (platformFeedbackHandler() === "github") {
     const cfg = settings();
-    return { screenshotsEnabled: Boolean(cfg.assets), destination: { provider: "github", repository: cfg.repo } };
+    return { screenshotsEnabled: Boolean(cfg.assets), destination: { provider: "github", repository: cfg.repo }, serviceDesk: serviceDeskCapabilities() };
   }
   const cfg = getServerConfig();
   if (!cfg.ticketEnabled || !(cfg.ticketProvider === "jira" ? cfg.jiraTicketProject : cfg.ticketProvider === "github" ? cfg.githubTicketRepo : undefined)?.trim()) {
@@ -152,6 +179,80 @@ export async function createGitHubFeedback(input: unknown, reporter: string, sig
   }
   const issue = await github(`${cfg.repo}/issues`, "POST", { title, body: body.join("\n"),
     labels }, cfg.token, signal);
+  if (!Number.isSafeInteger(issue?.number) || issue.number < 1) throw new ApiError("GitHub did not return an issue receipt", 502);
+  return { id: `#${issue.number}`, url: `https://github.com/${cfg.repo}/issues/${issue.number}`, provider: "github" as const };
+}
+
+function oneOf(value: unknown, allowed: readonly string[], name: string): string {
+  if (typeof value !== "string" || !allowed.includes(value)) throw new ApiError(`Choose a valid ${name}`, 400);
+  return value;
+}
+
+const TITLE_MAX = 120;
+
+/** One line for a table cell or bullet value: whitespace collapsed, pipes and backticks escaped. */
+function cell(value: string): string {
+  return value.replace(/\s+/g, " ").trim().replace(/[|`]/g, "\\$&");
+}
+
+function serviceDeskTitle(areas: string[], title: string): string {
+  const prefix = areas.length > 1 ? "[Multiple areas]" : `[${areas[0]}]`;
+  const clean = title.replace(/[\r\n[\]]+/g, " ").replace(/\s+/g, " ").trim();
+  const room = TITLE_MAX - prefix.length - 1;
+  if (clean.length <= room) return `${prefix} ${clean}`;
+  if (room < 2) return prefix;
+  let cut = clean.slice(0, room - 1);
+  if (!/\s/.test(clean[room - 1])) cut = cut.includes(" ") ? cut.slice(0, cut.lastIndexOf(" ")) : cut;
+  return `${prefix} ${cut.trimEnd()}\u2026`;
+}
+
+/** Inserts a zero-width space after an @ followed by a letter or digit, outside fenced code. */
+function neutraliseMentions(markdown: string): string {
+  let fence: string | undefined;
+  return markdown.split("\n").map(line => {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1];
+    if (fence) { if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = undefined; return line; }
+    if (marker) { fence = marker; return line; }
+    return line.replace(/@(?=[A-Za-z0-9])/g, "@\u200B");
+  }).join("\n");
+}
+
+export async function createServiceDeskTicket(input: unknown, reporter: string, signal: AbortSignal) {
+  const capability = serviceDeskCapabilities();
+  const { token, label } = serviceDeskSettings();
+  if (!capability || !token) throw new ApiError("Request help is not configured", 503);
+  const cfg = { repo: capability.repository, token, label };
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new ApiError("Invalid request body", 400);
+  const data = input as Record<string, unknown>;
+  const title = text(data.title, "title", 120, true)!;
+  const description = text(data.description, "description", 4000, true)!;
+  const context = text(data.contextUrl, "context URL", 2000, true)!.split(/\s+/)[0];
+  try { if (!["http:", "https:"].includes(new URL(context).protocol)) throw new Error("protocol"); }
+  catch { throw new ApiError("Provide a valid context URL", 400); }
+  const raw = data.serviceDesk as Partial<ServiceDeskRequest> | undefined;
+  if (!raw || typeof raw !== "object") throw new ApiError("Invalid request details", 400);
+  if (!Array.isArray(raw.areas) || !raw.areas.length) throw new ApiError("Choose an area of impact", 400);
+  const areas = [...new Set(raw.areas.map(area => oneOf(area, capability.areas, "area of impact")))];
+  const severity = oneOf(raw.severity, capability.severities, "severity");
+  const type = oneOf(raw.type, capability.types, "type");
+  const detailLines = new Map<string, string[]>();
+  for (const item of (Array.isArray(raw.details) ? raw.details : []).slice(0, SERVICE_DESK_DETAIL_FIELD_COUNT)) {
+    const field = typeof item?.area === "string" && Object.hasOwn(SERVICE_DESK_DETAILS, item.area)
+      ? SERVICE_DESK_DETAILS[item.area].find(candidate => candidate.label === item.label) : undefined;
+    if (!field || !areas.includes(item.area)) throw new ApiError("Invalid request detail", 400);
+    const value = text(item.value, "detail value", 500);
+    if (!value) continue;
+    if (field.options && !field.options.includes(value)) throw new ApiError("Invalid request detail", 400);
+    detailLines.set(item.area, [...detailLines.get(item.area) ?? [], `- **${field.label}:** ${cell(neutraliseMentions(value))}`]);
+  }
+  const body = ["| Area | Reported severity | Type | Requested by |", "| --- | --- | --- | --- |",
+    `| ${[areas.join(", "), severity, type, reporter].map(cell).join(" | ")} |`,
+    "", "## Description", "", neutraliseMentions(description),
+    ...areas.filter(area => detailLines.has(area)).flatMap((area, index) => [...index ? [] : ["", "## Details"], "", `**${area}**`, ...detailLines.get(area)!]),
+    "", "---", `<sub>Submitted from <${new URL(context).href}> via CAIPE Provide Feedback</sub>`];
+  if (body.join("\n").length > 58000) throw new ApiError("The request is too long", 400);
+  const issue = await github(`${cfg.repo}/issues`, "POST", { title: serviceDeskTitle(areas, title), body: body.join("\n"),
+    labels: [cfg.label, "caipe-reported"] }, cfg.token, signal);
   if (!Number.isSafeInteger(issue?.number) || issue.number < 1) throw new ApiError("GitHub did not return an issue receipt", 502);
   return { id: `#${issue.number}`, url: `https://github.com/${cfg.repo}/issues/${issue.number}`, provider: "github" as const };
 }

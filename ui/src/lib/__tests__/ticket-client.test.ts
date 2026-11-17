@@ -105,6 +105,20 @@ import { createStreamAdapter } from "@/lib/streaming";
 // Tests
 // ============================================================================
 
+describe("createTicketViaAgent service desk", () => {
+  const originalFetch = global.fetch;
+  afterEach(() => { global.fetch = originalFetch; });
+  it("posts a service-desk request to the report route without starting a chat", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ data: { id: "#7", provider: "github", url: "https://example.test/issues/7" } }) });
+    const request = { description: "Need access", userEmail: "u@example.test", contextUrl: "https://host.example.test/", requestType: "service-desk" as const,
+      serviceDesk: { areas: ["Vault"], severity: "High", type: "Ticket" } };
+    const result = await createTicketViaAgent({ request });
+    expect(global.fetch).toHaveBeenCalledWith("/api/tickets/report", expect.objectContaining({ method: "POST", body: JSON.stringify(request) }));
+    expect(result).toMatchObject({ id: "#7", provider: "github" });
+    expect(mockCreateConversation).not.toHaveBeenCalled();
+  });
+});
+
 describe("createTicketViaAgent", () => {
   beforeEach(() => {
     jest.clearAllMocks();

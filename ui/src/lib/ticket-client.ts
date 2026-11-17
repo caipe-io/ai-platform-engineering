@@ -1,6 +1,6 @@
 "use client";
 
-import type { FeedbackDestination, FeedbackSeverity } from "@/lib/feedback-features";
+import type { FeedbackDestination, FeedbackSeverity, ServiceDeskCapability, ServiceDeskRequest } from "@/lib/feedback-features";
 import { apiClient } from "@/lib/api-client";
 import { resolveUsableChatAgent } from "@/lib/chat-agent-selection";
 import { getConfig } from "@/lib/config";
@@ -33,6 +33,9 @@ export interface TicketRequest {
   screenshotDataUrl?: string;
   /** Reporter-approved, editable excerpt from the current chat. */
   chatContext?: string;
+  /** "service-desk" sends a Request help ticket with the agent form's classification. */
+  requestType?: "feedback" | "service-desk";
+  serviceDesk?: ServiceDeskRequest;
 }
 
 export interface FeedbackComponent {
@@ -44,6 +47,8 @@ export interface FeedbackOptions extends FeedbackComponent {
   features: string[];
   screenshotsEnabled?: boolean;
   destination?: FeedbackDestination;
+  /** Present when the platform accepts Request help tickets. */
+  serviceDesk?: ServiceDeskCapability;
 }
 
 export interface FeedbackComponents {
@@ -215,7 +220,7 @@ export async function createTicketViaAgent(
   options: CreateTicketOptions
 ): Promise<TicketResult | null> {
   const { request, onEvent, onResult, signal } = options;
-  if (request.componentId !== undefined || getConfig("agenticAppsEnabled")) {
+  if (request.requestType === "service-desk" || request.componentId !== undefined || getConfig("agenticAppsEnabled")) {
     const response = await fetch("/api/tickets/report", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(request), signal,

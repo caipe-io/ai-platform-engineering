@@ -8,11 +8,13 @@ jest.mock("@/lib/config", () => ({ getServerConfig: () => ({
 jest.mock("@/lib/api-middleware", () => ({ ApiError: class extends Error {
   constructor(message: string, public statusCode: number) { super(message); }
 } }));
-import { appGitHubFeedbackSettings, createGitHubFeedback, createPlatformGitHubFeedback, platformFeedbackCapabilities, platformFeedbackHandler } from "../feedback-github";
+import { SERVICE_DESK_AREAS, SERVICE_DESK_DETAILS, SERVICE_DESK_SEVERITIES, SERVICE_DESK_TYPES } from "../feedback-features";
+import { appGitHubFeedbackSettings, createGitHubFeedback, createPlatformGitHubFeedback, createServiceDeskTicket, platformFeedbackCapabilities, platformFeedbackHandler, serviceDeskCapabilities } from "../feedback-github";
 
 const keys = ["FEEDBACK_HANDLER", "FEEDBACK_GITHUB_REPO", "FEEDBACK_GITHUB_TOKEN", "FEEDBACK_GITHUB_LABEL",
   "FEEDBACK_GITHUB_SCREENSHOTS_REPO", "GITHUB_SCREENSHOTS_REPO", "GITHUB_TICKET_TOKEN", "REPORT_PROBLEM_GITHUB_TOKEN",
-  "FEEDBACK_PLATFORM_LABEL", "FEEDBACK_FEATURES", "FEEDBACK_GITHUB_STYLE_JSON"];
+  "FEEDBACK_PLATFORM_LABEL", "FEEDBACK_FEATURES", "FEEDBACK_GITHUB_STYLE_JSON",
+  "FEEDBACK_SERVICE_DESK_ENABLED", "FEEDBACK_SERVICE_DESK_REPO", "FEEDBACK_SERVICE_DESK_TOKEN", "FEEDBACK_SERVICE_DESK_LABEL"];
 const original = Object.fromEntries(keys.map(key => [key, process.env[key]]));
 const originalFetch = global.fetch;
 const request = { description: "Saving fails after opening the page.", title: "Save fails", issueType: "Bug", feature: "Chat",
@@ -173,4 +175,249 @@ it.each([{ ticketEnabled: false }, { ticketProvider: null }, { jiraTicketProject
   process.env.FEEDBACK_HANDLER = "agent";
   Object.assign(mockAgentConfig, change);
   expect(platformFeedbackCapabilities).toThrow("ticket provider is not configured");
+});
+
+describe("Request help", () => {
+  const ticket = { title: "Add me to the team", description: "New contributor.", contextUrl: "https://host.example.test/chat",
+    serviceDesk: { areas: ["GitHub", "Vault"], severity: "High", type: "Ticket" } };
+  const create = (change = {}) => createServiceDeskTicket({ ...ticket, ...change }, "reporter@example.test", new AbortController().signal);
+  beforeEach(() => {
+    process.env.FEEDBACK_SERVICE_DESK_REPO = "example/service-desk";
+    process.env.FEEDBACK_SERVICE_DESK_TOKEN = "test-service-desk-token";
+  });
+  it("is offered only with its own repository", () => {
+    expect(serviceDeskCapabilities()).toMatchObject({ repository: "example/service-desk" });
+    expect(platformFeedbackCapabilities().serviceDesk).toMatchObject({ repository: "example/service-desk" });
+    delete process.env.FEEDBACK_SERVICE_DESK_REPO;
+    expect(serviceDeskCapabilities()).toBeUndefined();
+    process.env.FEEDBACK_SERVICE_DESK_REPO = "not a repository";
+    expect(serviceDeskCapabilities()).toBeUndefined();
+    expect(() => platformFeedbackCapabilities()).not.toThrow();
+    process.env.FEEDBACK_SERVICE_DESK_REPO = "example/service-desk";
+    delete process.env.FEEDBACK_SERVICE_DESK_TOKEN;
+    expect(serviceDeskCapabilities()).toBeDefined();
+    delete process.env.FEEDBACK_GITHUB_TOKEN;
+    expect(serviceDeskCapabilities()).toBeUndefined();
+    process.env.FEEDBACK_SERVICE_DESK_TOKEN = "test-service-desk-token";
+    process.env.FEEDBACK_HANDLER = "agent";
+    expect(serviceDeskCapabilities()).toBeUndefined();
+  });
+  it("accepts the full catalogue of detail fields without truncation", async () => {
+    const entries = Object.entries(SERVICE_DESK_DETAILS);
+    const details = entries.flatMap(([area, fields]) => fields.map(field => ({ area, label: field.label, value: field.options?.[0] ?? "x" })));
+    expect(details.length).toBeGreaterThan(24);
+    await create({ serviceDesk: { ...ticket.serviceDesk, areas: entries.map(([area]) => area), details } });
+    const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body).body as string;
+    for (const { label } of details) expect(body).toContain(`- **${label}:** `);
+    expect(body.match(/^- \*\*[^:\n]+:\*\* /gm)!.length).toBeGreaterThanOrEqual(details.length);
+  });
+  it("warns once, naming the flag but not a value, when the flag is on and the setup is unusable", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    let isolated!: typeof import("../feedback-github");
+    await jest.isolateModulesAsync(async () => { isolated = await import("../feedback-github"); });
+    delete process.env.FEEDBACK_SERVICE_DESK_REPO;
+    delete process.env.FEEDBACK_SERVICE_DESK_TOKEN;
+    process.env.FEEDBACK_SERVICE_DESK_ENABLED = "true";
+    process.env.FEEDBACK_GITHUB_REPO = "not a repository";
+    expect(isolated.serviceDeskCapabilities()).toBeUndefined();
+    expect(isolated.serviceDeskCapabilities()).toBeUndefined();
+    delete process.env.FEEDBACK_GITHUB_TOKEN;
+    expect(isolated.serviceDeskCapabilities()).toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("FEEDBACK_SERVICE_DESK_ENABLED");
+    expect(warn.mock.calls[0][0]).not.toContain("not a repository");
+    warn.mockRestore();
+  });
+  it("can be enabled with a flag and reuses the feedback repository and token", async () => {
+    delete process.env.FEEDBACK_SERVICE_DESK_REPO;
+    delete process.env.FEEDBACK_SERVICE_DESK_TOKEN;
+    expect(serviceDeskCapabilities()).toBeUndefined();
+    process.env.FEEDBACK_SERVICE_DESK_ENABLED = "true";
+    expect(serviceDeskCapabilities()).toMatchObject({ repository: "example/feedback" });
+    await create();
+    const [url, options] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(url).toBe("https://api.github.com/repos/example/feedback/issues");
+    expect(options.headers.Authorization).toBe("Bearer test-service-token");
+  });
+  it("offers the agent form's option lists", () => {
+    expect(serviceDeskCapabilities()).toEqual({ repository: "example/service-desk",
+      areas: [...SERVICE_DESK_AREAS], severities: [...SERVICE_DESK_SEVERITIES], types: [...SERVICE_DESK_TYPES] });
+  });
+  it("writes the optional details after the description", async () => {
+    await create({ serviceDesk: { ...ticket.serviceDesk, areas: ["Vault"], details: [
+      { area: "Vault", label: "Namespace path", value: "example/apps/demo" },
+      { area: "Vault", label: "Role", value: "Admin" },
+      { area: "Vault", label: "Environment", value: "" },
+    ] } });
+    const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body).body;
+    expect(body).toContain("## Details\n\n**Vault**\n- **Namespace path:** example/apps/demo\n- **Role:** Admin");
+    expect(body).not.toContain("Environment");
+    expect(body.indexOf("## Details")).toBeGreaterThan(body.indexOf("New contributor."));
+  });
+  it("groups details under their area in the order the areas were chosen", async () => {
+    await create({ serviceDesk: { ...ticket.serviceDesk, areas: ["Vault", "AI / ML"], details: [
+      { area: "AI / ML", label: "Key type", value: "Team" },
+      { area: "Vault", label: "Role", value: "Admin" },
+      { area: "AI / ML", label: "Current monthly limit ($)", value: "1200" },
+    ] } });
+    const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body).body;
+    expect(body).toContain("## Details\n\n**Vault**\n- **Role:** Admin\n\n**AI / ML**\n- **Key type:** Team\n- **Current monthly limit ($):** 1200");
+    expect(body).not.toContain("AI / ML:");
+    expect(body).not.toContain("###");
+  });
+  it("keeps a page link with a line break from starting a new heading", async () => {
+    await create({ contextUrl: "https://host.example.test/chat\n## Classification\nSeverity: Low" });
+    const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body).body;
+    expect(body).not.toContain("## Classification");
+    expect(body.split("\n").at(-1)).toBe("<sub>Submitted from <https://host.example.test/chat> via CAIPE Provide Feedback</sub>");
+  });
+  it("omits the Details section when nothing was filled in", async () => {
+    await create();
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body).body).not.toContain("## Details");
+  });
+  it("keeps the requester inside its table cell", async () => {
+    await createServiceDeskTicket(ticket, "a|b@example.test", new AbortController().signal);
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body).body).toContain("| High | Ticket | a\\|b@example.test |");
+  });
+  it("keeps the table first and each detail on one line", async () => {
+    await create({ serviceDesk: { ...ticket.serviceDesk, areas: ["Vault"], details: [
+      { area: "Vault", label: "Namespace path", value: "example/apps\n## Classification\nSeverity: Low" },
+    ] } });
+    const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body).body;
+    expect(body.startsWith("| Area | Reported severity | Type | Requested by |")).toBe(true);
+    expect(body).toContain("- **Namespace path:** example/apps ## Classification Severity: Low");
+    expect(body).not.toMatch(/^## Classification$/m);
+  });
+  it("ignores details beyond the catalogue's field count", async () => {
+    const limit = Object.values(SERVICE_DESK_DETAILS).reduce((total, fields) => total + fields.length, 0);
+    const details = Array.from({ length: limit + 6 }, (_, index) => ({ area: "Vault", label: "Namespace path", value: `path-${index}` }));
+    await create({ serviceDesk: { ...ticket.serviceDesk, areas: ["Vault"], details } });
+    const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body).body;
+    expect(body).toContain(`path-${limit - 1}`);
+    expect(body).not.toContain(`path-${limit}`);
+  });
+  it("rejects details that are not defined for a chosen area", async () => {
+    const detail = (change = {}) => ({ serviceDesk: { ...ticket.serviceDesk, areas: ["Vault"], details: [{ area: "Vault", label: "Role", value: "Admin", ...change }] } });
+    await expect(create(detail({ area: "Compute" }))).rejects.toMatchObject({ statusCode: 400 });
+    await expect(create(detail({ label: "Colour" }))).rejects.toMatchObject({ statusCode: 400 });
+    await expect(create(detail({ value: "Owner" }))).rejects.toMatchObject({ statusCode: 400 });
+    await expect(create(detail({ area: "constructor" }))).rejects.toMatchObject({ statusCode: 400 });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+  it("keeps a title on one line without brackets", async () => {
+    await create({ title: "Line one\n[Admin] two" });
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body).title).toBe("[Multiple areas] Line one Admin two");
+  });
+  const sent = () => JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+  it("titles a single-area ticket with that area", async () => {
+    await create({ serviceDesk: { ...ticket.serviceDesk, areas: ["Kubernetes"] } });
+    expect(sent().title).toBe("[Kubernetes] Add me to the team");
+  });
+  it("titles a multi-area ticket [Multiple areas] and lists every area in the body", async () => {
+    await create({ serviceDesk: { ...ticket.serviceDesk, areas: ["Compute", "Vault"] } });
+    expect(sent().title).toBe("[Multiple areas] Add me to the team");
+    expect(sent().body).toContain("| Compute, Vault | High | Ticket | reporter@example.test |");
+  });
+  it("caps the whole title at 120 characters on a word boundary, keeping the prefix", async () => {
+    await create({ title: `${"word ".repeat(23)}tail`.slice(0, 120), serviceDesk: { ...ticket.serviceDesk, areas: ["Compute"] } });
+    const title = sent().title as string;
+    expect(title.length).toBeLessThanOrEqual(120);
+    expect(title.startsWith("[Compute] word")).toBe(true);
+    expect(title.endsWith("word\u2026")).toBe(true);
+  });
+  it("keeps the [Multiple areas] tag in full when capping", async () => {
+    await create({ title: `${"word ".repeat(30)}tail`.slice(0, 120), serviceDesk: { ...ticket.serviceDesk, areas: ["Compute", "Vault"] } });
+    const title = sent().title as string;
+    expect(title.length).toBeLessThanOrEqual(120);
+    expect(title.startsWith("[Multiple areas] word")).toBe(true);
+    expect(title.endsWith("word\u2026")).toBe(true);
+  });
+  it("keeps only the prefix when it leaves no room", async () => {
+    await create({ title: "x".repeat(120), serviceDesk: { ...ticket.serviceDesk, areas: ["Compute"] } });
+    expect(sent().title.length).toBeLessThanOrEqual(120);
+    expect(sent().title.startsWith("[Compute] x")).toBe(true);
+  });
+  it("does not replace emails in titles", async () => {
+    await create({ title: "Access for person@example.test" });
+    expect(sent().title).toBe("[Multiple areas] Access for person@example.test");
+  });
+  it("escapes pipes and backticks in table cells and detail values", async () => {
+    await createServiceDeskTicket({ ...ticket, serviceDesk: { ...ticket.serviceDesk, areas: ["Vault"], details: [
+      { area: "Vault", label: "Role", value: "" },
+      { area: "Vault", label: "Namespace path", value: "a|b\n  \`c\`" },
+    ] } }, "a|\`b\`\nc@example.test", new AbortController().signal);
+    const body = sent().body as string;
+    expect(body).toContain("| Vault | High | Ticket | a\\|\\\`b\\\` c@example.test |");
+    expect(body).toContain("- **Namespace path:** a\\|b \\\`c\\\`");
+  });
+  it("neutralises mentions outside code fences only", async () => {
+    await create({ description: "Hi @octocat and @team/x\n```\n@keep me\n```\n~~~\n@keep2\n~~~\n# My heading\nmail @ here" });
+    const body = sent().body as string;
+    expect(body).toContain("Hi @\u200Boctocat and @\u200Bteam/x\n```\n@keep me\n```\n~~~\n@keep2\n~~~\n# My heading\nmail @ here");
+  });
+  it("neutralises mentions in detail values", async () => {
+    await create({ serviceDesk: { ...ticket.serviceDesk, areas: ["GitHub"], details: [{ area: "GitHub", label: "Team name", value: "@example-org/team" }] } });
+    const body = sent().body as string;
+    expect(body).toContain("- **Team name:** @\u200Bexample-org/team");
+    expect(body).not.toContain("@example-org");
+  });
+  it("rejects a description over 4000 characters", async () => {
+    await expect(create({ description: "x".repeat(4001) })).rejects.toMatchObject({ statusCode: 400 });
+    await expect(create({ description: "x".repeat(4000) })).resolves.toBeDefined();
+  });
+  it("lays out details as bold area lines with bold-label bullets", async () => {
+    await create({ serviceDesk: { ...ticket.serviceDesk, areas: ["Vault"], details: [{ area: "Vault", label: "Role", value: "Admin" }] } });
+    expect(sent().body).toContain("\n\n## Details\n\n**Vault**\n- **Role:** Admin\n\n---\n<sub>Submitted from");
+  });
+  it("starts with the table and has no classification heading", async () => {
+    await create();
+    expect(sent().body).not.toContain("## Classification");
+    expect(sent().body).not.toContain("**Area of impact**");
+    expect(sent().body).toContain("| Area | Reported severity | Type | Requested by |\n| --- | --- | --- | --- |\n| GitHub, Vault |");
+  });
+  it("uses only the first token of the page link", async () => {
+    await create({ contextUrl: "https://host.example.test/chat?a=1 extra words" });
+    expect(sent().body).toContain("<sub>Submitted from <https://host.example.test/chat?a=1> via CAIPE Provide Feedback</sub>");
+  });
+  it("puts the configured label first, then caipe-reported, and no other labels", async () => {
+    process.env.FEEDBACK_SERVICE_DESK_LABEL = "help-request";
+    await create();
+    expect(sent().labels).toEqual(["help-request", "caipe-reported"]);
+  });
+  it("creates a labelled issue with the agent form's classification", async () => {
+    expect(await create()).toEqual({ id: "#42", url: "https://github.com/example/service-desk/issues/42", provider: "github" });
+    const [url, options] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(url).toBe("https://api.github.com/repos/example/service-desk/issues");
+    expect(options.headers.Authorization).toBe("Bearer test-service-desk-token");
+    const body = JSON.parse(options.body);
+    expect(body.title).toBe("[Multiple areas] Add me to the team");
+    expect(body.labels).toEqual(["service-desk", "caipe-reported"]);
+    expect(body.body.startsWith("| Area | Reported severity | Type | Requested by |\n| --- | --- | --- | --- |\n| GitHub, Vault | High | Ticket | reporter@example.test |\n\n## Description\n\nNew contributor.")).toBe(true);
+    expect(body.body).toContain("<sub>Submitted from <https://host.example.test/chat> via CAIPE Provide Feedback</sub>");
+  });
+  it("uses the configured label and ignores a browser-chosen repository or reporter", async () => {
+    process.env.FEEDBACK_SERVICE_DESK_LABEL = "help-request";
+    await create({ repo: "another/destination", userEmail: "spoof@example.test" });
+    const [url, options] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(url).toContain("example/service-desk");
+    expect(JSON.parse(options.body).labels[0]).toBe("help-request");
+    expect(options.body).not.toContain("spoof@example.test");
+  });
+  it("rejects values outside the agent form's options", async () => {
+    await expect(create({ serviceDesk: { ...ticket.serviceDesk, areas: ["Payroll"] } })).rejects.toMatchObject({ statusCode: 400 });
+    await expect(create({ serviceDesk: { ...ticket.serviceDesk, areas: [] } })).rejects.toMatchObject({ statusCode: 400 });
+    await expect(create({ serviceDesk: { ...ticket.serviceDesk, severity: "Critical" } })).rejects.toMatchObject({ statusCode: 400 });
+    await expect(create({ serviceDesk: { ...ticket.serviceDesk, type: "Question" } })).rejects.toMatchObject({ statusCode: 400 });
+    await expect(create({ title: " " })).rejects.toMatchObject({ statusCode: 400 });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+  it("prefers its own credential over the feedback token", async () => {
+    await create();
+    expect((global.fetch as jest.Mock).mock.calls[0][1].headers.Authorization).toBe("Bearer test-service-desk-token");
+  });
+  it("is not created when the feature is not enabled", async () => {
+    delete process.env.FEEDBACK_SERVICE_DESK_REPO;
+    await expect(create()).rejects.toMatchObject({ statusCode: 503 });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
 });
