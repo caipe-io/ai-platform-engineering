@@ -1,5 +1,6 @@
 """Unit checks for capture policy and wire fields; no spans leave the process."""
 
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -54,6 +55,8 @@ def test_capture_requires_opt_in_and_exact_root_selection(
                 delegated = next(s for s in spans if s.name == 'specialist.agent')
                 assert chat.attributes['gen_ai.prompt.1.content'] == 'private-user'
                 assert chat.attributes['gen_ai.completion.0.content'] == 'private-answer'
+                assert json.loads(chat.attributes['gen_ai.input.messages'])[1]['parts'][0]['content'] == 'private-user'
+                assert json.loads(chat.attributes['gen_ai.output.messages'])[0]['parts'][0]['content'] == 'private-answer'
                 assert tool.attributes['traceloop.entity.input'] == '{"query": "private-query"}'
                 assert tool.attributes['traceloop.entity.output'] == 'private-result'
                 assert delegated.attributes['ioa_observe.entity.output'] == 'private-delegate-result'
@@ -72,6 +75,8 @@ def test_capture_selects_visible_blocks_and_preserves_actual_tool_calls() -> Non
     assert 'visible answer' in attrs['gen_ai.completion.0.content']
     assert 'lookup' in attrs['gen_ai.completion.0.content']
     assert 'excluded' not in str(attrs)
+    normalized = json.loads(attrs['gen_ai.output.messages'])
+    assert normalized[0]['parts'][0]['content'] == attrs['gen_ai.completion.0.content']
 
 
 def test_capture_limits_and_truncation_are_explicit() -> None:

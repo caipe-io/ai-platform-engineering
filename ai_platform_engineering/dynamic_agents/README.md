@@ -623,6 +623,8 @@ allowlist or `*` selects no agents. Selected sessions include visible model
 messages, completions, tool calls/results and delegate instructions/results;
 their child specialist spans inherit the session's selection. Other sessions
 retain metadata-only capture. Langfuse configuration is independent.
+The exporter writes both flattened prompt/completion fields for Scope's UI and
+GenAI input/output message fields for its normalized cognitive trajectory.
 
 Only enable this for conversations whose contents may be stored in the configured
 Scope backend. This is content capture, not automatic secret redaction. Image,

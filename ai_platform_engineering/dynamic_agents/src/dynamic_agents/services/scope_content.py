@@ -37,6 +37,7 @@ def message_attributes(messages: list[Any], prefix: str) -> dict[str, Any]:
     """Bound each text and the aggregate, marking any loss of evidence."""
     selected = messages if len(messages) <= 32 else messages[:2] + messages[-30:]
     attrs: dict[str, Any] = {"scope.content.capture": True}
+    captured: list[dict[str, Any]] = []
     truncated = len(selected) != len(messages)
     budget = 131072
     for index, message in enumerate(selected):
@@ -50,7 +51,11 @@ def message_attributes(messages: list[Any], prefix: str) -> dict[str, Any]:
         if text and limit:
             attrs[f"{prefix}.{index}.role"] = role
             attrs[f"{prefix}.{index}.content"] = text[:limit]
+            captured.append({"role": role, "parts": [{"type": "text", "content": text[:limit]}]})
             budget -= min(len(text), limit)
+    # The UI span reader uses flattened fields; the normalizer uses GenAI messages.
+    direction = "input" if prefix == "gen_ai.prompt" else "output"
+    attrs[f"gen_ai.{direction}.messages"] = json.dumps(captured, ensure_ascii=False)
     attrs[f"scope.content.{prefix.rsplit('.', 1)[-1]}_truncated"] = truncated
     return attrs
 
