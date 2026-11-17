@@ -16,6 +16,10 @@ description: >
     where the series does not need to exceed the latest stable tag —
     hotfixes patch older releases.
 
+  Manual promotion may opt into rc/hotfix tags, with an increasing suffix and
+  a base newer than the latest stable tag. Older-series hotfixes use the
+  release-branch prerelease mode instead of tagging current main.
+
   In both modes the exact tag must not already exist locally or on the
   remote.
 
@@ -23,6 +27,10 @@ inputs:
   version:
     description: 'The version/tag string to validate'
     required: true
+  allow_prerelease:
+    description: 'Allow rc/hotfix promotion from main; stable-only by default'
+    required: false
+    default: 'false'
   base_version:
     description: >
       Bare x.y.z base version for prerelease mode (e.g. from a release/x.y.z
@@ -45,6 +53,7 @@ runs:
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
+        ALLOW_PRERELEASE: ${{ inputs.allow_prerelease }}
         BASE_VERSION: ${{ inputs.base_version }}
         SUFFIX_TYPE: ${{ inputs.suffix_type }}
       run: |
@@ -55,6 +64,34 @@ runs:
           git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null 2>&1 ||
             git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1
         }
+
+        require_newer_than_stable() {
+          LATEST_STABLE=""
+          while IFS= read -r TAG_NAME; do
+            [[ -z "$TAG_NAME" ]] && continue
+            if [[ -z "$LATEST_STABLE" ]]; then
+              LATEST_STABLE="$TAG_NAME"
+            else
+              HIGHER=$(printf '%s\n' "$LATEST_STABLE" "$TAG_NAME" | sort -V | tail -n1)
+              LATEST_STABLE="$HIGHER"
+            fi
+          done < <(git tag -l | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$')
+
+          if [[ -n "$LATEST_STABLE" ]]; then
+            HIGHER=$(printf '%s\n' "$LATEST_STABLE" "$1" | sort -V | tail -n1)
+            if [[ "$HIGHER" != "$1" || "$1" == "$LATEST_STABLE" ]]; then
+              echo "❌ ERROR: ${1} must be strictly greater than the latest stable tag ${LATEST_STABLE}"
+              exit 1
+            fi
+          fi
+        }
+
+        if [[ -z "$BASE_VERSION" && "${ALLOW_PRERELEASE:-false}" == "true" ]] &&
+           [[ "$VERSION" =~ ^((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))-(rc|hotfix)\.([1-9][0-9]*)$ ]]; then
+          BASE_VERSION="${BASH_REMATCH[1]}"
+          SUFFIX_TYPE="${BASH_REMATCH[5]}"
+          require_newer_than_stable "$BASE_VERSION"
+        fi
 
         if [[ -n "$BASE_VERSION" ]]; then
           # ── Prerelease mode ──────────────────────────────────────────
@@ -94,7 +131,7 @@ runs:
           # ── Stable mode ──────────────────────────────────────────────
           if ! [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo "❌ ERROR: '${VERSION}' must be a stable semver (e.g. 1.0.0)"
-            echo "   Use release-prerelease.yml for RC/hotfix builds."
+            echo "   Enable allow_prerelease for manual RC/hotfix promotion, or use release-prerelease.yml."
             exit 1
           fi
 
@@ -105,24 +142,7 @@ runs:
 
           NEW_BARE=$(echo "$VERSION" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')
 
-          LATEST_STABLE=""
-          while IFS= read -r TAG_NAME; do
-            [[ -z "$TAG_NAME" ]] && continue
-            if [[ -z "$LATEST_STABLE" ]]; then
-              LATEST_STABLE="$TAG_NAME"
-            else
-              HIGHER=$(printf '%s\n' "$LATEST_STABLE" "$TAG_NAME" | sort -V | tail -n1)
-              LATEST_STABLE="$HIGHER"
-            fi
-          done < <(git tag -l | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$')
-
-          if [[ -n "$LATEST_STABLE" ]]; then
-            HIGHER=$(printf '%s\n' "$LATEST_STABLE" "$NEW_BARE" | sort -V | tail -n1)
-            if [[ "$HIGHER" != "$NEW_BARE" || "$NEW_BARE" == "$LATEST_STABLE" ]]; then
-              echo "❌ ERROR: ${VERSION} (base ${NEW_BARE}) must be strictly greater than the latest stable tag ${LATEST_STABLE}"
-              exit 1
-            fi
-          fi
+          require_newer_than_stable "$NEW_BARE"
 
           echo "✅ ${VERSION} is valid (latest stable was ${LATEST_STABLE:-none})"
         fi

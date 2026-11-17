@@ -1,11 +1,10 @@
 name: "[Release] Manual Version Release"
-description: "Manually trigger a new release by specifying the version"
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Stable version to release (e.g., 1.0.0)'
+        description: 'Version to promote: x.y.z, x.y.z-rc.N, or x.y.z-hotfix.N'
         required: true
         type: string
 
@@ -23,6 +22,7 @@ jobs:
       RELEASE_VERSION: ${{ github.event.inputs.version }}
     outputs:
       current_version: ${{ steps.validate.outputs.current_version }}
+      is_final_release: ${{ steps.channel.outputs.is_final_release }}
     steps:
       - name: 🔒 Harden runner
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
@@ -48,8 +48,16 @@ jobs:
         uses: ./.github/actions/validate-release-tag
         with:
           version: ${{ env.RELEASE_VERSION }}
+          allow_prerelease: 'true'
+
+      - name: Classify promotion channel
+        id: channel
+        uses: ./.github/actions/determine-release-tag
+        with:
+          manual_tag: ${{ env.RELEASE_VERSION }}
 
       - name: 📰 Require a release post for the minor series
+        if: steps.channel.outputs.is_final_release == 'true'
         run: |
           set -euo pipefail
 
@@ -92,6 +100,7 @@ jobs:
         uses: ./.github/actions/prepare-release
         with:
           version: ${{ github.event.inputs.version }}
+          allow_prerelease: 'true'
 
       - name:  Commit, tag, and push
         run: |
@@ -127,14 +136,19 @@ jobs:
           git push origin main
           git push origin "$NEW_VERSION"
 
+          if [[ "$NEW_VERSION" == *-rc.* || "$NEW_VERSION" == *-hotfix.* ]]; then
+            echo "Build-only tag $NEW_VERSION pushed; candidate CI publishes versioned images and charts." >> "$GITHUB_STEP_SUMMARY"
+            echo "No GitHub Release, stable changelog, or latest alias is created for this promotion." >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "✅ Committed and pushed release $NEW_VERSION"
           echo ""
           echo "🏷️ Tag '$NEW_VERSION' created and pushed"
 
-  # Then: create draft release. The tag push triggers CI builds automatically.
+  # Stable promotions create a release; candidate tag pushes only build artifacts.
   publish-release:
     name: Create Draft Release
     needs: commit-release
+    if: needs.commit-release.outputs.is_final_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -188,7 +188,10 @@ def test_prepare_release_validates_stable_input_before_writing_files() -> None:
   data = yaml.safe_load((ROOT / ".github/actions/prepare-release/action.yml").read_text())
   first_step = data["runs"]["steps"][0]
   assert first_step["uses"] == "./.github/actions/validate-release-tag"
-  assert first_step["with"] == {"version": "${{ inputs.version }}"}
+  assert first_step["with"] == {
+    "version": "${{ inputs.version }}",
+    "allow_prerelease": "${{ inputs.allow_prerelease }}",
+  }
 
 
 def test_finalization_does_not_delete_git_tags() -> None:
@@ -233,3 +236,81 @@ def test_release_post_rejects_prereleases_before_producing_metadata(
     assert values["new_version"] == version.removeprefix("v")
   else:
     assert not output.exists()
+
+
+@pytest.mark.parametrize(
+  ("version", "valid"),
+  [
+    ("1.1.0-rc.2", True),
+    ("1.1.0-rc.1", False),
+    ("1.1.0-rc.0", False),
+    ("1.1.0-rc.01", False),
+    ("1.0.1-hotfix.2", True),
+    ("1.0.1-hotfix.1", False),
+    ("1.1.0", True),
+    ("1.0.0-rc.2", False),
+    ("0.9.0-hotfix.2", False),
+    ("1.1.0-dev.1", False),
+    ("canary", False),
+    ("1.1.0-rc.2; exit 0", False),
+  ],
+)
+def test_manual_promotion_accepts_increasing_rc_and_hotfix_tags(
+  repository: Path, version: str, valid: bool,
+) -> None:
+  for tag in ("1.1.0-rc.1", "1.0.1-hotfix.1"):
+    subprocess.run(["git", "tag", tag], cwd=repository, check=True)
+  result = subprocess.run(
+    ["bash", "-c", action_script("validate-release-tag", "Validate version")],
+    cwd=repository,
+    env={**os.environ, "VERSION": version, "BASE_VERSION": "", "SUFFIX_TYPE": "", "ALLOW_PRERELEASE": "true"},
+    text=True,
+    capture_output=True,
+  )
+  assert (result.returncode == 0) is valid, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("version", ["1.1.0-rc.2", "1.0.1-hotfix.2"])
+def test_candidate_preparation_preserves_changelog(repository: Path, version: str) -> None:
+  path = repository / "CHANGELOG.md"
+  history = "## 1.0.0 (2026-01-01)\n\n- Existing release history\n"
+  path.write_text(history)
+  result = subprocess.run(
+    ["bash", "-c", action_script("prepare-release", "Generate changelog")],
+    cwd=repository,
+    env={**os.environ, "VERSION": version},
+    text=True,
+    capture_output=True,
+  )
+  assert result.returncode == 0, result.stdout + result.stderr
+  assert path.read_text() == history
+
+
+def test_manual_candidates_bypass_stable_release_and_post_requirements() -> None:
+  workflow = yaml.safe_load((ROOT / ".github/workflows/release-manual.yml").read_text())
+  jobs = workflow["jobs"]
+  steps = jobs["commit-release"]["steps"]
+  resolver = next(step for step in steps if step.get("id") == "channel")
+  assert resolver["uses"] == "./.github/actions/determine-release-tag"
+  assert resolver["with"]["manual_tag"] == "${{ env.RELEASE_VERSION }}"
+  assert jobs["commit-release"]["outputs"]["is_final_release"] == "${{ steps.channel.outputs.is_final_release }}"
+  assert jobs["publish-release"]["if"] == "needs.commit-release.outputs.is_final_release == 'true'"
+  post = next(step for step in steps if "Require a release post" in step["name"])
+  assert post["if"] == "steps.channel.outputs.is_final_release == 'true'"
+  for step in steps:
+    if step.get("uses") in ("./.github/actions/validate-release-tag", "./.github/actions/prepare-release"):
+      assert step["with"]["allow_prerelease"] == "true"
+
+
+@pytest.mark.parametrize("suffix", ["rc", "hotfix"])
+def test_manual_candidate_suffix_cannot_move_backwards(repository: Path, suffix: str) -> None:
+  subprocess.run(["git", "tag", f"1.1.0-{suffix}.5"], cwd=repository, check=True)
+  result = subprocess.run(
+    ["bash", "-c", action_script("validate-release-tag", "Validate version")],
+    cwd=repository,
+    env={**os.environ, "VERSION": f"1.1.0-{suffix}.4", "BASE_VERSION": "", "SUFFIX_TYPE": "", "ALLOW_PRERELEASE": "true"},
+    text=True,
+    capture_output=True,
+  )
+  assert result.returncode != 0
+  assert "must be greater" in result.stdout

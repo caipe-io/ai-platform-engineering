@@ -16,11 +16,12 @@ Releases follow this sequence:
 main → release/x.y.z branch → RC tags → final x.y.z tag → Helm publish + docs
 ```
 
-`auto-tag.yml` creates RC tags on release branches. Use `release-manual.yml` to cut
-the final stable tag; `release-finalize.yml` publishes its draft GitHub Release
-automatically after the required builds pass.
+`auto-tag.yml` creates RC tags on release branches. `release-manual.yml` also
+accepts explicit stable, RC, or hotfix versions from main. For stable tags,
+`release-finalize.yml` publishes the draft GitHub Release automatically after
+the required builds pass.
 
-RC images and charts remain prerelease artifacts. They do not create entries in
+RC and hotfix test images and charts remain prerelease artifacts. They do not create entries in
 GitHub Releases or `CHANGELOG.md`, and they never update the `latest` image alias.
 RC Git tags are retained after stable releases and remain available in GitHub's
 Tags tab.
@@ -63,9 +64,22 @@ gh workflow run release-manual.yml \
   -f version=x.y.z
 ```
 
-This workflow accepts only stable `x.y.z` versions. It creates the stable tag and
-a draft GitHub Release, and folds candidate changes into the stable changelog
-section. Tag-triggered CI builds the images and Helm chart; `release-finalize.yml`
+Manual promotion supports these channels:
+
+| Input | Result |
+| --- | --- |
+| `x.y.z-rc.N` | Versioned candidate images/chart; no GitHub Release, stable changelog, or `latest` update |
+| `x.y.z-hotfix.N` | Versioned hotfix test images/chart; no GitHub Release, stable changelog, or `latest` update |
+| `x.y.z` | Stable tag, draft GitHub Release, stable changelog, and eligibility for `latest` |
+
+For example, run the same manual workflow with `version=1.4.0-rc.7`,
+`version=1.4.1-hotfix.1`, or `version=1.4.1`. Exact tags cannot be reused;
+candidate suffixes must increase within their base/channel. Promotion from
+main requires a base newer than the latest stable version. For a hotfix to an
+older series, use `release-prerelease.yml` against the appropriate release branch.
+
+A stable promotion creates a draft GitHub Release and folds candidate changes
+into the stable changelog section. Tag-triggered CI builds the images and Helm chart; `release-finalize.yml`
 publishes the release after those builds pass.
 
 ---

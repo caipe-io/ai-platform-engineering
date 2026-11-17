@@ -6,18 +6,25 @@ description: >
 
 inputs:
   version:
-    description: 'Stable release version (e.g. 1.0.0)'
+    description: 'Stable version, or an explicitly allowed rc/hotfix version'
     required: true
+
+  allow_prerelease:
+    description: 'Allow build-only rc/hotfix promotion without changelog entries'
+    required: false
+    default: 'false'
 
 runs:
   using: "composite"
   steps:
-    - name: ✅ Validate stable release version
+    - name: ✅ Validate release version
       uses: ./.github/actions/validate-release-tag
       with:
         version: ${{ inputs.version }}
+        allow_prerelease: ${{ inputs.allow_prerelease }}
 
     - name: 📦 Install commitizen
+      if: ${{ !contains(inputs.version, '-') }}
       shell: bash
       run: |
         uv tool install commitizen==4.19.3
@@ -35,6 +42,11 @@ runs:
         VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
+
+        if [[ "$VERSION" == *-rc.* || "$VERSION" == *-hotfix.* ]]; then
+          echo "Build-only promotion: leave CHANGELOG.md unchanged for $VERSION"
+          exit 0
+        fi
 
         # A release PR may have prepared this entry before its stable tag exists.
         # Regenerate that entry so changes made after PR preparation are included.
