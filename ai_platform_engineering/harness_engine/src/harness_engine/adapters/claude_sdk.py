@@ -226,13 +226,19 @@ class ClaudeSDKAdapter:
         assert task is not None
         self._active[context.turn.run_id] = task
         content = []
+        final_content: str | None = None
         try:
             async with aclosing(self.stream(context)) as events:
                 async for event in events:
                     if event.event_type == "content.delta":
                         content.append(event.data["text"])
+                    elif event.event_type == "result.updated" and isinstance(event.data.get("final_content"), str):
+                        final_content = event.data["final_content"]
                     yield event
-            yield TurnOutcome(status="completed", result={"content": "".join(content)})
+            yield TurnOutcome(status="completed", result={
+                "content": final_content if final_content is not None else "".join(content),
+                **({"final_content": final_content} if final_content is not None else {}),
+            })
         finally:
             self._active.pop(context.turn.run_id, None)
 
@@ -316,6 +322,8 @@ class ClaudeSDKAdapter:
                     elif isinstance(message, ResultMessage):
                         if message.is_error:
                             raise RuntimeError("Claude Agent SDK run failed")
+                        if isinstance(message.result, str):
+                            yield CanonicalEventDraft(event_type="result.updated", data={"content": message.result, "final_content": message.result})
                         if message.session_id != provider_id:
                             provider_id = message.session_id
                             yield CanonicalEventDraft(

@@ -628,6 +628,7 @@ requires-dist = [
     { name = "langfuse", specifier = "==3.15.0" },
     { name = "langgraph-checkpoint-mongodb", specifier = "==0.5.1" },
     { name = "llm-wrapper", editable = "../llm_wrapper" },
+    { name = "mongomock", marker = "extra == 'dev'", specifier = "==4.3.0" },
     { name = "prometheus-client", specifier = "==0.26.0" },
     { name = "pydantic", specifier = "==2.13.4" },
     { name = "pydantic-settings", specifier = "==2.15.0" },

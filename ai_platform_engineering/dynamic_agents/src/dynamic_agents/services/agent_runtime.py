@@ -105,6 +105,7 @@ from dynamic_agents.services.structured_response import (
     create_submit_structured_response_tool,
     extract_response_format,
 )
+from dynamic_agents.services.subagent_dispatch import subagent_factory
 from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryMiddleware
 from dynamic_agents.services.tracing import TracingManager
 
@@ -733,6 +734,7 @@ class AgentRuntime:
         # Track config timestamps for cache invalidation
         self._config_updated_at: datetime = config.updated_at
         self._subagent_models: dict[str, ModelConfig] = {}
+        self._subagent_execution_owners: dict[str, tuple[str, bool] | None] = {}
         self._mcp_servers_updated_at: datetime = max(
             (s.updated_at for s in mcp_servers), default=datetime.min.replace(tzinfo=timezone.utc)
         )
@@ -1572,7 +1574,19 @@ class AgentRuntime:
                 )
                 continue
 
-            # Load subagent config from MongoDB
+            execution = self._mongo_service.get_agent_execution(ref.agent_id)
+            self._subagent_execution_owners[ref.agent_id] = self._subagent_execution_owner(execution)
+            if execution and execution.get("enabled") is False:
+                continue
+            if execution and execution.get("execution_harness_id") not in (None, "dynamic_agents"):
+                factory = subagent_factory.get()
+                if factory is None:
+                    raise ValueError("Harness-owned subagents require Harness Engine execution")
+                subagents.append(await factory(ref))
+                continue
+
+            # Native children require a Deep Agents configuration; provider-owned
+            # children above need not have a LangChain model at all.
             subagent_config = self._mongo_service.get_agent(ref.agent_id)
             if not subagent_config:
                 logger.warning(f"Agent '{self.config.name}': Subagent '{ref.name}' not found (agent_id={ref.agent_id})")
@@ -1775,6 +1789,12 @@ class AgentRuntime:
         """Get the age of this runtime in seconds."""
         return time.time() - self._created_at
 
+    @staticmethod
+    def _subagent_execution_owner(execution: dict[str, Any] | None) -> tuple[str, bool] | None:
+        if execution is None:
+            return None
+        return execution.get("execution_harness_id") or "dynamic_agents", execution.get("enabled") is not False
+
     def is_stale(
         self,
         agent_config: DynamicAgentConfig,
@@ -1789,6 +1809,10 @@ class AgentRuntime:
         if agent_config.model != self.config.model:
             return True
         if self._mongo_service:
+            for agent_id, owner in getattr(self, "_subagent_execution_owners", {}).items():
+                execution = self._mongo_service.get_agent_execution(agent_id)
+                if self._subagent_execution_owner(execution) != owner:
+                    return True
             for agent_id, model in getattr(self, "_subagent_models", {}).items():
                 subagent = self._mongo_service.get_agent(agent_id)
                 if subagent is None or subagent.model != model:

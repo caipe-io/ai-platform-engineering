@@ -265,6 +265,7 @@ TERMINAL_RUN_STATUSES = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCEL
 
 class RunRecord(StrictModel):
     run_id: str
+    parent_run_id: str | None = None
     owner_subject: str
     agent_id: str
     agent_version: int
