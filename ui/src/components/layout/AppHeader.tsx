@@ -263,7 +263,7 @@ export function AppHeader() {
   const adminAlerts = adminOnlyAlerts;
   return (
     <>
-    <header className="relative z-50 flex min-h-14 shrink-0 flex-wrap items-center gap-x-2 bg-card/50 px-3 backdrop-blur-xl sm:h-14 sm:flex-nowrap sm:px-4">
+    <header className="relative z-50 flex min-h-14 shrink-0 flex-wrap items-center gap-x-2 bg-card/50 px-3 backdrop-blur-xl sm:flex-nowrap sm:px-4">
       <div className="flex min-h-14 min-w-0 shrink-0 items-center gap-1 sm:min-h-0">
         <ApplicationNavigationMenuButton />
         <MobileApplicationBrand />
@@ -286,7 +286,7 @@ export function AppHeader() {
       </div>
 
       {/* Status & Actions */}
-      <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5 sm:shrink-0 sm:flex-nowrap">
+      <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1.5">
         {tourPolicy.loaded && tourPolicy.platformEnabled && tourPolicy.enabled && tourPolicy.enabledTours.length > 0 && <Popover open={tourMenuOpen} onOpenChange={setTourMenuOpen}>
           <PopoverTrigger asChild>
             <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" aria-label="CAIPE Tour">
@@ -493,7 +493,7 @@ export function AppHeader() {
         </div>
 
         {/* Personalization, Links & User */}
-        <div className="flex items-center gap-1">
+        <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1">
           {config.envBadge ? (
             <span
               className="mr-1 inline-flex shrink-0 items-center rounded-full border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400"

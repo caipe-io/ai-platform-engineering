@@ -261,7 +261,7 @@ test.describe("Platform Health page", () => {
     await dismissReleaseUpgradeDialog(page);
     await expect(page.getByText("Platform Capabilities", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Inspect Audit Service health details", exact: true })).toBeVisible();
-    await expect(page.getByText(/last error: S3 write failed/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Inspect Audit Service health details", exact: true }).getByText(/last error: S3 write failed/)).toBeVisible();
     await expect(page.getByText("System Status: Degraded")).toBeVisible();
   });
 
@@ -283,7 +283,7 @@ test.describe("Platform Health page", () => {
 
     await expect(page.getByText("System Status: Degraded")).toBeVisible();
     await expect(page.getByRole("button", { name: "Inspect Audit Service health details", exact: true })).toBeVisible();
-    await expect(page.getByText(/local disk 92\.0% used/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Inspect Audit Service health details", exact: true }).getByText(/local disk 92\.0% used/)).toBeVisible();
   });
 
   test("optional capability failure degrades without marking the platform down", async ({ page }) => {

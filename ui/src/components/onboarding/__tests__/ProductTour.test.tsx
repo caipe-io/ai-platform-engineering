@@ -94,6 +94,31 @@ describe("ProductTourGate", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it.each([null, { success: true }, { success: true, data: {} }, { success: false, data: {} }])(
+    "keeps the workspace usable when automatic tour progress is incomplete: %j",
+    async (payload) => {
+      global.fetch = jest.fn(() => response(payload));
+      await act(async () => {
+        render(<><button>Workspace action</button><ProductTourGate /></>);
+      });
+
+      expect(screen.getByRole("button", { name: "Workspace action" })).toBeEnabled();
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    },
+  );
+
+  it("reports incomplete progress for a manually requested tour without crashing", async () => {
+    mockGetConfig.mockReturnValue(false);
+    global.fetch = jest.fn(() => response({ success: true, data: {} }));
+    render(<ProductTourGate />);
+
+    act(() => requestProductTour());
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Tour progress is unavailable");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("waits for the initial start save before accepting progress", async () => {
     const originalFetch = global.fetch;
     let finishStart!: (value: Response) => void;
@@ -203,7 +228,7 @@ describe("ProductTourGate", () => {
     );
   });
   it.each([
-    ["add-model", "Save provider details"],
+    ["add-model", "Connect your model provider"],
     ["add-mcp", "Start a server connection"],
     ["chat", "Choose who you want to work with"],
     ["credentials", "Connect an account for your tools"],
@@ -350,7 +375,7 @@ describe("ProductTourGate", () => {
     window.history.replaceState({}, "", "/dynamic-agents?tab=llm-models");
     await waitFor(() => expect(screen.getByRole("button", { name: "Next" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await screen.findByRole("heading", { name: "Match the provider identifiers" });
+    await screen.findByRole("heading", { name: "Inspect the registered model" });
     expect(mockPush).toHaveBeenCalledTimes(1);
   });
 

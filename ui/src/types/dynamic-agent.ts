@@ -616,8 +616,11 @@ export interface AvailableSubagent {
 // =============================================================================
 
 export interface LLMModelConfig {
-  _id: string; // model_id
+  _id: string; // registry ID; distinct from provider model ID for named connections
   model_id: string;
+  upstream_model_id?: string;
+  connection_id?: string;
+  connection_name?: string;
   name: string;
   provider: string;
   description?: string;
@@ -628,6 +631,8 @@ export interface LLMModelConfig {
 }
 
 export interface LLMModelCreate {
+  connection_id?: string;
+  upstream_model_id?: string;
   model_id: string; // Unique model identifier (e.g., "gpt-4o")
   name: string;
   provider: string;

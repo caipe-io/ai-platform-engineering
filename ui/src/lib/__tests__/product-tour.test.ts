@@ -54,3 +54,13 @@ describe("product tour state", () => {
   });
 
 });
+
+
+it("guides users from saving a connection to inspecting its already-registered models", () => {
+  const steps = PRODUCT_TOURS["add-model"].steps;
+  expect(steps[0].points?.join(" ")).toContain("Save Connection");
+  expect(steps[1].description).toContain("registered by Save Connection");
+  expect(steps[2].points?.join(" ")).toContain("no duplicate registration");
+  expect(steps[1].target).toBe('[data-tour="model-catalog"]');
+  expect(steps[2].target).toBe('[data-tour="model-catalog"]');
+});

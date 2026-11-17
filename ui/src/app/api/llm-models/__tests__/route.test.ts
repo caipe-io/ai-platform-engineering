@@ -173,7 +173,7 @@ describe("/api/llm-models", () => {
       { type: "llm_model", action: "read", id: expect.any(Function) },
     );
     expect(collection.find).toHaveBeenCalledWith({});
-    expect(body.items).toHaveLength(1);
+    expect(body.items).toHaveLength(0);
     expect(body.pagination).toEqual({ total: 1, page: 2, page_size: 5 });
   });
 
@@ -414,4 +414,25 @@ describe("/api/llm-models", () => {
     expect(collection.deleteOne).toHaveBeenCalledWith({ _id: "custom" });
     expect(body).toEqual({ success: true, data: { deleted: true } });
   });
+});
+
+
+it("filters unpublished groups and denied models before slicing pages or counting", async () => {
+  const rows = [
+    { _id: "pending-1", model_id: "pending-1", name: "A", provider: "openai", connection_id: "pending" },
+    { _id: "pending-2", model_id: "pending-2", name: "B", provider: "openai", connection_id: "pending" },
+    { _id: "legacy", model_id: "legacy", name: "C", provider: "openai" },
+    { _id: "ready", model_id: "ready", name: "D", provider: "openai", connection_id: "ready-group" },
+    { _id: "denied", model_id: "denied", name: "E", provider: "openai" },
+  ];
+  const collection = createCollection(rows);
+  mockGetCollection.mockImplementation(async (name: string) => name === "llm_models" ? collection : { find: () => ({ toArray: async () => [{ _id: "ready-group", state: "ready" }] }) });
+  mockFilterResourcesByPermission.mockImplementation(async (_session, models) => models.filter((model: { _id: string }) => model._id !== "denied"));
+  const { GET } = await import("../route");
+  const first = await (await GET(request("/api/llm-models?page=1&page_size=1"))).json();
+  const second = await (await GET(request("/api/llm-models?page=2&page_size=1"))).json();
+  expect(first.items.map((item: { _id: string }) => item._id)).toEqual(["legacy"]);
+  expect(second.items.map((item: { _id: string }) => item._id)).toEqual(["ready"]);
+  expect(first.pagination.total).toBe(2);
+  expect(second.pagination.total).toBe(2);
 });
