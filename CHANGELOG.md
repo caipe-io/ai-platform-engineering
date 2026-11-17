@@ -1,3 +1,37 @@
+## 1.4.0-rc.6 (2026-11-17)
+
+### Feat
+
+- **models**: connect and test saved model providers end to end (#3389)
+- **ui**: add first-install setup and product tour (#2763)
+- **app-sdk**: support opt-in assistant checkbox controls (#3134)
+- **ui**: unify agents with soft gradient cards (#3403)
+- **ui**: browse and test remote agents in a card catalog (#3401)
+- **ui**: unify CAIPE, A2A and configured ACP agents (#3391)
+- **agents**: discover remote A2A cards and Kubernetes Services (#3384)
+- **harness**: gate Claude research on source evidence (#3395)
+- **harness**: manage Claude operator profiles in Agent Builder (#3386)
+- **harness**: execute compiled subagents through saved runtimes (#3390)
+- **sharepoint-mcp**: support documents, pages and scoped search (#2968)
+- **ui**: glide Ask Tome into its assistant launcher (#3387)
+
+### Fix
+
+- **ui**: stop logging API response bodies to the browser console (#3410)
+- **rbac**: store MCP wildcard intent on a concrete object (#2965)
+- **slack-ingestor**: persist last_ts checkpoint only after ingest succeeds (#3363)
+- **ci**: initialize the RBAC Docker stack environment (#3217)
+- **mcp-server**: support configurable ExternalSecret API versions (#3252)
+- **harness**: guard chat admission against unavailable tools (#3392)
+- **ui**: validate and namespace operator profile IDs (#3393)
+- **ui**: select explicit MCP tools in Agent Builder (#3394)
+- **agents**: skip empty MongoDB checkpoint write batches (#3398)
+- **webex**: read completed meetings from User Hub (#3371)
+
+### Refactor
+
+- **agents**: reuse Deep Agents 0.7.37 for remote delegation (#3382)
+
 ## 1.4.0-rc.5 (2026-11-12)
 
 ### Fix
