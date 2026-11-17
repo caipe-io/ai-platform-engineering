@@ -1,4 +1,4 @@
-import { normalizeEnabledTours } from "@/lib/caipe-tour-policy";
+import { isCaipeTourEnabled, normalizeEnabledTours } from "@/lib/caipe-tour-policy";
 import { createHash } from "crypto";
 import { normalizeReleaseNotesOverride, validateReleaseNotesOverride, type ReleaseNotesOverride } from "@/lib/release-notes-override";
 // GET /api/admin/platform-config — read platform-wide config (any authenticated user)
@@ -48,7 +48,7 @@ interface PlatformConfigDoc extends PlatformDefaultAgentDocument {
   rag_default_search_team_slug?: unknown;
   rag_ingestor_limits?: unknown;
   platform_llm?: unknown;
-  caipe_tour?: { enabled_tours?: unknown };
+  caipe_tour?: { enabled?: unknown; enabled_tours?: unknown };
 }
 
 interface TeamConfigDoc {
@@ -340,7 +340,7 @@ async function getPlatformConfig(request: NextRequest) {
         slack_victorops_escalation_agent_id: victoropsAgentId ?? victoropsEnvFallback,
         slack_victorops_escalation_agent_source: victoropsAgentId ? 'db' : (victoropsEnvFallback ? 'env' : 'fallback'),
         release_notes: normalizeReleaseNotesConfig(doc?.release_notes),
-        caipe_tour: { enabled_tours: normalizeEnabledTours(doc?.caipe_tour?.enabled_tours) },
+        caipe_tour: { enabled: isCaipeTourEnabled(doc?.caipe_tour?.enabled), enabled_tours: normalizeEnabledTours(doc?.caipe_tour?.enabled_tours) },
         release_notes_allowed_repositories: getReleaseNotesAllowedRepositories(),
         slack_discovery_cache_ttl_minutes: slackDiscoveryTtlMinutes,
         webex_discovery_cache_ttl_minutes: webexDiscoveryTtlMinutes,
@@ -447,10 +447,19 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
 
     if (Object.prototype.hasOwnProperty.call(body, 'caipe_tour')) {
       if (!isRecord(body.caipe_tour)) throw new ApiError('caipe_tour must be an object', 400);
-      try {
-        update['caipe_tour.enabled_tours'] = normalizeEnabledTours(body.caipe_tour.enabled_tours, true);
-      } catch (error) {
-        throw new ApiError(error instanceof Error ? error.message : 'Invalid tour selection', 400, 'INVALID_TOUR_POLICY');
+      const hasEnabled = Object.prototype.hasOwnProperty.call(body.caipe_tour, 'enabled');
+      const hasSelection = Object.prototype.hasOwnProperty.call(body.caipe_tour, 'enabled_tours');
+      if (!hasEnabled && !hasSelection) throw new ApiError('Provide enabled or enabled_tours', 400, 'INVALID_TOUR_POLICY');
+      if (hasEnabled) {
+        if (typeof body.caipe_tour.enabled !== 'boolean') throw new ApiError('enabled must be a boolean', 400, 'INVALID_TOUR_POLICY');
+        update['caipe_tour.enabled'] = body.caipe_tour.enabled;
+      }
+      if (hasSelection) {
+        try {
+          update['caipe_tour.enabled_tours'] = normalizeEnabledTours(body.caipe_tour.enabled_tours, true);
+        } catch (error) {
+          throw new ApiError(error instanceof Error ? error.message : 'Invalid tour selection', 400, 'INVALID_TOUR_POLICY');
+        }
       }
     }
 
@@ -608,8 +617,11 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
         ...(Object.prototype.hasOwnProperty.call(update, 'slack_victorops_escalation_agent_id')
           ? { slack_victorops_escalation_agent_id: update.slack_victorops_escalation_agent_id }
           : {}),
-        ...(Object.prototype.hasOwnProperty.call(update, 'caipe_tour.enabled_tours')
-          ? { caipe_tour: { enabled_tours: update['caipe_tour.enabled_tours'] } } : {}),
+        ...((Object.prototype.hasOwnProperty.call(update, 'caipe_tour.enabled') || Object.prototype.hasOwnProperty.call(update, 'caipe_tour.enabled_tours'))
+          ? { caipe_tour: {
+              ...(Object.prototype.hasOwnProperty.call(update, 'caipe_tour.enabled') ? { enabled: update['caipe_tour.enabled'] } : {}),
+              ...(Object.prototype.hasOwnProperty.call(update, 'caipe_tour.enabled_tours') ? { enabled_tours: update['caipe_tour.enabled_tours'] } : {}),
+            } } : {}),
         ...(releaseNotesUpdate ? { release_notes: { ...releaseNotesUpdate, ...(releaseNotesUpdate.override ? { override_revision: releaseNotesOverrideRevision(releaseNotesUpdate.override) } : {}) } } : {}),
         ...(Object.prototype.hasOwnProperty.call(update, 'slack_discovery_cache_ttl_minutes')
           ? { slack_discovery_cache_ttl_minutes: update.slack_discovery_cache_ttl_minutes }

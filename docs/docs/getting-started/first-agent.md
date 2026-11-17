@@ -166,9 +166,10 @@ The underlying screens enforce the permissions required for each action.
 - **Settings → Chat & agents → CAIPE Tour:** turn **Enable CAIPE Tour** off to
   hide the menu and stop guided tours for your account across browsers. Turn it
   back on there; saved progress is retained.
-- **Admin → Platform configuration → Tour → CAIPE Tour:** check the tours
-  users may see, then choose **Save tours**. Uncheck every tour to hide the menu
-  for everyone. Permissions and deployed features still limit available tours.
+- **Admin → Platform configuration → Tour → CAIPE Tour:** use **Enable CAIPE Tour**
+  to turn tours on or off for everyone at runtime. The switch saves immediately
+  and retains selected tours and saved progress. Check the tours users may see,
+  then choose **Save tours**. Permissions and deployed features still limit availability.
 - Existing deployments show all tours until an operator saves a selection.
   Preferences and the operator selection are stored in MongoDB; no redeploy is needed.
 - Policy changes apply immediately to API requests. Other browser sessions update

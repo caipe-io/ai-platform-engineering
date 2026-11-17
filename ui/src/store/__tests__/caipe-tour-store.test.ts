@@ -22,3 +22,13 @@ it("does not restore the previous account's preferences after reset", async () =
   await pending;
   expect(useCaipeTourStore.getState().loaded).toBe(false);
 });
+
+it("does not let a stale refresh undo a runtime toggle", async () => {
+  let finish!: (value: Response) => void;
+  global.fetch = jest.fn(() => new Promise<Response>((resolve) => { finish = resolve; }));
+  const pending = useCaipeTourStore.getState().refresh();
+  useCaipeTourStore.getState().setPlatformEnabled(false);
+  finish({ ok: true, json: async () => ({ success: true, data: { state: {}, platform_enabled: true } }) } as Response);
+  await pending;
+  expect(useCaipeTourStore.getState().platformEnabled).toBe(false);
+});

@@ -327,7 +327,7 @@ export function ProductTourGate(): React.ReactElement | null {
       if (requestVersion.current !== version) return;
       const policy = useCaipeTourStore.getState();
       if (!policy.loaded) policy.receive(next);
-      if (next.enabled === false || (policy.loaded && (!policy.enabled || !policy.enabledTours.includes(id)))) return;
+      if (next.enabled === false || (policy.loaded && (!policy.platformEnabled || !policy.enabled || !policy.enabledTours.includes(id)))) return;
       if (restart || next.state.status === "completed" || next.state.status === "dismissed") {
         next = { ...next, state: await patchTour("reset", undefined, id) };
         if (requestVersion.current !== version) return;
@@ -368,7 +368,7 @@ export function ProductTourGate(): React.ReactElement | null {
   }, []);
 
   useEffect(() => useCaipeTourStore.subscribe((policy) => {
-    if (policy.loaded && (!policy.enabled || !policy.enabledTours.includes(payload?.tour_id ?? "workspace"))) {
+    if (policy.loaded && (!policy.platformEnabled || !policy.enabled || !policy.enabledTours.includes(payload?.tour_id ?? "workspace"))) {
       requestVersion.current++;
       setOpen(false); setPayload(null); setError(null);
     }
@@ -379,7 +379,7 @@ export function ProductTourGate(): React.ReactElement | null {
       const detail = event instanceof CustomEvent ? event.detail : undefined;
       const id = detail?.tourId ?? "workspace";
       const policy = useCaipeTourStore.getState();
-      if (isProductTourId(id) && (!policy.loaded || (policy.enabled && policy.enabledTours.includes(id)))) void load(detail?.restart === true, id);
+      if (isProductTourId(id) && (!policy.loaded || (policy.platformEnabled && policy.enabled && policy.enabledTours.includes(id)))) void load(detail?.restart === true, id);
     };
     window.addEventListener(PRODUCT_TOUR_REQUEST_EVENT, handleRequest);
     return () => window.removeEventListener(PRODUCT_TOUR_REQUEST_EVENT, handleRequest);
@@ -387,7 +387,7 @@ export function ProductTourGate(): React.ReactElement | null {
 
   return <>
     {error && <p role="alert" className="fixed bottom-4 right-4 z-[80] max-w-sm rounded-xl border bg-card p-4 text-sm shadow-lg">{error}</p>}
-    {payload && <ProductTourDialog key={dialogVersion} initialPayload={payload} open={open && (!tourPolicy.loaded || (tourPolicy.enabled && tourPolicy.enabledTours.includes(payload.tour_id ?? "workspace")))} onOpenChange={(nextOpen) => { if (activeDialogVersion.current === dialogVersion) setOpen(nextOpen); }} />}
+    {payload && <ProductTourDialog key={dialogVersion} initialPayload={payload} open={open && (!tourPolicy.loaded || (tourPolicy.platformEnabled && tourPolicy.enabled && tourPolicy.enabledTours.includes(payload.tour_id ?? "workspace")))} onOpenChange={(nextOpen) => { if (activeDialogVersion.current === dialogVersion) setOpen(nextOpen); }} />}
   </>;
 }
 
@@ -413,7 +413,8 @@ export function ProductTourSettings(): React.ReactElement {
     </div>
     {(error || policy.error) && <p role="alert" className="mt-3 text-sm text-destructive">{error || policy.error}</p>}
     {!policy.loaded && policy.error && <Button className="mt-3" variant="outline" onClick={() => void policy.refresh()}>Retry tour settings</Button>}
-    {policy.loaded && !policy.enabledTours.includes("workspace") && <p className="mt-3 text-xs text-muted-foreground">{policy.enabledTours.length === 0 ? "Your operator has not enabled any CAIPE Tours." : "Your operator has not enabled the workspace tour."}</p>}
-    <Button className="mt-4" type="button" variant="outline" disabled={!policy.loaded || !policy.enabled || !policy.enabledTours.includes("workspace") || saving} onClick={() => requestProductTour(true)}><GraduationCap className="mr-2 h-4 w-4" />Replay CAIPE Tour</Button>
+    {policy.loaded && !policy.platformEnabled && <p className="mt-3 text-xs text-muted-foreground">Your operator has turned off CAIPE Tour for this platform. Your preference and progress are kept.</p>}
+    {policy.loaded && policy.platformEnabled && !policy.enabledTours.includes("workspace") && <p className="mt-3 text-xs text-muted-foreground">{policy.enabledTours.length === 0 ? "Your operator has not enabled any CAIPE Tours." : "Your operator has not enabled the workspace tour."}</p>}
+    <Button className="mt-4" type="button" variant="outline" disabled={!policy.loaded || !policy.platformEnabled || !policy.enabled || !policy.enabledTours.includes("workspace") || saving} onClick={() => requestProductTour(true)}><GraduationCap className="mr-2 h-4 w-4" />Replay CAIPE Tour</Button>
   </SettingsCard>;
 }

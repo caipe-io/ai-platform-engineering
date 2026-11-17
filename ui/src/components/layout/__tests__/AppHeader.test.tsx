@@ -411,7 +411,7 @@ function applicationButton(name: string): HTMLElement {
 // ============================================================================
 
 beforeEach(() => {
-  useCaipeTourStore.setState({ loaded: true, enabled: true, enabledTours: [...ALL_PRODUCT_TOUR_IDS], error: null })
+  useCaipeTourStore.setState({ loaded: true, enabled: true, platformEnabled: true, enabledTours: [...ALL_PRODUCT_TOUR_IDS], error: null })
   mockAgenticAppsEnabled = false
   mockMigrationStatus = {
     status: null,
@@ -475,6 +475,12 @@ describe('AppHeader — application chrome', () => {
     useCaipeTourStore.setState({ enabled: true, enabledTours: [] });
     render(<AppHeader />);
     expect(screen.queryByRole('button', { name: 'CAIPE Tour', exact: true })).not.toBeInTheDocument();
+  });
+
+  it('hides CAIPE Tour when the runtime switch is off despite saved selections', () => {
+    useCaipeTourStore.setState({ platformEnabled: false });
+    render(<AppHeader />);
+    expect(screen.queryByRole('button', { name: 'CAIPE Tour' })).not.toBeInTheDocument();
   });
 
   it('shows only operator-selected tours within the user permissions', () => {
