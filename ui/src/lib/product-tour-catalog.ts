@@ -104,7 +104,7 @@ export const PRODUCT_TOURS: Record<ProductTourId, ProductTourDefinition> = {
       {
         eyebrow: "You are all set",
         target: 'button[aria-label^="User menu"]',
-        href: "/settings/chat",
+        href: "/settings/chat-and-agents",
         action: "Personalize your workspace",
         title: "Make the workspace yours",
         description:

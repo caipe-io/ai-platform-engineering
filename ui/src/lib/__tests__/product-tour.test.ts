@@ -1,7 +1,17 @@
 import { PRODUCT_TOURS, isProductTourId } from "@/lib/product-tour-catalog";
+import { PERSONAL_SETTINGS_ROUTES } from "@/components/settings/settings-routes";
 import { normalizeProductTourState } from "@/lib/product-tour";
 
 describe("product tour state", () => {
+  it("uses a registered personal settings destination", () => {
+    for (const tour of Object.values(PRODUCT_TOURS)) {
+      for (const step of tour.steps) {
+        if (step.href?.startsWith("/settings/")) {
+          expect(PERSONAL_SETTINGS_ROUTES.map((route) => route.href)).toContain(step.href);
+        }
+      }
+    }
+  });
   it("normalizes saved progress and clamps the current step", () => {
     expect(normalizeProductTourState({
       status: "in_progress",
