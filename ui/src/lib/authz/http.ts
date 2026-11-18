@@ -71,7 +71,7 @@ const PUBLIC_GRANTABLE_EVERYONE_RESOURCE_ACTIONS: ReadonlySet<string> = new Set(
 
 // ─── Meta errors (HTTP-level failures, distinct from a DENY decision) ─────────
 
-export type MetaCode = "NOT_AUTHENTICATED" | "FORBIDDEN" | "INVALID_REQUEST" | "AUTHZ_UNAVAILABLE";
+export type MetaCode = "NOT_AUTHENTICATED" | "FORBIDDEN" | "INVALID_REQUEST" | "AUTHZ_UNAVAILABLE" | "AUTHZ_WRITE_PENDING";
 
 export class HttpAuthzError extends Error {
   constructor(

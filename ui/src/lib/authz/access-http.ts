@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ApiError } from "@/lib/api-error";
 import { getAuthFromBearerOrSession } from "@/lib/api-middleware";
 import { isSupportedResourceAction } from "@/lib/rbac/resource-model";
-import { authorize, authorizeMany, grant, revoke } from "./index";
+import { authorize, authorizeMany, grant, revoke, PolicyWritePendingError } from "./index";
 import { ACCESS_QUERY_MAX_IDS, type AccessQueryResponse } from "./access-contract";
 import type { Action, AuthorizeResult, DecisionContext, ResourceType, Subject } from "./contract";
 import {
@@ -70,6 +70,9 @@ async function handle(request: NextRequest, fields: string[], operation: AccessH
     response = await operation(body as Record<string, unknown>, caller, decisionContext(session, caller, request));
   } catch (error) {
     if (error instanceof HttpAuthzError) response = metaErrorResponse(error);
+    else if (error instanceof PolicyWritePendingError) {
+      response = metaErrorResponse(new HttpAuthzError(503, error.code, error.message));
+    }
     else {
       // A failed write may have reached OpenFGA: do not promise safe automatic retries.
       console.error("[access] Operation failed", { name: error instanceof Error ? error.name : "UnknownError" });

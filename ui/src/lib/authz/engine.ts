@@ -2,6 +2,15 @@
 
 import type { Action, AuthorizeRequest, AuthorizeResult, GrantIntent, ReasonCode, ResourceType, Subject } from "./contract";
 
+/** A durable write intent exists, but its outcome needs operator verification. */
+export class PolicyWritePendingError extends Error {
+  readonly code = "AUTHZ_WRITE_PENDING";
+  constructor(cause?: unknown) {
+    super("The access change is pending verification. An administrator must recover it before another change.", { cause });
+    this.name = "PolicyWritePendingError";
+  }
+}
+
 export interface ListObjectsResult {
   ids: Set<string>;
   /** "OK" on success. On "AUTHZ_UNAVAILABLE", `ids` is empty — fail closed, not "no access". */

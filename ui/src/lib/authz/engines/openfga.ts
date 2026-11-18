@@ -365,8 +365,14 @@ async function fgaWrite(storeId: string, writes: FgaTuple[], deletes: FgaTuple[]
   // Direct admin baseline mutations share login's durable ownership ledger and
   // per-subject lock. Other CAS resources retain their existing write contract.
   if ([...writes, ...deletes].some(isDirectAdminBaselineTuple)) {
-    const result = await writeOpenFgaTuples({ writes, deletes }, "independent");
-    if (!result.enabled) throw new Error("OpenFGA writes are not configured");
+    try {
+      const result = await writeOpenFgaTuples({ writes, deletes }, "independent");
+      if (!result.enabled) throw new Error("OpenFGA writes are not configured");
+    } finally {
+      // An uncertain write may have reached OpenFGA. Drop this replica's cached
+      // decisions even when confirmation fails; other replicas retain their TTL.
+      invalidateDecisionCache();
+    }
     return;
   }
   const body = {

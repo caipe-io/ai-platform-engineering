@@ -56,6 +56,7 @@ import {
   AuthzDeniedError,
   describeFgaCheck,
   getEngineStats,
+  PolicyWritePendingError,
   type AuthorizeResult,
 } from "../index";
 
@@ -245,6 +246,15 @@ describe("authorizeMany", () => {
 });
 
 describe("grant / revoke (PAP)", () => {
+  it.each(["grant", "revoke"] as const)("audits an unconfirmed %s as pending rather than failed", async operation => {
+    const intent = { resource: { type: "system_config" as const, id: "platform_settings" }, grantee: { type: "user" as const, id: "test-user" }, capability: "manage" as const };
+    const error = new PolicyWritePendingError();
+    (operation === "grant" ? mockGrant : mockRevoke).mockRejectedValueOnce(error);
+    await expect((operation === "grant" ? grant : revoke)(intent)).rejects.toBe(error);
+    expect(mockEmitGrantAudit).toHaveBeenCalledWith(operation, intent, {}, {
+      outcome: "error", reasonCode: "PDP_WRITE_PENDING",
+    });
+  });
   const ctx = { caller: { type: "user" as const, id: "alice" }, tenantId: "acme", correlationId: "c-1" };
 
   beforeEach(() => {
