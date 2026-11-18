@@ -259,7 +259,7 @@ export const PRODUCT_TOURS: Record<ProductTourId, ProductTourDefinition> = {
         target: '[data-tour="add-agent"]',
         href: "/dynamic-agents?tab=agents",
         action: "Open Agents",
-        description: "Choose Add agent, then Create CAIPE agent to open Agent Builder, or Connect existing agent to bring an agent you already run.",
+        description: "Choose Add agent, then Create CAIPE agent to open Agent Builder.",
         points: [
           "Have a working model ready.",
           "Tools are optional for a basic conversation.",
