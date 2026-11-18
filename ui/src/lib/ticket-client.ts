@@ -44,6 +44,8 @@ export interface FeedbackComponent {
 }
 
 export interface FeedbackOptions extends FeedbackComponent {
+  /** False when only Request help is configured for this component. */
+  feedbackEnabled?: boolean;
   features: string[];
   screenshotsEnabled?: boolean;
   destination?: FeedbackDestination;

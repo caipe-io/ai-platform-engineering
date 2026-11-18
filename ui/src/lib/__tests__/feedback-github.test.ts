@@ -202,6 +202,27 @@ describe("Request help", () => {
     process.env.FEEDBACK_HANDLER = "agent";
     expect(serviceDeskCapabilities()).toBeUndefined();
   });
+  it.each(["missing", "invalid", "features", "style"])("supports dedicated help credentials with %s ordinary settings", async ordinary => {
+    if (ordinary === "missing") {
+      delete process.env.FEEDBACK_GITHUB_REPO;
+      delete process.env.FEEDBACK_GITHUB_TOKEN;
+    } else if (ordinary === "features") {
+      process.env.FEEDBACK_FEATURES = "not JSON";
+    } else if (ordinary === "style") {
+      process.env.FEEDBACK_GITHUB_STYLE_JSON = "not JSON";
+    } else {
+      process.env.FEEDBACK_GITHUB_REPO = "invalid repository";
+    }
+    expect(platformFeedbackCapabilities()).toMatchObject({ feedbackEnabled: false, serviceDesk: { repository: "example/service-desk" } });
+    expect(platformFeedbackCapabilities().destination).toBeUndefined();
+    await create();
+    expect((global.fetch as jest.Mock).mock.calls[0][0]).toBe("https://api.github.com/repos/example/service-desk/issues");
+  });
+  it("preserves literal backslashes in request details", async () => {
+    const value = String.raw`\\fileserver\share\folder`;
+    await create({ serviceDesk: { ...ticket.serviceDesk, areas: ["Compute"], details: [{ area: "Compute", label: "Resource", value }] } });
+    expect(sent().body).toContain(String.raw`- **Resource:** \\\\fileserver\\share\\folder`);
+  });
   it("accepts the full catalogue of detail fields without truncation", async () => {
     const entries = Object.entries(SERVICE_DESK_DETAILS);
     const details = entries.flatMap(([area, fields]) => fields.map(field => ({ area, label: field.label, value: field.options?.[0] ?? "x" })));

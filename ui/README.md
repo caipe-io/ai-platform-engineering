@@ -366,7 +366,11 @@ FEEDBACK_GITHUB_SCREENSHOTS_REPO=example/feedback-assets
   requests. It appears only with `FEEDBACK_HANDLER=github` and either
   `FEEDBACK_SERVICE_DESK_ENABLED=true` or a dedicated `FEEDBACK_SERVICE_DESK_REPO`.
   It uses `FEEDBACK_SERVICE_DESK_REPO` and `FEEDBACK_SERVICE_DESK_TOKEN` when set,
-  and otherwise `FEEDBACK_GITHUB_REPO` and `FEEDBACK_GITHUB_TOKEN`. The form has title, description (up to 4000 characters),
+  and otherwise `FEEDBACK_GITHUB_REPO` and `FEEDBACK_GITHUB_TOKEN`. Dedicated service-desk
+  credentials work without ordinary feedback credentials; in that setup the platform
+  offers Request help and disables Bug/Enhancement. Copy and Retry retain the original
+  submission and component even if the calling app changes while the request is pending.
+  The form has title, description (up to 4000 characters),
   area of impact (a multi-select: choose one or more), severity and type fields. The issue title is
   `[Area] title`, or `[Multiple areas] title` when more than one area is chosen,
   capped at 120 characters (the tag is always kept). The body's Area cell lists

@@ -14,7 +14,7 @@
  */
 
 import React from "react";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 
 // ============================================================================
 // Mocks — must be before imports
@@ -524,6 +524,61 @@ describe("Request help", () => {
         "Access request", "Please grant access to the example namespace.", "Areas of impact: Vault",
         "Severity: High", "Type: Ticket", "Vault — Namespace path: example/apps",
       ].join("\n\n"));
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
+  it("offers only Request help when ordinary feedback is unavailable", async () => {
+    mockFetchFeedbackOptions.mockResolvedValue({ appId: null, label: "Platform", features: ["Other"], serviceDesk, feedbackEnabled: false });
+    render(<ReportProblemDialog open onOpenChange={jest.fn()} />);
+    expect(await screen.findByLabelText("Description *")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bug" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Enhancement" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Request help" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it.each(["feedback", "service-desk"])("retains the submitted %s payload for copy and retry after component changes", async mode => {
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    try {
+      let rejectRequest!: (reason: Error) => void;
+      mockCreateTicketViaAgent.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRequest = reject; }));
+      mockFetchFeedbackComponents.mockImplementation((_url, _conversation, _signal, initial) => Promise.resolve({ appId: initial ?? null,
+        components: [{ appId: null, label: "Platform" }, { appId: "example", label: "Example app" }] }));
+      mockFetchFeedbackOptions.mockImplementation((_url, _conversation, _signal, component) => Promise.resolve(component === "example"
+        ? { appId: "example", label: "Example app", features: ["Other"] }
+        : { appId: null, label: "Platform", features: ["Other"], serviceDesk }));
+      const { rerender } = render(<ReportProblemDialog open onOpenChange={jest.fn()} />);
+      await fillRequiredFields();
+      if (mode === "service-desk") {
+        fireEvent.click(screen.getByRole("button", { name: "Request help" }));
+        fireEvent.change(screen.getByLabelText("Description *"), { target: { value: "Please grant access." } });
+        chooseAreas("Vault");
+        fireEvent.change(screen.getByLabelText("Namespace path"), { target: { value: "example/apps" } });
+      }
+      fireEvent.click(screen.getByRole("button", { name: mode === "service-desk" ? "Submit Request" : "Submit Report" }));
+      await waitFor(() => expect(mockCreateTicketViaAgent).toHaveBeenCalledTimes(1));
+      const submitted = JSON.parse(JSON.stringify(mockCreateTicketViaAgent.mock.calls[0][0].request));
+      rerender(<ReportProblemDialog open onOpenChange={jest.fn()} initialComponentId="example" />);
+      await waitFor(() => expect(mockFetchFeedbackOptions).toHaveBeenLastCalledWith(expect.any(String), undefined, expect.any(AbortSignal), "example"));
+      await act(async () => { rejectRequest(new Error("First attempt failed")); });
+      fireEvent.click(await screen.findByRole("button", { name: "Copy Description" }));
+      if (mode === "service-desk") {
+        expect(writeText).toHaveBeenCalledWith(expect.stringContaining("Please grant access."));
+        expect(writeText).toHaveBeenCalledWith(expect.stringContaining("Areas of impact: Vault"));
+        expect(writeText).toHaveBeenCalledWith(expect.stringContaining("Vault — Namespace path: example/apps"));
+      } else {
+        expect(writeText).toHaveBeenCalledWith(submitted.description);
+      }
+      mockCreateTicketViaAgent.mockRejectedValueOnce(new Error("Original destination unavailable"));
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      await screen.findByText("Original destination unavailable");
+      expect(mockCreateTicketViaAgent).toHaveBeenCalledTimes(2);
+      expect(mockCreateTicketViaAgent.mock.calls[1][0].request).toEqual(submitted);
+      expect(mockCreateTicketViaAgent.mock.calls[1][0].request.componentId).toBeNull();
     } finally {
       if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
       else Reflect.deleteProperty(navigator, "clipboard");

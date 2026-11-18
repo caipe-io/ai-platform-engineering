@@ -30,9 +30,12 @@ function settings() {
   let style;
   try { style = parseFeedbackIssueStyle(process.env.FEEDBACK_GITHUB_STYLE_JSON ? JSON.parse(process.env.FEEDBACK_GITHUB_STYLE_JSON) : {}); }
   catch { throw new ApiError("Invalid feedback GitHub style configuration", 503); }
+  let features;
+  try { features = platformFeedbackFeatures(process.env.FEEDBACK_FEATURES); }
+  catch { throw new ApiError("Invalid feedback feature configuration", 503); }
   return { repo, token, style, assets: assets ? repository(assets) : undefined,
     label: process.env.FEEDBACK_GITHUB_LABEL || cfg.githubTicketLabel,
-    component: process.env.FEEDBACK_PLATFORM_LABEL || cfg.appName, features: platformFeedbackFeatures(process.env.FEEDBACK_FEATURES) };
+    component: process.env.FEEDBACK_PLATFORM_LABEL || cfg.appName, features };
 }
 
 const SERVICE_DESK_DETAIL_FIELD_COUNT = Object.values(SERVICE_DESK_DETAILS).reduce((total, fields) => total + fields.length, 0);
@@ -62,10 +65,16 @@ export function serviceDeskCapabilities(): ServiceDeskCapability | undefined {
   catch { return unusable(); }
 }
 
-export function platformFeedbackCapabilities(): { screenshotsEnabled?: boolean; destination: FeedbackDestination; serviceDesk?: ServiceDeskCapability } {
+export function platformFeedbackCapabilities(): { screenshotsEnabled?: boolean; destination?: FeedbackDestination; serviceDesk?: ServiceDeskCapability; feedbackEnabled?: boolean } {
   if (platformFeedbackHandler() === "github") {
-    const cfg = settings();
-    return { screenshotsEnabled: Boolean(cfg.assets), destination: { provider: "github", repository: cfg.repo }, serviceDesk: serviceDeskCapabilities() };
+    const serviceDesk = serviceDeskCapabilities();
+    try {
+      const cfg = settings();
+      return { screenshotsEnabled: Boolean(cfg.assets), destination: { provider: "github", repository: cfg.repo }, serviceDesk };
+    } catch (error) {
+      if (!(error instanceof ApiError && error.statusCode === 503) || !serviceDesk) throw error;
+      return { serviceDesk, feedbackEnabled: false };
+    }
   }
   const cfg = getServerConfig();
   if (!cfg.ticketEnabled || !(cfg.ticketProvider === "jira" ? cfg.jiraTicketProject : cfg.ticketProvider === "github" ? cfg.githubTicketRepo : undefined)?.trim()) {
@@ -190,9 +199,9 @@ function oneOf(value: unknown, allowed: readonly string[], name: string): string
 
 const TITLE_MAX = 120;
 
-/** One line for a table cell or bullet value: whitespace collapsed, pipes and backticks escaped. */
+/** One line for a table cell or bullet value: whitespace collapsed, backslashes, pipes and backticks escaped. */
 function cell(value: string): string {
-  return value.replace(/\s+/g, " ").trim().replace(/[|`]/g, "\\$&");
+  return value.replace(/\s+/g, " ").trim().replace(/[\\|`]/g, "\\$&");
 }
 
 function serviceDeskTitle(areas: string[], title: string): string {

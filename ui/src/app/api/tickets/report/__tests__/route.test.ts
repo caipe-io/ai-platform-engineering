@@ -9,6 +9,7 @@ const mockResourcePermission = jest.fn();
 const mockPlatformFeedback = jest.fn();
 const mockPlatformCapabilities = jest.fn();
 const mockServiceDesk = jest.fn();
+const mockServiceDeskCapabilities = jest.fn();
 let mockPlatformHandler = "agent";
 let mockMongoConfigured = false;
 jest.mock("@/lib/feedback-github", () => ({
@@ -18,6 +19,7 @@ jest.mock("@/lib/feedback-github", () => ({
   platformFeedbackCapabilities: () => mockPlatformCapabilities(),
   createPlatformGitHubFeedback: (...args: unknown[]) => mockPlatformFeedback(...args),
   createServiceDeskTicket: (...args: unknown[]) => mockServiceDesk(...args),
+  serviceDeskCapabilities: () => mockServiceDeskCapabilities(),
 }));
 jest.mock("@/lib/da-proxy", () => ({ authenticateRequest: (...args: unknown[]) => mockAuth(...args) }));
 jest.mock("@/lib/agentic-apps/config", () => ({ loadConfiguredAgenticApps: () => mockApps() }));
@@ -55,6 +57,7 @@ beforeEach(() => {
   mockMongoConfigured = false;
   mockPlatformHandler = "agent";
   mockPlatformCapabilities.mockReset().mockReturnValue({});
+  mockServiceDeskCapabilities.mockReset().mockImplementation(() => mockPlatformCapabilities().serviceDesk);
   delete process.env.FEEDBACK_FEATURES;
   delete process.env.FEEDBACK_PLATFORM_LABEL;
   mockResourcePermission.mockResolvedValue(undefined);
@@ -381,4 +384,32 @@ it.each(["explicit", "context"])("rejects %s app-owned Request help before GitHu
   expect(mockPlatformFeedback).not.toHaveBeenCalled();
   expect(mockServiceDesk).not.toHaveBeenCalled();
   expect(mockProxy).not.toHaveBeenCalled();
+});
+
+
+it("lists and accepts dedicated Request help without ordinary GitHub feedback configuration", async () => {
+  const keys = ["FEEDBACK_HANDLER", "FEEDBACK_SERVICE_DESK_REPO", "FEEDBACK_SERVICE_DESK_TOKEN", "FEEDBACK_GITHUB_REPO", "FEEDBACK_GITHUB_TOKEN", "FEEDBACK_FEATURES"];
+  const saved = keys.map(key => process.env[key]);
+  try {
+    keys.forEach(key => delete process.env[key]);
+    process.env.FEEDBACK_HANDLER = "github";
+    process.env.FEEDBACK_SERVICE_DESK_REPO = "example/help";
+    process.env.FEEDBACK_SERVICE_DESK_TOKEN = "test-help-token";
+    process.env.FEEDBACK_FEATURES = "invalid ordinary feedback configuration";
+    const actual = jest.requireActual<typeof import("@/lib/feedback-github")>("@/lib/feedback-github");
+    mockPlatformCapabilities.mockImplementation(actual.platformFeedbackCapabilities);
+    mockServiceDeskCapabilities.mockImplementation(actual.serviceDeskCapabilities);
+    const metadata = await componentOptions(null);
+    expect(metadata.status).toBe(200);
+    expect((await metadata.json()).data).toMatchObject({ appId: null, feedbackEnabled: false,
+      features: ["Other"], serviceDesk: { repository: "example/help" }, components: expect.arrayContaining([{ appId: null, label: "Platform" }]) });
+    const components = await GET(new NextRequest("https://host.example.test/api/tickets/report?contextUrl=https%3A%2F%2Fhost.example.test%2F&view=components&componentId="));
+    expect((await components.json()).data.components).toContainEqual({ appId: null, label: "Platform" });
+    mockServiceDesk.mockResolvedValueOnce({ id: "#7", provider: "github", url: "https://example.test/issues/7" });
+    expect((await post({ requestType: "service-desk", componentId: null })).status).toBe(200);
+    expect(mockServiceDesk).toHaveBeenCalledTimes(1);
+    expect(mockPlatformFeedback).not.toHaveBeenCalled();
+  } finally {
+    keys.forEach((key, index) => { if (saved[index] === undefined) delete process.env[key]; else process.env[key] = saved[index]; });
+  }
 });

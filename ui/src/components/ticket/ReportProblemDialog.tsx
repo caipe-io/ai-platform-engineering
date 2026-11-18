@@ -88,6 +88,19 @@ interface ImageCaptureConstructor {
   };
 }
 
+/** Recovery always describes the submitted payload, including its original classification. */
+function requestRecoveryDescription(request: TicketRequest): string {
+  if (request.requestType !== "service-desk" || !request.serviceDesk) return request.description;
+  const details = request.serviceDesk;
+  return [
+    request.title, request.description,
+    `Areas of impact: ${details.areas.join(", ")}`,
+    `Severity: ${details.severity}`,
+    `Type: ${details.type}`,
+    ...(details.details ?? []).map(detail => `${detail.area} — ${detail.label}: ${detail.value}`),
+  ].filter(Boolean).join("\n\n");
+}
+
 export function ReportProblemDialog({
   open,
   onOpenChange,
@@ -140,11 +153,15 @@ export function ReportProblemDialog({
   const sdOptions = options?.serviceDesk;
   const sdSeverityValue = sdSeverity || (sdOptions?.severities.includes("Medium") ? "Medium" : sdOptions?.severities[0] ?? "");
   const sdTypeValue = sdType || (sdOptions?.types.includes("Ticket") ? "Ticket" : sdOptions?.types[0] ?? "");
-  const canSubmit = isServiceDesk ? Boolean(title.trim() && sdDescription.trim()) && sdAreas.length > 0 : Boolean(options) && (!screenshotDataUrl || options?.screenshotsEnabled !== false) && Boolean(title.trim()) && fields.every(field => !field.required || values[field.key]?.trim()) && validRelatedUrl;
+  const canSubmit = isServiceDesk ? Boolean(title.trim() && sdDescription.trim()) && sdAreas.length > 0 : Boolean(options) && options?.feedbackEnabled !== false && (!screenshotDataUrl || options?.screenshotsEnabled !== false) && Boolean(title.trim()) && fields.every(field => !field.required || values[field.key]?.trim()) && validRelatedUrl;
   const [isCapturing, setIsCapturing] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const submittedAttemptRef = useRef<{
+    request: TicketRequest;
+    prepare?: ReportProblemDialogProps["onBeforeSubmit"];
+  } | null>(null);
   const debugEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileInputId = useId();
@@ -190,6 +207,7 @@ export function ReportProblemDialog({
     void fetchFeedbackOptions(contextUrl, conversationId, controller.signal, componentId).then(data => {
       if (controller.signal.aborted) return;
       setOptions(data);
+      if (data.feedbackEnabled === false && data.serviceDesk) setRequestMode("service-desk");
       setFeature(componentId === initialComponentId && initialFeature && data.features.includes(initialFeature)
         ? initialFeature : data.features.includes("Other") ? "Other" : data.features[0]);
     }).catch(error => {
@@ -231,6 +249,7 @@ export function ReportProblemDialog({
     setIsCapturing(false);
     setLightboxOpen(false);
     abortControllerRef.current = null;
+    submittedAttemptRef.current = null;
   }, []);
 
   // Capture the tab using getDisplayMedia (browser screen share picker),
@@ -316,8 +335,9 @@ export function ReportProblemDialog({
     ]);
   }, []);
 
-  const handleSubmit = useCallback(async () => {
-    if (!canSubmit || abortControllerRef.current) return;
+  const handleSubmit = useCallback(async (retry = false) => {
+    const previousAttempt = retry ? submittedAttemptRef.current : null;
+    if ((!previousAttempt && !canSubmit) || abortControllerRef.current) return;
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -334,7 +354,7 @@ export function ReportProblemDialog({
     appendLog(`Context: ${contextUrl}`);
 
     try {
-      const request: TicketRequest = isServiceDesk ? {
+      const request: TicketRequest = previousAttempt?.request ?? (isServiceDesk ? {
         requestType: "service-desk",
         description: sdDescription.trim(),
         title: title.trim(),
@@ -370,11 +390,15 @@ export function ReportProblemDialog({
         screenshotDataUrl: screenshotDataUrl ?? undefined,
         ...(includeChatContext && chatContext && chatContextDraft.trim()
           ? { chatContext: chatContextDraft.trim() } : {}),
-      };
-      const submittedContext = await onBeforeSubmit?.(request);
+      });
+      const attempt = previousAttempt ?? { request, prepare: onBeforeSubmit };
+      submittedAttemptRef.current = attempt;
+      const submittedContext = await attempt.prepare?.(attempt.request);
       if (controller.signal.aborted) return;
+      attempt.request = { ...attempt.request, feedbackContext: submittedContext ?? attempt.request.feedbackContext };
+      attempt.prepare = undefined;
       const result = await createTicketViaAgent({
-        request: { ...request, feedbackContext: submittedContext ?? request.feedbackContext },
+        request: attempt.request,
         signal: controller.signal,
         onEvent: (_event, logLine) => {
           appendLog(logLine);
@@ -443,21 +467,10 @@ export function ReportProblemDialog({
     resetState();
   }, [resetState]);
 
-  const recoveryDescription = isServiceDesk ? [
-    title.trim(),
-    sdDescription.trim(),
-    `Areas of impact: ${sdAreas.join(", ")}`,
-    `Severity: ${sdSeverityValue}`,
-    `Type: ${sdTypeValue}`,
-    ...sdAreas.flatMap(area => (SERVICE_DESK_DETAILS[area] ?? []).flatMap(field => {
-      const value = sdDetails[`${area}|${field.label}`]?.trim();
-      return value ? [`${area} — ${field.label}: ${value}`] : [];
-    })),
-  ].filter(Boolean).join("\n\n") : reportDescription;
-
   const handleCopyDescription = useCallback(() => {
-    navigator.clipboard.writeText(recoveryDescription);
-  }, [recoveryDescription]);
+    const attempt = submittedAttemptRef.current;
+    if (attempt) navigator.clipboard.writeText(requestRecoveryDescription(attempt.request));
+  }, []);
 
   return (
     <>
@@ -535,7 +548,7 @@ export function ReportProblemDialog({
               <legend className="text-xs font-medium text-muted-foreground">Type *</legend>
               <div className="flex flex-wrap gap-1.5">
                 {(["Bug", "Enhancement"] as const).map(type => (
-                  <button key={type} type="button" aria-pressed={!isServiceDesk && issueType === type}
+                  <button key={type} type="button" disabled={options?.feedbackEnabled === false} aria-pressed={!isServiceDesk && issueType === type}
                     onClick={() => { setIssueType(type); setRequestMode("feedback"); setTitle(current => current.slice(0, 60)); }}
                     className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${!isServiceDesk && issueType === type ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>
                     {type}
@@ -756,7 +769,7 @@ export function ReportProblemDialog({
             )}
 
             <Button
-              onClick={handleSubmit}
+              onClick={() => void handleSubmit()}
               disabled={!canSubmit}
               className="w-full gap-2"
             >
@@ -935,7 +948,7 @@ export function ReportProblemDialog({
                 <Copy className="h-3 w-3" />
                 Copy Description
               </Button>
-              <Button className="flex-1 gap-1" onClick={handleSubmit}>
+              <Button className="flex-1 gap-1" onClick={() => void handleSubmit(true)}>
                 <RefreshCw className="h-3 w-3" />
                 Retry
               </Button>
