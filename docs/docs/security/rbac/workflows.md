@@ -103,8 +103,15 @@ This is the **once-per-session** flow. After it completes, the user holds a Keyc
   by that promotion. Contention times out after ten seconds and is reported
   as a failed reconciliation, rather than running without the lock.
 - Direct admin baseline tuples have separate login and independent ownership
-  in `admin_grant_ownership`. Manual grants through the tuple editor or shared
-  write adapter survive login demotion, even when added after promotion.
+  in `admin_grant_ownership`. Manual grants through CAS (`/api/authz/v1/grants`),
+  the tuple editor, or the shared write adapter use the same ownership boundary
+  and survive login demotion, even when added after promotion. CAS revocation
+  removes the independent reason; a still-valid login reason retains access
+  until demotion. Later demotion cannot restore a revoked independent reason.
+  The CAS facade retains grant/revoke auditing and decision-cache invalidation.
+- Upgrading does not reconstruct ownership for CAS mutations made before the
+  fix. Audit affected accounts; do not infer a manual grant from current team
+  membership or silently delete an unattributed grant.
 - **Existing installations:** old direct grants have no reliable ownership
   history. An existing unrecorded tuple is preserved and logged for operator
   review; super-admin membership alone does not prove that login owns it.

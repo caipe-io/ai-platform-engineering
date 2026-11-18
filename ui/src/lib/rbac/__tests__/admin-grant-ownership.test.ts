@@ -194,3 +194,61 @@ it("bounds a stalled tuple read and releases the identity lock when it aborts", 
     jest.useRealTimers();
   }
 });
+
+
+it.each(["before", "after"])("CAS manual assignment %s login promotion survives repeated demotion", async order => {
+  const { createOpenFgaAdmin } = await import("@/lib/authz/engines/openfga");
+  const { writeOpenFgaTuples } = await import("../openfga");
+  const target = { user: "user:test-user", relation: "manager", object: "system_config:platform_settings" };
+  const ownershipKey = JSON.stringify([target.user, target.relation, target.object]);
+  mockRequest.mockImplementation(async (path: string, options: { body: string }) => {
+    if (path.endsWith("/read")) return Response.json({ tuples: stored ? [{ key: target }] : [] });
+    if (path.endsWith("/write")) {
+      const body = JSON.parse(options.body);
+      if (body.deletes) stored = false;
+      if (body.writes) stored = true;
+      return Response.json({});
+    }
+    throw new Error(`Unexpected OpenFGA request: ${path}`);
+  });
+  const admin = createOpenFgaAdmin();
+  const intent = { resource: { type: "system_config" as const, id: "platform_settings" }, grantee: { type: "user" as const, id: "test-user" }, capability: "manage" as const };
+  if (order === "before") await admin.grant(intent);
+  await writeOpenFgaTuples({ writes: [target], deletes: [] }, "login");
+  if (order === "after") await admin.grant(intent);
+  await writeOpenFgaTuples({ writes: [], deletes: [target] }, "login");
+  await writeOpenFgaTuples({ writes: [], deletes: [target] }, "login");
+  expect(stored).toBe(true);
+  expect(mockRows.get(ownershipKey)).toEqual({ login: false, independent: true });
+  await admin.revoke(intent);
+  expect(stored).toBe(false);
+  await writeOpenFgaTuples({ writes: [], deletes: [target] }, "login");
+  expect(stored).toBe(false);
+  expect(mockRows.get(ownershipKey)).toEqual({ login: false, independent: false });
+});
+
+it("CAS revocation clears independent ownership without removing a current login reason", async () => {
+  const { createOpenFgaAdmin } = await import("@/lib/authz/engines/openfga");
+  const { writeOpenFgaTuples } = await import("../openfga");
+  const target = { user: "user:test-user", relation: "manager", object: "system_config:platform_settings" };
+  mockRequest.mockImplementation(async (path: string, options: { body: string }) => {
+    if (path.endsWith("/read")) return Response.json({ tuples: stored ? [{ key: target }] : [] });
+    if (path.endsWith("/write")) {
+      const body = JSON.parse(options.body);
+      if (body.deletes) stored = false;
+      if (body.writes) stored = true;
+      return Response.json({});
+    }
+    throw new Error(`Unexpected OpenFGA request: ${path}`);
+  });
+  const admin = createOpenFgaAdmin();
+  const intent = { resource: { type: "system_config" as const, id: "platform_settings" }, grantee: { type: "user" as const, id: "test-user" }, capability: "manage" as const };
+  await writeOpenFgaTuples({ writes: [target], deletes: [] }, "login");
+  await admin.grant(intent);
+  await admin.revoke(intent);
+  expect(stored).toBe(true);
+  expect(mockRows.get(JSON.stringify([target.user, target.relation, target.object]))).toEqual({ login: true, independent: false });
+  await writeOpenFgaTuples({ writes: [], deletes: [target] }, "login");
+  await writeOpenFgaTuples({ writes: [], deletes: [target] }, "login");
+  expect(stored).toBe(false);
+});
