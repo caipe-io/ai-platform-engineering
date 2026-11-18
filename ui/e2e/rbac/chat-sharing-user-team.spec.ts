@@ -3,7 +3,7 @@
  * Mocked Playwright coverage for browser chat sharing flows.
  *
  * These tests drive the real ShareDialog UI and assert the API contract for:
- * direct user shares, fallback email shares, team shares, permission updates,
+ * provisioned user shares, unprovisioned-user rejection, team shares, permission updates,
  * and recipient-side Shared Conversations visibility.
  */
 
@@ -22,14 +22,14 @@ import {
 } from "./_mocked-rbac";
 
 const OWNER = {
-  email: "owner@caipe.local",
+  email: "owner@example.test",
   subject: "playwright-owner-sub",
 };
 const RECIPIENT = {
-  email: "recipient@caipe.local",
+  email: "recipient@example.test",
   name: "Recipient User",
 };
-const FALLBACK_EMAIL = "future.user@caipe.local";
+const UNPROVISIONED_EMAIL = "unprovisioned@example.test";
 const TEAM = {
   _id: "team-platform-object",
   slug: "platform-eng",
@@ -399,9 +399,7 @@ test.describe("mocked RBAC e2e - chat sharing users and teams", () => {
     });
   });
 
-  test("owner can share with an unprovisioned email using view-only permission", async ({
-    page,
-  }) => {
+  test("owner cannot share with an unprovisioned email", async ({ page }) => {
     const shareRequests: ShareRequest[] = [];
     await bootOwnerChat(page, {
       userSearchResults: [],
@@ -411,24 +409,40 @@ test.describe("mocked RBAC e2e - chat sharing users and teams", () => {
 
     const dialog = await openShareDialog(page);
     await selectDefaultSharePermission(dialog, "view");
-    await dialog
-      .getByPlaceholder("Search by email or team name...")
-      .fill(FALLBACK_EMAIL);
+    const search = dialog.getByPlaceholder("Search by email or team name...");
+    await search.fill(UNPROVISIONED_EMAIL);
     await expect(dialog.getByText("No people or teams found")).toBeVisible();
-    await dialog
-      .getByRole("button", { name: `Share with ${FALLBACK_EMAIL}` })
-      .click();
+    await expect(
+      dialog.getByRole("button", { name: `Share with ${UNPROVISIONED_EMAIL}` }),
+    ).toHaveCount(0);
+    await search.press("Enter");
+    await expect(
+      dialog.getByRole("combobox", { name: `Permission for ${UNPROVISIONED_EMAIL}` }),
+    ).toHaveCount(0);
+    expect(shareRequests.filter((request) => request.method === "POST")).toEqual([]);
+  });
 
-    await expect(dialog.getByText(FALLBACK_EMAIL)).toBeVisible();
+  test("owner shares with a provisioned directory user using view-only permission", async ({ page }) => {
+    const shareRequests: ShareRequest[] = [];
+    await bootOwnerChat(page, {
+      onShareRequest: (request) => shareRequests.push(request),
+    });
+
+    const dialog = await openShareDialog(page);
+    await selectDefaultSharePermission(dialog, "view");
+    await dialog.getByPlaceholder("Search by email or team name...").fill("recipient");
+    await dialog.getByText(RECIPIENT.name, { exact: true }).click();
+
+    await expect(accessRow(dialog, RECIPIENT.email).locator("select")).toHaveValue("view");
     expect(shareRequests).toContainEqual(
       expect.objectContaining({
         method: "POST",
-        body: {
-          user_emails: [FALLBACK_EMAIL],
-          permission: "view",
-        },
+        body: { user_emails: [RECIPIENT.email], permission: "view" },
       }),
     );
+    await dialog.getByRole("button", { name: "Close", exact: true }).click();
+    const reopenedDialog = await openShareDialog(page);
+    await expect(accessRow(reopenedDialog, RECIPIENT.email).locator("select")).toHaveValue("view");
   });
 
   test("owner shares a conversation with a team and displays the team access row", async ({
