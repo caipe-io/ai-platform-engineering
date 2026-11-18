@@ -9,6 +9,7 @@ withErrorHandler,
 import { getCollection } from '@/lib/mongodb';
 import {
 shareableUserIdentityFilter,
+stableKeycloakSubject,
 type ShareableUserDocument,
 } from '@/lib/rbac/shareable-users';
 import type { UserPublicInfo } from '@/types/mongodb';
@@ -53,7 +54,7 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
       email: u.email,
       name: u.name,
       avatar_url: u.avatar_url,
-      subject: u.keycloak_sub ?? u.metadata?.keycloak_sub,
+      subject: stableKeycloakSubject(u),
     }));
 
     return successResponse(publicResults);

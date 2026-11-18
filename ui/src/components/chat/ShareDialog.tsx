@@ -98,6 +98,9 @@ export function ShareDialog({
   const [defaultPermission, setDefaultPermission] = useState<SharePermission>('comment');
   const [pendingAccessAction, setPendingAccessAction] = useState<string | null>(null);
   const [sharingInfoLoading, setSharingInfoLoading] = useState(false);
+  const sharingLoadGenerationRef = useRef(0);
+  const activeDialogRef = useRef({ conversationId, open });
+  activeDialogRef.current = { conversationId, open };
   const initialSharingRef = useRef(initialSharing);
   const permissionsConversationIdRef = useRef(conversationId);
   const shareableTeamsRef = useRef<Team[] | null>(null);
@@ -110,9 +113,7 @@ export function ShareDialog({
     setSharedWith(sharing?.shared_with || []);
     const teamIds = sharing?.shared_with_teams || [];
     setSharedWithTeams(teamIds);
-    if (sharing?.team_permissions) {
-      setTeamPermissions(sharing.team_permissions);
-    }
+    setTeamPermissions(sharing?.team_permissions || {});
   }, []);
 
   const getShareableTeams = useCallback(async (): Promise<Team[]> => {
@@ -131,11 +132,22 @@ export function ShareDialog({
     return request;
   }, []);
 
+  const invalidateSharingLoad = useCallback(() => {
+    sharingLoadGenerationRef.current += 1;
+    setSharingInfoLoading(false);
+  }, []);
+
   const loadSharingInfo = useCallback(async () => {
+    const generation = ++sharingLoadGenerationRef.current;
+    const isCurrent = () => sharingLoadGenerationRef.current === generation
+      && activeDialogRef.current.conversationId === conversationId && activeDialogRef.current.open;
+    setSharingInfoLoading(true);
     try {
       const response = await fetch(`/api/chat/conversations/${conversationId}/share`);
+      if (!isCurrent()) return;
       if (response.ok) {
         const data = await response.json();
+        if (!isCurrent()) return;
         const sharing = data.data?.sharing;
         setSharedWith(sharing?.shared_with || []);
         const teamIds = sharing?.shared_with_teams || [];
@@ -171,6 +183,7 @@ export function ShareDialog({
         if (teamIds.length > 0) {
           try {
             const allTeams = await getShareableTeams();
+            if (!isCurrent()) return;
             const namesMap: Record<string, string> = {};
             allTeams.forEach((team: Team) => {
               for (const alias of teamAliases(team)) {
@@ -188,6 +201,7 @@ export function ShareDialog({
         // Conversation not found — may still be syncing to MongoDB.
         // Only treat as legacy if storageMode is localStorage (no MongoDB at all).
         const { getStorageMode } = await import('@/lib/storage-config');
+        if (!isCurrent()) return;
         const mode = getStorageMode();
         if (mode === 'mongodb') {
           // MongoDB is enabled but the conversation hasn't been persisted yet.
@@ -199,9 +213,12 @@ export function ShareDialog({
         }
       }
     } catch (err) {
+      if (!isCurrent()) return;
       console.error("Failed to load sharing info:", err);
       // Don't assume legacy on network errors — only on explicit 404 + localStorage mode
       setIsLegacyConversation(false);
+    } finally {
+      if (isCurrent()) setSharingInfoLoading(false);
     }
   }, [conversationId, getShareableTeams, updateConversationSharing]);
 
@@ -222,12 +239,8 @@ export function ShareDialog({
       setTeamPermissions({});
     }
 
-    let active = true;
-    setSharingInfoLoading(true);
     applySharingSnapshot(initialSharingRef.current);
-    void loadSharingInfo().finally(() => {
-      if (active) setSharingInfoLoading(false);
-    });
+    void loadSharingInfo();
     if (canManageSharing) {
       void getShareableTeams().catch((err) => {
         console.error("Failed to load shareable teams:", err);
@@ -235,7 +248,7 @@ export function ShareDialog({
     }
 
     return () => {
-      active = false;
+      sharingLoadGenerationRef.current += 1;
     };
   }, [open, conversationId, canManageSharing, applySharingSnapshot, getShareableTeams, loadSharingInfo]);
 
@@ -308,6 +321,7 @@ export function ShareDialog({
 
   const handleShareUser = async (email: string) => {
     if (!canManageSharing) return;
+    invalidateSharingLoad();
     setLoading(true);
     try {
       const updatedConversation = await apiClient.shareConversation(conversationId, {
@@ -350,6 +364,7 @@ export function ShareDialog({
 
   const handleShareTeam = async (teamId: string) => {
     if (!canManageSharing) return;
+    invalidateSharingLoad();
     setLoading(true);
     try {
       const updatedConversation = await apiClient.shareConversation(conversationId, {
@@ -398,6 +413,7 @@ export function ShareDialog({
     newPermission: SharePermission
   ) => {
     if (!canManageSharing) return;
+    invalidateSharingLoad();
     const targetKey = target.email ? `user:${target.email}` : `team:${target.team_id}`;
     const previousPermission = target.email
       ? userPermissions[target.email] || 'view'
@@ -449,6 +465,7 @@ export function ShareDialog({
 
   const handleRemoveAccess = async (target: { email?: string; team_id?: string }) => {
     if (!canManageSharing) return;
+    invalidateSharingLoad();
     const targetKey = target.email ? `user:${target.email}` : `team:${target.team_id}`;
     setPendingAccessAction(`remove:${targetKey}`);
     try {

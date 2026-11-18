@@ -1211,6 +1211,27 @@ See [the file map](./file-map.md). Every auth-relevant file is listed with what 
   reader and writer grants and updates the stored sharing state. Downgrading
   a recipient to view-only removes their writer grant. These operations still
   require the conversation's share permission.
+- Sharing writers and permanent deletion use the same Mongo-backed mutation
+  lock per conversation. Overlapping changes return HTTP 409 and can be retried;
+  permission updates for removed recipients return HTTP 404.
+- Each accepted access change is saved in `conversation_share_mutations` before
+  its grant diff is applied. A failed request retains that exact intent. The next
+  authorized sharing mutation resumes it before reading current recipients and
+  applying the new change. Access-row inserts reuse their original IDs, so
+  replay does not duplicate them. Recovery applies only the recorded diff; it
+  does not roll back unrelated or previously existing grants.
+- Failed changes are not reported as successful. If the authorization service or
+  MongoDB is unavailable, restore it and retry the sharing action. Permanent
+  deletion discards pending share intents while holding the same lock.
+- Locks are non-expiring to prevent a paused writer from overlapping another
+  replica. If a process dies while holding one, an operator must first verify
+  that writer is no longer running, then remove only that conversation's row
+  from `conversation_mutation_locks`. Retain its journal entry for the next
+  authorized retry. Never expire a live writer's lock or delete recovery work
+  merely to clear an error.
+- Automatic purge failures are logged without blocking the trash list. Explicit
+  permanent deletion still fails when cleanup cannot complete and retains the
+  owning record for retry.
 - Share mutations use the authorization reconciler so successful changes
   invalidate cached decisions. If a grant or downgrade fails, the UI reports
   an error rather than recording a successful permission change.

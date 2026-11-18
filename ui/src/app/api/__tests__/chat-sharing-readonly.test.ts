@@ -116,6 +116,7 @@ function createMockCollection() {
       toArray: jest.fn().mockResolvedValue([]),
     }),
     insertOne: jest.fn().mockResolvedValue({ insertedId: new ObjectId() }),
+    deleteOne: jest.fn().mockResolvedValue({ deletedCount: 1 }),
     insertMany: jest.fn().mockResolvedValue({ insertedCount: 0 }),
     updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
     updateMany: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
@@ -510,7 +511,7 @@ describe('PATCH /api/chat/conversations/[id]/share — permission updates', () =
     const res = await PATCH(req, { params: Promise.resolve({ id: conv._id }) });
 
     expect(res.status).toBe(200);
-    expect(sharingAccessCol.updateOne).toHaveBeenCalledWith(
+    expect(sharingAccessCol.updateMany).toHaveBeenCalledWith(
       { conversation_id: conv._id, granted_to: { $in: [VIEWER_EMAIL] }, revoked_at: null },
       { $set: { permission: 'comment', granted_to: VIEWER_EMAIL } }
     );
@@ -717,8 +718,12 @@ describe('POST /api/chat/conversations/[id]/share — permission storage', () =>
     const res = await POST(req, { params: Promise.resolve({ id: conv._id }) });
 
     expect(res.status).toBe(200);
-    expect(sharingAccessCol.insertMany).toHaveBeenCalled();
-    const insertedRecords = sharingAccessCol.insertMany.mock.calls[0][0];
+    expect(sharingAccessCol.updateOne).toHaveBeenCalledWith(
+      { _id: expect.any(ObjectId) },
+      { $setOnInsert: expect.objectContaining({ granted_to: VIEWER_EMAIL, permission: 'view' }) },
+      { upsert: true },
+    );
+    const insertedRecords = [sharingAccessCol.updateOne.mock.calls[0][1].$setOnInsert];
     expect(insertedRecords[0].permission).toBe('view');
     expect(insertedRecords[0].granted_to).toBe(VIEWER_EMAIL);
   });
@@ -1027,7 +1032,7 @@ describe('DELETE /api/chat/conversations/[id]/share — access revocation', () =
     );
     expect(convsCol.updateOne).toHaveBeenCalledWith(
       { _id: conv._id },
-      { $set: { 'sharing.shared_with': [] } },
+      { $pull: { 'sharing.shared_with': { $in: [VIEWER_EMAIL] } } },
     );
   });
 
@@ -1102,11 +1107,119 @@ describe('DELETE /api/chat/conversations/[id]/share — access revocation', () =
     expect(convsCol.updateOne).toHaveBeenCalledWith(
       { _id: conv._id },
       {
-        $set: {
-          'sharing.shared_with_teams': [],
-          'sharing.team_permissions': {},
-        },
+        $pull: { 'sharing.shared_with_teams': { $in: expect.arrayContaining(['platform']) } },
+        $set: { 'sharing.team_permissions': {} },
       },
     );
+  });
+});
+
+describe('serialized conversation sharing changes', () => {
+  beforeEach(() => {
+    const held = new Set<string>();
+    mockCollections['conversation_mutation_locks'] = {
+      insertOne: jest.fn(async ({ _id }: { _id: string }) => {
+        if (held.has(_id)) throw Object.assign(new Error('busy'), { code: 11000 });
+        held.add(_id);
+      }),
+      deleteOne: jest.fn(async ({ _id }: { _id: string }) => held.delete(_id)),
+    };
+    mockGetServerSession.mockResolvedValue({ user: { email: OWNER_EMAIL }, sub: 'owner-sub' });
+  });
+
+  function mutableConversation() {
+    const state = makeConversation({ sharing: {
+      shared_with: [VIEWER_EMAIL, 'secondary@example.com'],
+      shared_with_teams: [TEAM_ID], team_permissions: { [TEAM_ID]: 'view' },
+    } });
+    const collection = createMockCollection();
+    collection.findOne.mockImplementation(async () => structuredClone(state));
+    collection.updateOne.mockImplementation(async (_filter, update) => {
+      for (const [path, value] of Object.entries(update.$set ?? {})) {
+        state.sharing[path.replace('sharing.', '')] = value;
+      }
+      for (const [path, value] of Object.entries(update.$pull ?? {})) {
+        const key = path.replace('sharing.', '');
+        state.sharing[key] = state.sharing[key].filter((ref: string) => !(value as { $in: string[] }).$in.includes(ref));
+      }
+      return { matchedCount: 1, modifiedCount: 1 };
+    });
+    mockCollections['conversations'] = collection;
+    const teams = createMockCollection();
+    teams.findOne.mockResolvedValue({ _id: TEAM_ID });
+    mockCollections['teams'] = teams;
+    mockShareableUsers([{ email: VIEWER_EMAIL, keycloak_sub: 'viewer-sub' },
+      { email: 'secondary@example.com', keycloak_sub: 'secondary-sub' }]);
+    return state;
+  }
+
+  async function change(method: 'PATCH' | 'DELETE' | 'POST', body: unknown) {
+    const route = await import('../chat/conversations/[id]/share/route');
+    return route[method](new NextRequest(`https://example.test/api/chat/conversations/${TEST_CONV_ID}/share`, {
+      method, body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' },
+    }), { params: Promise.resolve({ id: TEST_CONV_ID }) });
+  }
+
+  it.each([{ email: VIEWER_EMAIL }, { team_id: TEAM_ID }])(
+    'does not let a delayed PATCH recreate grants after removing %j', async (target) => {
+      mutableConversation();
+      expect((await change('DELETE', target)).status).toBe(200);
+      mockWriteOpenFgaTuples.mockClear();
+      const response = await change('PATCH', { ...target, permission: 'comment' });
+      expect(response.status).toBe(404);
+      expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects overlapping changes and removes both recipients after retry without restoring a stale array', async () => {
+    const state = mutableConversation();
+    let finish!: () => void;
+    let started!: () => void;
+    const applied = new Promise<void>((resolve) => { started = resolve; });
+    mockWriteOpenFgaTuples.mockImplementationOnce(async () => {
+      started();
+      await new Promise<void>((resolve) => { finish = resolve; });
+      return { enabled: true, writes: 0, deletes: 2 };
+    });
+    const first = change('DELETE', { email: VIEWER_EMAIL });
+    await applied;
+    expect((await change('DELETE', { email: 'secondary@example.com' })).status).toBe(409);
+    expect((await change('PATCH', { email: VIEWER_EMAIL, permission: 'comment' })).status).toBe(409);
+    finish();
+    expect((await first).status).toBe(200);
+    expect(state.sharing.shared_with).toEqual(['secondary@example.com']);
+    expect((await change('DELETE', { email: 'secondary@example.com' })).status).toBe(200);
+    expect(state.sharing.shared_with).toEqual([]);
+  });
+
+  it('resumes failed sharing persistence before a subsequent revocation reads recipients', async () => {
+    const state = mutableConversation();
+    state.sharing.shared_with = [VIEWER_EMAIL];
+    let pending: unknown = null;
+    mockCollections['conversation_share_mutations'] = {
+      findOne: jest.fn(async () => pending),
+      insertOne: jest.fn(async (record) => { pending = record; }),
+      deleteOne: jest.fn(async () => { pending = null; }),
+    };
+    const conversations = mockCollections['conversations'] as ReturnType<typeof createMockCollection>;
+    conversations.updateOne.mockRejectedValueOnce(new Error('Mongo metadata unavailable'));
+    expect((await change('POST', { user_emails: ['secondary@example.com'], permission: 'view' })).status).toBe(500);
+    expect(pending).not.toBeNull();
+    expect(state.sharing.shared_with).toEqual([VIEWER_EMAIL]);
+    expect((await change('DELETE', { email: 'secondary@example.com' })).status).toBe(200);
+    expect(pending).toBeNull();
+    expect(state.sharing.shared_with).toEqual([VIEWER_EMAIL]);
+    expect(mockWriteOpenFgaTuples).toHaveBeenLastCalledWith({ writes: [], deletes: [
+      { user: 'user:secondary-sub', relation: 'reader', object: `conversation:${TEST_CONV_ID}` },
+      { user: 'user:secondary-sub', relation: 'writer', object: `conversation:${TEST_CONV_ID}` },
+    ] });
+  });
+
+  it('reconciles a mixed user/team POST only once', async () => {
+    mutableConversation();
+    const response = await change('POST', { user_emails: [VIEWER_EMAIL], team_ids: [TEAM_ID], permission: 'comment' });
+    expect(response.status).toBe(200);
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalledTimes(1);
+    expect(mockWriteOpenFgaTuples.mock.calls[0][0].writes).toHaveLength(4);
   });
 });

@@ -89,3 +89,16 @@ describe("GET /api/users/search", () => {
     expect(find.mock.calls[0][0].$and[0].$or[0].email.$regex).toBe("test\\.\\*");
   });
 });
+
+it('returns the same trimmed subject used to create grants, including metadata fallback', async () => {
+  mockGetCollection.mockResolvedValue({ find: () => ({ limit: () => ({ toArray: async () => [
+    { email: 'primary@example.com', keycloak_sub: '  primary-sub  ' },
+    { email: 'secondary@example.com', keycloak_sub: ' ', metadata: { keycloak_sub: ' fallback-sub ' } },
+  ] }) }) });
+  const { GET } = await import('../route');
+  const response = await GET(new NextRequest('https://example.test/api/users/search?q=example'));
+  expect((await response.json()).data).toEqual([
+    { email: 'primary@example.com', subject: 'primary-sub' },
+    { email: 'secondary@example.com', subject: 'fallback-sub' },
+  ]);
+});

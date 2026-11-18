@@ -17,6 +17,8 @@ beforeEach(() => {
   mockDelete.mockResolvedValue({ deletedCount: 1 });
   mockGetCollection.mockImplementation(async (name: string) => ({
     deleteMany: (filter: unknown) => mockDelete(name, filter),
+    insertOne: jest.fn().mockResolvedValue({}),
+    deleteOne: jest.fn().mockResolvedValue({}),
   }));
 });
 
@@ -36,13 +38,13 @@ it('deletes scoped sharing data and agent checkpoints before deleting owners', a
   ]);
   expect(mockRevoke.mock.calls).toEqual([['example-agent'], ['example-chat']]);
   expect(mockDelete).toHaveBeenCalledWith('sharing_access', {
-    conversation_id: { $in: ['example-agent', 'example-chat'] },
+    conversation_id: { $in: ['example-agent'] },
   });
   expect(mockDelete).toHaveBeenCalledWith('checkpoints_conversation', {
     thread_id: { $in: ['example-agent'] },
   });
   expect(mockDelete).toHaveBeenLastCalledWith('conversations', {
-    _id: { $in: ['example-agent', 'example-chat'] },
+    _id: { $in: ['example-chat'] },
   });
 });
 

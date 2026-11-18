@@ -1,5 +1,5 @@
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 const mockUpdateConversationSharing = jest.fn()
 const mockPush = jest.fn()
@@ -25,6 +25,8 @@ jest.mock('@/lib/api-client', () => ({
 }))
 
 import { ShareDialog } from '../ShareDialog'
+
+beforeEach(() => { jest.clearAllMocks() })
 
 describe('ShareDialog permissions', () => {
   beforeEach(() => {
@@ -174,4 +176,44 @@ describe('ShareDialog permissions', () => {
       expect(screen.queryByText('recipient@example.com')).not.toBeInTheDocument()
     })
   })
+})
+
+it('does not restore a removed recipient from an older sharing GET', async () => {
+  let finishLoad!: (response: unknown) => void;
+  ;(global.fetch as jest.Mock).mockImplementation((url: string) => url.includes('/share')
+    ? new Promise((resolve) => { finishLoad = resolve })
+    : Promise.resolve({ ok: true, json: async () => ({ data: [] }) }))
+  mockRevokeConversationShare.mockResolvedValue({ sharing: { shared_with: [], shared_with_teams: [] } })
+  render(<ShareDialog conversationId="example-chat" conversationTitle="Example" open onOpenChange={jest.fn()}
+    initialSharing={{ shared_with: ['recipient@example.com'], shared_with_teams: [] }} />)
+  fireEvent.click(screen.getByLabelText('Remove access for recipient@example.com'))
+  await waitFor(() => expect(screen.queryByText('recipient@example.com')).not.toBeInTheDocument())
+  mockUpdateConversationSharing.mockClear()
+  await act(async () => finishLoad({ ok: true, json: async () => ({ data: {
+    sharing: { shared_with: ['recipient@example.com'], shared_with_teams: [] },
+    access_list: [{ granted_to: 'recipient@example.com', permission: 'comment' }],
+  } }) }))
+  expect(screen.queryByText('recipient@example.com')).not.toBeInTheDocument()
+  expect(mockUpdateConversationSharing).not.toHaveBeenCalled()
+})
+
+it('discards responses from a previous conversation, without overwriting the sidebar', async () => {
+  let finishFirst!: (response: unknown) => void;
+  ;(global.fetch as jest.Mock).mockImplementation((url: string) => {
+    if (url.includes('/primary/share')) return new Promise((resolve) => { finishFirst = resolve })
+    return Promise.resolve({ ok: true, json: async () => ({ data: {
+      sharing: { shared_with: ['current@example.com'], shared_with_teams: [] }, access_list: [],
+    } }) })
+  })
+  const props = { conversationTitle: 'Example', open: true, onOpenChange: jest.fn(), canManageSharing: false }
+  const { rerender } = render(<ShareDialog {...props} conversationId="primary" />)
+  rerender(<ShareDialog {...props} conversationId="secondary" />)
+  await waitFor(() => expect(screen.getByText('current@example.com')).toBeInTheDocument())
+  mockUpdateConversationSharing.mockClear()
+  await act(async () => finishFirst({ ok: true, json: async () => ({ data: {
+    sharing: { shared_with: ['stale@example.com'], shared_with_teams: [] }, access_list: [],
+  } }) }))
+  expect(screen.getByText('current@example.com')).toBeInTheDocument()
+  expect(screen.queryByText('stale@example.com')).not.toBeInTheDocument()
+  expect(mockUpdateConversationSharing).not.toHaveBeenCalled()
 })

@@ -115,6 +115,8 @@ function collectionWithItems(items: unknown[]) {
     find: jest.fn().mockReturnValue({ sort, toArray: jest.fn().mockResolvedValue([]) }),
     findOne: jest.fn().mockResolvedValue(items[0] ?? null),
     insertMany: jest.fn(),
+    insertOne: jest.fn(),
+    deleteOne: jest.fn(),
     updateOne: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
   };
 }
@@ -303,6 +305,7 @@ describe("remaining conversation routes use OpenFGA instead of legacy owner/team
       if (name === "conversations") return conversations;
       if (name === "sharing_access") return sharingAccess;
       if (name === "users") return users;
+      if (name === "conversation_mutation_locks" || name === "conversation_share_mutations") return collectionWithItems([]);
       throw new Error(`unexpected collection ${name}`);
     });
     const { POST } = await import("../chat/conversations/[id]/share/route");
