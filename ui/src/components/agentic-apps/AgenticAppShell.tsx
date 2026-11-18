@@ -3,7 +3,7 @@
 import { ArrowLeft, LoaderCircle } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useSession } from "next-auth/react";
 import { parseFeedbackAppContext } from "@/lib/feedback-issue-style";
 import { requestFrameFeedbackContext } from "@/lib/agentic-apps/feedback-handoff";
@@ -386,8 +386,16 @@ export function AgenticAppShell({
   const query = runtimeSearch.toString();
   const requestedRuntimePath = `${buildAgenticAppPublicPath(appId, path)}${query ? `?${query}` : ""}${hash}`;
   if (hostRoute && !(state.app.hostPaths ?? []).some(root => ownsAppPath(root, publicPath))) return <></>;
+  const showAssistant = assistantConfigured && Boolean(assistantAgent) &&
+    (configuration?.visible ?? !state.app.assistantOptions?.requireConfiguration);
+  // Keep the closed launcher outside the embedded document's hit-test area.
+  // Share its responsive/configured inset so footer actions remain reachable.
+  const assistantLayout = showAssistant ? {
+    "--app-assistant-bottom": configuration?.bottomInset === undefined ? undefined : `${configuration.bottomInset}px`,
+    paddingBottom: "calc(var(--app-assistant-bottom) + 3.5rem)",
+  } as CSSProperties : undefined;
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-clip">
+    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-clip [--app-assistant-bottom:1rem] sm:[--app-assistant-bottom:1.5rem]" style={assistantLayout}>
       <WorkspaceBreadcrumbs
         breadcrumbs={(frameBreadcrumbs?.route === publicPath && frameBreadcrumbs.items.length ? frameBreadcrumbs.items : [
           { label: "Home", href: "/" },
@@ -422,7 +430,7 @@ export function AgenticAppShell({
           if (!frame) return Promise.reject(new Error("The feedback app is unavailable"));
           return requestFrameFeedbackContext(frame, appId, feedbackRequest.requestId!, request);
         } : undefined} />}
-      {assistantConfigured && assistantAgent && (configuration?.visible ?? !state.app.assistantOptions?.requireConfiguration) ? (
+      {showAssistant && assistantAgent ? (
         <AgenticAppAssistantOverlay
           assistantAgent={assistantAgent.config}
           key={`${identity}:${appId}:${assistantAgent.id}`}

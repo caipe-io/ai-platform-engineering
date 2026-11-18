@@ -357,7 +357,7 @@ export function AgenticAppAssistantOverlay({
   }, []);
 
   return (
-    <div ref={containerRef} className="pointer-events-none fixed inset-x-4 bottom-4 top-18 z-40 flex min-h-0 flex-col items-end justify-end gap-3 sm:inset-x-6 sm:bottom-6" style={{ bottom: configuration?.bottomInset }}>
+    <div ref={containerRef} className="pointer-events-none fixed inset-x-4 bottom-4 top-18 z-40 flex min-h-0 flex-col items-end justify-end gap-3 sm:inset-x-6 sm:bottom-6" style={{ bottom: configuration?.bottomInset ?? "var(--app-assistant-bottom)" }}>
       {renderPanel ? (
         <Tabs value={view} onValueChange={value => setView(value as typeof view)} asChild>
         <section
