@@ -166,12 +166,31 @@ it("times out without stealing an existing writer's lock or running side effects
 });
 
 it("bounds a stalled tuple read and releases the identity lock when it aborts", async () => {
-  const { writeOpenFgaTuples } = await import("../openfga");
-  mockRequest.mockImplementationOnce(async (_path: string, options: { signal?: AbortSignal }) => {
-    expect(options.signal).toBeInstanceOf(AbortSignal);
-    throw new DOMException("Read deadline exceeded", "TimeoutError");
+  jest.useFakeTimers();
+  const deadline = jest.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new DOMException("Read deadline exceeded", "TimeoutError")), milliseconds);
+    return controller.signal;
   });
-  await expect(writeOpenFgaTuples({ writes: [tuple], deletes: [] }, "login")).rejects.toThrow("Read deadline exceeded");
-  expect(mockLocks.size).toBe(0);
-  expect(mockRows.size).toBe(0);
+  try {
+    const { writeOpenFgaTuples } = await import("../openfga");
+    mockRequest.mockImplementationOnce(async (_path: string, options: { signal: AbortSignal }) => {
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+      });
+    });
+    const pending = writeOpenFgaTuples({ writes: [tuple], deletes: [] }, "login");
+    const rejected = expect(pending).rejects.toThrow("Read deadline exceeded");
+    await jest.advanceTimersByTimeAsync(4_999);
+    expect(deadline).toHaveBeenCalledWith(5_000);
+    expect(mockLocks.size).toBe(1);
+    expect(mockRows.size).toBe(0);
+    await jest.advanceTimersByTimeAsync(1);
+    await rejected;
+    expect(mockLocks.size).toBe(0);
+    expect(mockRows.size).toBe(0);
+  } finally {
+    deadline.mockRestore();
+    jest.useRealTimers();
+  }
 });
