@@ -42,6 +42,66 @@ test("includes missing planned cases and assertions as unexecuted", () => {
   assert.equal(result.verdict, "NO-GO");
 });
 
+test("planned assertion fields cannot turn missing execution results into PASS", () => {
+  const input = fixture();
+  Object.assign(input.plan[0].assertions[0], {
+    status: "PASS", detail: "Planned detail is not an observation", evidence_kind: "live-api", evidence,
+  });
+  delete input.results;
+  const report = normalizeReport(input);
+  assert.deepEqual(report.rows[0].assertions[0], {
+    id: "primary:SEC-01.01", label: "Sign-in", status: "NOT_RUN", detail: "No execution result recorded", evidence: [],
+  });
+  assert.equal(report.rows[0].status, "NOT_RUN");
+  assert.equal(report.assertion_totals.PASS, 0);
+  assert.equal(report.totals.NOT_RUN, 1);
+  assert.equal(report.fully_executed, 0);
+  assert.equal(report.verdict, "NO-GO");
+});
+
+test("planned assertion fields cannot override validated execution results", () => {
+  const input = fixture();
+  Object.assign(input.plan[0].assertions[0], {
+    status: "PASS", detail: "Planned detail", evidence_kind: "unit", evidence: [],
+  });
+  input.results[0].assertions[0] = {
+    id: "primary:SEC-01.01", label: "Result-supplied label", status: "BLOCKED", detail: "Required fixture unavailable",
+  };
+  const report = normalizeReport(input);
+  assert.deepEqual(report.rows[0].assertions[0], {
+    id: "primary:SEC-01.01", label: "Sign-in", status: "BLOCKED", detail: "Required fixture unavailable", evidence: [],
+  });
+  assert.equal(report.verdict, "NO-GO");
+});
+
+for (const cleanupStatus of ["PASS", "FAIL", "BLOCKED", "NOT_RUN"]) {
+  test(`excluded assertions with ${cleanupStatus} cleanup retain the correct mixed-plan disposition`, () => {
+    const input = fixture();
+    const id = "primary:WF-01";
+    input.plan.push({
+      id, suite: "primary", capability: "Optional workflow", cleanup_required: true,
+      assertions: [{ id: `${id}.01`, label: "Run first step" }, { id: `${id}.02`, label: "Run second step" }],
+    });
+    input.results.push({
+      id,
+      assertions: input.plan[1].assertions.map((assertion) => ({
+        id: assertion.id, status: "NOT_APPLICABLE", detail: "Workflow excluded from the declared scope",
+      })),
+      cleanup: { status: cleanupStatus, detail: `Fixture cleanup: ${cleanupStatus}`, evidence },
+    });
+    const report = normalizeReport(input);
+    const expected = cleanupStatus === "PASS" ? "NOT_APPLICABLE" : cleanupStatus;
+    assert.equal(report.rows[1].status, expected);
+    assert.equal(report.rows[1].cleanup.status, cleanupStatus);
+    assert.equal(report.totals[expected], 1);
+    assert.equal(report.totals.PASS, 1);
+    assert.equal(report.fully_executed, 1);
+    assert.equal(report.suite_summaries[0].totals[expected], 1);
+    assert.equal(report.verdict, cleanupStatus === "PASS" ? "GO" : "NO-GO");
+    assert.match(renderSummary(input), new RegExp(`${expected}: 1`));
+  });
+}
+
 test("preserves a failure with partial blocked coverage and manual cleanup repair", () => {
   const input = fixture();
   input.plan[0].cleanup_required = true;

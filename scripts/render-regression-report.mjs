@@ -101,14 +101,16 @@ export function normalizeReport(input) {
       if (raw.status === "PASS") {
         demand(evidence.length > 0, `PASS needs evidence for ${definition.id}`);
       }
-      return { ...raw, ...definition, evidence };
+      return { ...raw, id: definition.id, label: definition.label, evidence };
     });
     const cleanup = result.cleanup ?? { status: planned.cleanup_required === false ? "NOT_APPLICABLE" : "NOT_RUN", detail: planned.cleanup_required === false ? "Read-only case; no fixture cleanup required" : "Cleanup not recorded" };
     demand(statuses.includes(cleanup.status), `Invalid cleanup status for ${planned.id}`);
     demand(cleanup.status !== "NOT_APPLICABLE" || planned.cleanup_required === false, `Required cleanup cannot be excluded for ${planned.id}`);
     if (cleanup.status === "PASS") demand((cleanup.evidence?.length ?? 0) > 0, `Cleanup PASS needs evidence for ${planned.id}`);
     const cleanupResult = { ...cleanup, evidence: links(cleanup.evidence, isPublic) };
-    const derived = rollup([...assertions, ...(planned.cleanup_required === false && cleanup.status === "NOT_APPLICABLE" ? [] : [cleanup])]);
+    // Successful cleanup does not establish assertion coverage or change an exclusion.
+    const cleanupDisposition = cleanup.status === "PASS" || (planned.cleanup_required === false && cleanup.status === "NOT_APPLICABLE") ? [] : [cleanupResult];
+    const derived = rollup([...assertions, ...cleanupDisposition]);
     demand(!result.status || result.status === derived, `Inconsistent case status for ${planned.id}; expected ${derived}`);
     return { ...planned, detail: result.detail ?? "", assertions, cleanup: cleanupResult, status: derived,
       evidence: links(result.evidence, isPublic),
@@ -196,6 +198,7 @@ body{background:white}
 @media(max-width:640px){
 .scroll{overflow:visible}
 table,tbody,tr,td{display:block;width:100%}
+tr[hidden]{display:none}
 thead{display:none}
 tr{border:1px solid #d8e1ec;border-radius:8px;margin:12px 0;background:white;overflow:hidden}
 td,td.detail{min-width:0;max-width:none;padding:10px 14px}
