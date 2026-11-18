@@ -32,6 +32,15 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Validate manual release ref
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          if [[ "$DISPATCH_REF" != refs/heads/main ]]; then
+            echo "::error::Run Manual Version Release from main (--ref main). Use Pre-release Build for release-branch candidates."
+            exit 1
+          fi
+
       - name: 🔑 Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3

@@ -84,6 +84,11 @@ series (or the preceding reachable stable tag for the first RC), a full comparis
 against that stable tag, and exact Helm/image installation commands. RCs require
 no release blog and never update `CHANGELOG.md` or the `latest` image alias.
 Hotfix test tags, canary, and dev builds remain artifacts only.
+Manual promotion must run from `main` (`--ref main`); other dispatch refs are
+rejected before release credentials or version files are touched. Hotfix branch
+merge-backs skip stable preparation and automatic promotion. Older-series stable
+maintenance releases are currently unsupported; merge the tested fix into main
+and select a stable version newer than the latest stable tag.
 Retain RC Git tags after a stable release so their original commits remain
 available from the Tags tab.
 

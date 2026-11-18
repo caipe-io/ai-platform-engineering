@@ -109,7 +109,7 @@ jobs:
           # Method 2: Squash merge — check commit message for release/x.y.z
           if [[ -z "$RELEASE_VERSION" ]]; then
             COMMIT_MSG=$(git log -1 --format='%s' HEAD)
-            if [[ "$COMMIT_MSG" =~ release/([0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            if [[ "$COMMIT_MSG" =~ release/([0-9]+\.[0-9]+\.[0-9]+)($|[^0-9A-Za-z.-]) ]]; then
               RELEASE_VERSION="${BASH_REMATCH[1]}"
               echo "✅ Squash merge from release/$RELEASE_VERSION detected (via commit message)"
             fi

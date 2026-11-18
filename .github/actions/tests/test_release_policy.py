@@ -41,7 +41,7 @@ def repository(tmp_path: Path) -> Path:
   ("version", "base", "suffix", "valid"),
   [
     ("1.1.0", "", "", True),
-    ("1.1.0-rc.1", "", "", False),
+    ("1.1.0-rc.2", "", "", False),
     ("1.1.0-dev.1", "", "", False),
     ("01.1.0", "", "", False),
     ("1.0.0", "", "", False),
@@ -63,7 +63,7 @@ def test_release_tag_policy(
   result = subprocess.run(
     ["bash", "-c", action_script("validate-release-tag", "Validate version")],
     cwd=repository,
-    env={**os.environ, "VERSION": version, "BASE_VERSION": base, "SUFFIX_TYPE": suffix},
+    env={**os.environ, "VERSION": version, "BASE_VERSION": base, "SUFFIX_TYPE": suffix, "ALLOW_PRERELEASE": "false"},
     text=True,
     capture_output=True,
   )
@@ -125,7 +125,16 @@ def test_image_workflows_use_the_shared_channel_decision() -> None:
     jobs = yaml.safe_load(text)["jobs"]
     resolver_name, resolver = next((name, job) for name, job in jobs.items() if "is_final_release" in job.get("outputs", {}))
     assert resolver["outputs"]["is_final_release"] == ("${{ steps.version.outputs.is_final_release }}"), path
-    assert all(line == ("type=raw,value=latest,enable=${{ needs." + resolver_name + ".outputs.is_final_release == 'true' }}") for line in aliases), path
+    metadata_steps = [
+      (job_name, step) for job_name, job in jobs.items() for step in job.get("steps", [])
+      if step.get("uses", "").startswith("docker/metadata-action@")
+    ]
+    assert metadata_steps, path
+    if path.name == "ci-mcp-servers.yml":
+      assert {job_name for job_name, _ in metadata_steps} == {"build-and-push", "merge-manifests"}
+    for job_name, step in metadata_steps:
+      tags = step["with"]["tags"].splitlines()
+      assert ("type=raw,value=latest,enable=${{ needs." + resolver_name + ".outputs.is_final_release == 'true' }}") in tags, (path, job_name)
 
 
 @pytest.mark.parametrize("head_tag", ["1.1.0-rc.2", "1.0.1-dev.2", "1.0.0-hotfix.2"])
@@ -299,9 +308,9 @@ def test_manual_candidates_bypass_stable_release_and_post_requirements() -> None
   assert jobs["publish-release"]["if"] == "needs.commit-release.outputs.is_final_release == 'true'"
   post = next(step for step in steps if step.get("id") == "release-post")
   assert post["if"] == "steps.channel.outputs.is_final_release == 'true'"
-  for step in steps:
-    if step.get("uses") in ("./.github/actions/validate-release-tag", "./.github/actions/prepare-release"):
-      assert step["with"]["allow_prerelease"] == "true"
+  for action in ("validate-release-tag", "prepare-release"):
+    step = next(step for step in steps if step.get("uses") == f"./.github/actions/{action}")
+    assert step["with"]["allow_prerelease"] == "true"
 
 
 @pytest.mark.parametrize("suffix", ["rc", "hotfix"])
@@ -397,7 +406,9 @@ else:
   ("tag", "previous", "expected"),
   [("1.1.0-rc.1", [], "1.0.0"),
    ("1.1.0-rc.7", ["1.1.0-rc.1", "1.1.0-rc.6"], "1.1.0-rc.6"),
-   ("1.1.0-rc.11", ["1.1.0-rc.2", "1.1.0-rc.9", "1.1.0-rc.10"], "1.1.0-rc.10")],
+   ("1.1.0-rc.11", ["1.1.0-rc.2", "1.1.0-rc.9", "1.1.0-rc.10"], "1.1.0-rc.10"),
+   ("1.1.0-rc.11", ["1.1.0-rc.010", "1.1.0-rc.9"], "1.1.0-rc.010"),
+   ("1.1.0-rc.9999999999999999999999999999999999999", ["1.1.0-rc.9999999999999999999999999999999999998"], "1.1.0-rc.9999999999999999999999999999999999998")],
 )
 def test_rc_notes_use_explicit_baselines_and_exact_install_versions(
   repository: Path, release_cli: Path, tag: str, previous: list[str], expected: str,
@@ -554,3 +565,102 @@ def test_stable_release_notes_ignore_published_rc_boundaries(repository: Path, r
   assert args[args.index("--notes-start-tag") + 1] == "1.0.1"
   assert "--generate-notes" in args
   assert "--prerelease" not in args
+
+
+@pytest.mark.parametrize("ref,accepted", [
+  ("refs/heads/main", True),
+  ("refs/heads/primary", False),
+  ("refs/tags/1.1.0", False),
+  ("refs/tags/1.1.0-rc.1", False),
+])
+def test_manual_release_rejects_non_main_dispatch_before_credentials(ref: str, accepted: bool) -> None:
+  workflow = yaml.safe_load((ROOT / ".github/workflows/release-manual.yml").read_text())
+  steps = workflow["jobs"]["commit-release"]["steps"]
+  guard = next(step for step in steps if step.get("name") == "Validate manual release ref")
+  token = next(step for step in steps if step.get("id") == "app-token")
+  assert steps.index(guard) < steps.index(token)
+  assert guard["env"]["DISPATCH_REF"] == "${{ github.ref }}"
+  result = subprocess.run(["bash", "-c", guard["run"]], env={**os.environ, "DISPATCH_REF": ref}, capture_output=True)
+  assert (result.returncode == 0) is accepted
+
+
+@pytest.mark.parametrize("head,version,is_release", [
+  ("release/0.9.1-hotfix", "0.9.1-hotfix.1", False),
+  ("release/1.1.0-hotfix", "1.1.0-hotfix.1", False),
+  ("release/1.1.0", "1.1.0-rc.1", True),
+  ("primary", "1.1.0-rc.1", False),
+])
+def test_hotfix_merge_backs_do_not_prepare_an_older_stable_version(
+  repository: Path, head: str, version: str, is_release: bool,
+) -> None:
+  (repository / "pyproject.toml").write_text(f'version = "{version}"\n')
+  workflow = yaml.safe_load((ROOT / ".github/workflows/pr-version-bump.yml").read_text())
+  steps = workflow["jobs"]["version-bump"]["steps"]
+  check = next(step for step in steps if step.get("id") == "release-check")
+  output = repository / "output"
+  subprocess.run(
+    ["bash", "-c", check["run"]], cwd=repository,
+    env={**os.environ, "BASE_REF": "main", "HEAD_REF": head, "GITHUB_OUTPUT": str(output)},
+    check=True, capture_output=True,
+  )
+  values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+  assert values["is_release_merge"] == str(is_release).lower()
+  assert values["needs_prepare"] == str(is_release).lower()
+  prepare = next(step for step in steps if step.get("uses") == "./.github/actions/prepare-release")
+  assert "is_release_merge == 'true'" in prepare["if"]
+  assert "needs_prepare == 'true'" in prepare["if"]
+
+
+@pytest.mark.parametrize("subject,expected", [
+  ("fix: merge release/1.1.0-hotfix (#12)", False),
+  ("fix: merge release/1.1.0 (#12)", True),
+  ("fix: merge release/1.1.0", True),
+])
+def test_squashed_hotfix_merge_does_not_dispatch_stable_promotion(repository: Path, subject: str, expected: bool) -> None:
+  subprocess.run(["git", "commit", "--allow-empty", "-qm", subject], cwd=repository, check=True)
+  workflow = yaml.safe_load((ROOT / ".github/workflows/auto-tag.yml").read_text())
+  step = next(step for step in workflow["jobs"]["auto-tag"]["steps"] if step.get("id") == "release-merge")
+  output = repository / "output"
+  subprocess.run(
+    ["bash", "-c", step["run"]], cwd=repository,
+    env={**os.environ, "GITHUB_OUTPUT": str(output)}, check=True, capture_output=True,
+  )
+  assert f"is_release_merge={str(expected).lower()}\n" in output.read_text()
+
+
+@pytest.mark.parametrize("suffix", ["rc", "hotfix"])
+@pytest.mark.parametrize("number,existing,accepted", [
+  ("10", ["010", "9"], False),
+  ("11", ["010", "9"], True),
+  ("9", ["08"], True),
+  ("01", [], False),
+  ("9999999999999999999999999999999999999", ["9999999999999999999999999999999999998"], True),
+  ("9999999999999999999999999999999999998", ["9999999999999999999999999999999999999"], False),
+])
+def test_candidate_suffix_comparisons_are_decimal_and_do_not_overflow(
+  repository: Path, suffix: str, number: str, existing: list[str], accepted: bool,
+) -> None:
+  for value in existing:
+    subprocess.run(["git", "tag", f"1.1.0-{suffix}.{value}"], cwd=repository, check=True)
+  result = subprocess.run(
+    ["bash", "-c", action_script("validate-release-tag", "Validate version")], cwd=repository,
+    env={**os.environ, "VERSION": f"1.1.0-{suffix}.{number}", "ALLOW_PRERELEASE": "true",
+         "BASE_VERSION": "", "SUFFIX_TYPE": ""}, capture_output=True, text=True,
+  )
+  assert (result.returncode == 0) is accepted, result.stdout + result.stderr
+
+
+def test_remote_tag_lookup_and_refresh_failures_stop_release_validation(repository: Path) -> None:
+  subprocess.run(["git", "remote", "set-url", "origin", str(repository / "missing")], cwd=repository, check=True)
+  result = subprocess.run(
+    ["bash", "-c", action_script("validate-release-tag", "Fetch tags")],
+    cwd=repository, capture_output=True,
+  )
+  assert result.returncode != 0
+  result = subprocess.run(
+    ["bash", "-c", action_script("validate-release-tag", "Validate version")], cwd=repository,
+    env={**os.environ, "VERSION": "1.1.0-rc.2", "ALLOW_PRERELEASE": "true", "BASE_VERSION": "", "SUFFIX_TYPE": ""},
+    capture_output=True, text=True,
+  )
+  assert result.returncode != 0
+  assert "Cannot verify remote tag" in result.stderr

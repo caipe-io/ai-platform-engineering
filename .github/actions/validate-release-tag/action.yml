@@ -47,7 +47,7 @@ runs:
   steps:
     - name: 🔎 Fetch tags
       shell: bash
-      run: git fetch --tags --force --quiet || true
+      run: git fetch --tags --force --quiet
 
     - name: ✅ Validate version
       shell: bash
@@ -61,8 +61,32 @@ runs:
 
         tag_exists() {
           local tag="$1"
-          git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null 2>&1 ||
-            git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1
+          if git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null 2>&1; then
+            return 0
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null; then
+            return 0
+          else
+            local status=$?
+            # ls-remote uses 2 only when the remote was reached but no ref matched.
+            if [[ "$status" == 2 ]]; then return 1; fi
+            echo "❌ Cannot verify remote tag ${tag}; retry after restoring remote access" >&2
+            exit "$status"
+          fi
+        }
+
+        decimal_gt() {
+          local left="$1" right="$2"
+          # Normalize legacy padded suffixes without Bash's octal/integer limits.
+          left="${left#"${left%%[!0]*}"}"
+          right="${right#"${right%%[!0]*}"}"
+          left="${left:-0}"
+          right="${right:-0}"
+          if [[ ${#left} -ne ${#right} ]]; then
+            (( ${#left} > ${#right} ))
+          else
+            [[ "$left" > "$right" ]]
+          fi
         }
 
         require_newer_than_stable() {
@@ -101,7 +125,7 @@ runs:
           fi
 
           BASE_RE="${BASE_VERSION//./\\.}"
-          if ! [[ "$VERSION" =~ ^${BASE_RE}-${SUFFIX_TYPE}\.([0-9]+)$ ]]; then
+          if ! [[ "$VERSION" =~ ^${BASE_RE}-${SUFFIX_TYPE}\.([1-9][0-9]*)$ ]]; then
             echo "❌ ERROR: '${VERSION}' must match ${BASE_VERSION}-${SUFFIX_TYPE}.N"
             exit 1
           fi
@@ -117,11 +141,11 @@ runs:
             [[ -z "$TAG_NAME" ]] && continue
             if [[ "$TAG_NAME" =~ ^${BASE_RE}-${SUFFIX_TYPE}\.([0-9]+)$ ]]; then
               N="${BASH_REMATCH[1]}"
-              (( N > MAX_N )) && MAX_N="$N"
+              if decimal_gt "$N" "$MAX_N"; then MAX_N="$N"; fi
             fi
           done < <(git tag -l "${BASE_VERSION}-${SUFFIX_TYPE}.*")
 
-          if (( 10#$NEW_N <= 10#$MAX_N )); then
+          if ! decimal_gt "$NEW_N" "$MAX_N"; then
             echo "❌ ERROR: ${SUFFIX_TYPE} number ${NEW_N} must be greater than the latest existing ${BASE_VERSION}-${SUFFIX_TYPE}.${MAX_N}"
             exit 1
           fi

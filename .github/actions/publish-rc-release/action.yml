@@ -37,11 +37,22 @@ runs:
           exit 1
         fi
         BASE_RE="${BASE//./\\.}"
+        PREVIOUS_MAX=0
         while IFS= read -r tag; do
-          if [[ "$tag" =~ ^${BASE_RE}-rc\.([1-9][0-9]*)$ ]] &&
-             (( 10#${BASH_REMATCH[1]} < 10#$NUMBER )); then
-            PREVIOUS="$tag"
-            break
+          if [[ "$tag" =~ ^${BASE_RE}-rc\.([0-9]+)$ ]]; then
+            PREVIOUS_NUMBER="${BASH_REMATCH[1]}"
+            PREVIOUS_NUMBER="${PREVIOUS_NUMBER#"${PREVIOUS_NUMBER%%[!0]*}"}"
+            PREVIOUS_NUMBER="${PREVIOUS_NUMBER:-0}"
+            if [[ ${#PREVIOUS_NUMBER} -lt ${#NUMBER} ||
+                  ( ${#PREVIOUS_NUMBER} -eq ${#NUMBER} && "$PREVIOUS_NUMBER" < "$NUMBER" ) ]]; then
+              # Equal-width decimal strings compare lexically without integer overflow.
+              # shellcheck disable=SC2071
+              if [[ -z "$PREVIOUS" || ${#PREVIOUS_NUMBER} -gt ${#PREVIOUS_MAX} ||
+                    ( ${#PREVIOUS_NUMBER} -eq ${#PREVIOUS_MAX} && "$PREVIOUS_NUMBER" > "$PREVIOUS_MAX" ) ]]; then
+                PREVIOUS="$tag"
+                PREVIOUS_MAX="$PREVIOUS_NUMBER"
+              fi
+            fi
           fi
         done < <(git tag --merged "$RC_TAG" --sort=-version:refname)
         PREVIOUS="${PREVIOUS:-$STABLE}"

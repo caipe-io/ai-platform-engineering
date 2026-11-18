@@ -96,8 +96,10 @@ Manual promotion supports these channels:
 For example, run the same manual workflow with `version=1.4.0-rc.7`,
 `version=1.4.1-hotfix.1`, or `version=1.4.1`. Exact tags cannot be reused;
 candidate suffixes must increase within their base/channel. Promotion from
-main requires a base newer than the latest stable version. For a hotfix to an
-older series, use `release-prerelease.yml` against the appropriate release branch.
+main requires `--ref main` and a base newer than the latest stable version.
+`release-prerelease.yml` can build older-series hotfix **test artifacts** from a
+release branch. Publishing an older-series **stable** version is not supported
+by the current workflows.
 
 A stable promotion creates a draft GitHub Release and folds candidate changes
 into the stable changelog section. Tag-triggered CI builds the images and Helm chart; `release-finalize.yml`
@@ -162,15 +164,34 @@ See [Skills → Overview](./skills/) for the full checklist.
 
 ## Hotfix releases
 
-For urgent fixes on an already-released version:
+For an urgent patch to the latest stable release, this example assumes `1.2.0`
+is still the latest stable tag:
 
 ```bash
-git checkout -b release/x.y.z-hotfix tags/x.y.z
-# apply fix, push
-# auto-tag creates x.y.z-hotfix.1
-# when ready:
-gh workflow run release-manual.yml -f version=1.2.1 # for a fix to 1.2.0
+git fetch origin --tags
+git checkout -b release/1.2.1-hotfix tags/1.2.0
+# Apply the fix, commit, and push the branch.
+# auto-tag creates 1.2.1-hotfix.1; validate those test artifacts.
 ```
+
+1. Open and merge a PR containing the tested fix into `main`. A `-hotfix` branch
+   merge is a merge-back of changes: it does not prepare or automatically publish
+   a stable release.
+2. Verify the merged fix is present on `main` and validate the merged source.
+3. Recheck the latest stable tag, then promote a newer, unused version:
+
+   ```bash
+   gh workflow run release-manual.yml --ref main -f version=1.2.1
+   ```
+
+If the latest stable is already `1.4.0`, stable `1.2.1` publication is unsupported.
+Merge the fix into `main` and release a newer version such as `1.4.1`. Older-series
+hotfix tags remain useful for isolated testing, but they do not provide a stable
+maintenance-release publication path.
+
+Normal `release/x.y.z` merges automatically dispatch stable promotion. Check the
+Actions run before manually dispatching again; never create two promotions for
+the same version.
 
 ### Prepared changelog entries
 
