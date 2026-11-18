@@ -91,50 +91,55 @@ interface TeamDoc {
  * Collapsing them is behavior-preserving.
  */
 async function teamOverridesForLogin(email: string | undefined): Promise<TeamBaselineProfileOverride[]> {
-  if (!email) return [];
   try {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail) return [];
-
-    const sources = await getRbacCollection<TeamMembershipSource>("teamMembershipSources");
-    const rows = await sources
-      .find({ status: "active", user_email: normalizedEmail })
-      .toArray();
-    if (rows.length === 0) return [];
-
-    // Dedupe by team_slug; escalate role to admin if any active row has admin.
-    const byTeam = new Map<string, "member" | "admin">();
-    for (const row of rows) {
-      if (!row.team_slug) continue;
-      const current = byTeam.get(row.team_slug);
-      if (current === "admin") continue;
-      byTeam.set(row.team_slug, row.relationship === "admin" ? "admin" : "member");
-    }
-    if (byTeam.size === 0) return [];
-
-    const teams = await getCollection<TeamDoc>("teams");
-    const teamDocs = await teams.find({ slug: { $in: Array.from(byTeam.keys()) } }).toArray();
-
-    const overrides: TeamBaselineProfileOverride[] = [];
-    for (const team of teamDocs) {
-      if (!team.slug) continue;
-      const role = byTeam.get(team.slug);
-      if (!role) continue;
-      const memberProfileId = team.baseline_profile_overrides?.member_profile_id;
-      const adminProfileId = team.baseline_profile_overrides?.admin_profile_id;
-      if (!memberProfileId && !adminProfileId) continue;
-      overrides.push({
-        team_slug: team.slug,
-        team_name: team.name,
-        role,
-        member_profile_id: memberProfileId,
-        admin_profile_id: adminProfileId,
-      });
-    }
-    return overrides;
+    return await resolveTeamOverrides(email);
   } catch {
     return [];
   }
+}
+
+/** Like teamOverridesForLogin, but a lookup failure throws instead of reading as "no overrides". */
+async function resolveTeamOverrides(email: string | undefined): Promise<TeamBaselineProfileOverride[]> {
+  if (!email) return [];
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) return [];
+
+  const sources = await getRbacCollection<TeamMembershipSource>("teamMembershipSources");
+  const rows = await sources
+    .find({ status: "active", user_email: normalizedEmail })
+    .toArray();
+  if (rows.length === 0) return [];
+
+  // Dedupe by team_slug; escalate role to admin if any active row has admin.
+  const byTeam = new Map<string, "member" | "admin">();
+  for (const row of rows) {
+    if (!row.team_slug) continue;
+    const current = byTeam.get(row.team_slug);
+    if (current === "admin") continue;
+    byTeam.set(row.team_slug, row.relationship === "admin" ? "admin" : "member");
+  }
+  if (byTeam.size === 0) return [];
+
+  const teams = await getCollection<TeamDoc>("teams");
+  const teamDocs = await teams.find({ slug: { $in: Array.from(byTeam.keys()) } }).toArray();
+
+  const overrides: TeamBaselineProfileOverride[] = [];
+  for (const team of teamDocs) {
+    if (!team.slug) continue;
+    const role = byTeam.get(team.slug);
+    if (!role) continue;
+    const memberProfileId = team.baseline_profile_overrides?.member_profile_id;
+    const adminProfileId = team.baseline_profile_overrides?.admin_profile_id;
+    if (!memberProfileId && !adminProfileId) continue;
+    overrides.push({
+      team_slug: team.slug,
+      team_name: team.name,
+      role,
+      member_profile_id: memberProfileId,
+      admin_profile_id: adminProfileId,
+    });
+  }
+  return overrides;
 }
 
 function loginManagedAdminSource(source: TeamMembershipSource): boolean {
@@ -379,7 +384,7 @@ async function writeBearerUserBaseline(
       subject,
       isAdmin: false,
       bundle: await getBaselineFgaProfileBundle(),
-      teamOverrides: await teamOverridesForLogin(email),
+      teamOverrides: await resolveTeamOverrides(email),
     });
     if (writes.length === 0) return { status: "skipped", tuple_write_count: 0 };
     const result = await writeOpenFgaTuples({ writes, deletes: [] });

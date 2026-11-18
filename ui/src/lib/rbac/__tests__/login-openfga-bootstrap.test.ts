@@ -745,6 +745,18 @@ describe("login OpenFGA bootstrap", () => {
       expect(mockWriteOpenFgaTuples).toHaveBeenCalledTimes(2);
     });
 
+    it("writes nothing and retries when the team override lookup fails", async () => {
+      mockGetRbacCollection.mockRejectedValueOnce(new Error("mongo down"));
+      const { ensureBearerUserBaselineAccess } = await import("../login-openfga-bootstrap");
+
+      const failed = await ensureBearerUserBaselineAccess("sub-bot-user", "user@example.com");
+
+      expect(failed.status).toBe("failed");
+      expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
+      const retried = await ensureBearerUserBaselineAccess("sub-bot-user", "user@example.com");
+      expect(retried.status).toBe("completed");
+    });
+
     it("applies a team member-profile override instead of the global baseline", async () => {
       mockGetCollection.mockImplementation(async (name: string) => {
         if (name === "openfga_baseline_profiles") {
