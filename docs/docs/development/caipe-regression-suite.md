@@ -83,6 +83,7 @@ enough to determine which kind of evidence they provide.
 | REL-02 | core | Matrix and detailed inventories build, appear in documentation navigation and preserve previously assigned case IDs |
 | REL-03 | core | Source-drift validation passes for all current page routes and API families; inspect catch-all destinations, tabs, handlers and feature flags separately |
 | REL-04 | core | Versioned run input generates deterministic offline HTML and a matching release summary; planned-but-missing cases stay NOT_RUN; counts, suite/verdict rollups, cleanup failures and sharing boundaries remain accurate |
+| REL-05 | core | RC entries publish only after required artifact builds succeed for the tagged commit; incremental/full comparison baselines and install commands are exact; stable changelog rollups and latest aliases remain isolated from candidates |
 | PRE-01 | core | Verify target, versions, personas and enabled-profile inventory; scope each case's model/tool, destination and cleanup prerequisites |
 | DEP-01 | core | Verify UI/API/worker versions, readiness and critical routes; distinguish deployment health from functional execution |
 | DEP-02 | core | Upgrade an isolated baseline with retained configuration/data; preserve existing models, catalogs, assistant bindings, credentials and volumes; verify rollback compatibility |

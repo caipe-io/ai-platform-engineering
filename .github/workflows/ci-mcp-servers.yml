@@ -61,6 +61,7 @@ jobs:
       agents_to_build: ${{ steps.set-matrix.outputs.agents_to_build }}
       should_build: ${{ steps.set-matrix.outputs.should_build }}
       tag_version: ${{ steps.version.outputs.tag_version }}
+      is_final_release: ${{ steps.version.outputs.is_final_release }}
     env:
       ALL_AGENTS: ${{ needs.load-config.outputs.all_agents }}
     steps:
@@ -107,20 +108,19 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           FILTER_OUTPUTS: ${{ toJson(steps.filter.outputs) }}
-          TAG_VERSION: ${{ steps.version.outputs.tag_version }}
+          MANUAL_TAG_VERSION: ${{ inputs.tag_version }}
           MANUAL_BUILD_ALL: ${{ inputs.build_all || 'false' }}
         with:
           script: |
             const allAgents = JSON.parse(process.env.ALL_AGENTS);
             const filterOutputs = JSON.parse(process.env.FILTER_OUTPUTS);
-            const tagVersion = process.env.TAG_VERSION;
             const manualBuildAll = process.env.MANUAL_BUILD_ALL === 'true';
             const isTagPush = (process.env.GITHUB_REF || '').startsWith('refs/tags/');
             // A manual dispatch with an explicit tag_version (e.g. re-running a
             // coordinated release build) still builds all agents, same as a real
             // tag push — but a plain push to main is never a "tag push" and must
             // not be treated as one just because tag_version resolved to `canary`.
-            const isManualTaggedDispatch = '${{ github.event_name }}' === 'workflow_dispatch' && !!tagVersion;
+            const isManualTaggedDispatch = '${{ github.event_name }}' === 'workflow_dispatch' && !!process.env.MANUAL_TAG_VERSION;
 
             const isSharedChanged = filterOutputs.shared_config === 'true' ||
                                    filterOutputs.shared_dockerfile === 'true';
@@ -206,7 +206,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.')) }}
+            type=raw,value=latest,enable=${{ needs.determine-agents.outputs.is_final_release == 'true' }}
             type=raw,value=${{ needs.determine-agents.outputs.tag_version }},enable=${{ needs.determine-agents.outputs.tag_version != '' }}
             type=ref,event=tag,prefix=
             type=sha,format=short,prefix=,enable=${{ github.ref != 'refs/heads/main' }}
@@ -301,7 +301,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-rc.') && !contains(github.ref_name, '-hotfix.')) }}
+            type=raw,value=latest,enable=${{ needs.determine-agents.outputs.is_final_release == 'true' }}
             type=raw,value=${{ needs.determine-agents.outputs.tag_version }},enable=${{ needs.determine-agents.outputs.tag_version != '' }}
             type=ref,event=tag,prefix=
             type=sha,format=short,prefix=,enable=${{ github.ref != 'refs/heads/main' }}

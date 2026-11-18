@@ -119,7 +119,8 @@ def test_actual_release_body_uses_the_preflight_outputs(version: str, slug: str)
     block = workflow.split('          NOTES="<!-- release-initiator:', 1)[1].split("          gh release create", 1)[0]
     shell = 'NOTES="<!-- release-initiator:' + block + '\nprintf "%s" "$NOTES"'
     url = f"https://caipe.io/releases/{slug}" if slug else ""
-    env = {**os.environ, "RELEASE_INITIATOR": "example-actor", "RELEASE_NOTES_URL": url, "RELEASE_NOTES_VERSION": version}
+    env = {**os.environ, "RELEASE_INITIATOR": "example-actor", "RELEASE_NOTES_URL": url, "RELEASE_NOTES_VERSION": version,
+           "PREVIOUS_STABLE": ""}
     result = subprocess.run(["bash", "-euc", shell], env=env, check=True, capture_output=True, text=True)
     assert "<!-- release-initiator:example-actor -->" in result.stdout
     if url:
@@ -178,7 +179,6 @@ def test_finalize_only_publishes_after_the_link_is_available(
         expected_url = re.search(r"\]\((https://caipe\.io/releases/[^)]+)\)", body)
         assert expected_url is not None
         assert probe.read_text().splitlines()[-1] == expected_url.group(1)
-    cleanup = workflow.split("      - name: 🧹 Clean up old RC tags\n", 1)[1].split("      - name:", 1)[0]
-    assert "if: steps.publish-release.outputs.published == 'true' || steps.publish-release.outputs.already_published == 'true'" in cleanup
+    assert "Clean up old RC tags" not in workflow
     assert "if: needs.check-and-publish.outputs.published == 'true'" in workflow
     assert "PUBLISHED: ${{ steps.publish-release.outputs.published }}" in workflow

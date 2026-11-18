@@ -35,7 +35,7 @@ jobs:
           python-version: '3.14'
       - name: Test release blog selection and publication
         run: >-
-          uv run --no-project --with pytest==9.1.1
+          uv run --no-project --with pytest==9.1.1 --with PyYAML==6.0.3
           pytest -q tests/test_release_blog_links.py tests/test_release_finalization.py
       - name: Lint release blog resolver and tests
         run: >-

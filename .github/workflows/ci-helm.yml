@@ -1,5 +1,4 @@
 name: "[CI][Helm] Publish Tagged Helm Charts"
-description: "Publish Helm charts from version tags"
 
 # Chart version and appVersion always move in lockstep. auto-tag.yml and the
 # release-* workflows create real tags such as:
