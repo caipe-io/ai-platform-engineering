@@ -1,7 +1,8 @@
-## Unreleased
+## 1.4.0 (2026-11-18)
 
 ### Feat
 
+- **ui**: unify agent creation and connection (#3422)
 - **models**: connect and test saved model providers end to end (#3389)
 - **ui**: add first-install setup and product tour (#2763)
 - **app-sdk**: support opt-in assistant checkbox controls (#3134)
@@ -14,26 +15,34 @@
 - **harness**: execute compiled subagents through saved runtimes (#3390)
 - **sharepoint-mcp**: support documents, pages and scoped search (#2968)
 - **ui**: glide Ask Tome into its assistant launcher (#3387)
-
 - **integrations**: add opt-in Harness Gateway transport for Slack and Webex (#3241)
-
 - **skills**: import pinned original GitHub packages (#3249)
 - **harness-engine**: include portable runtimes in standard installs (#3190)
 - **autonomous**: accept idempotent manual run context (#3213)
 - **apps**: preserve URLs and isolate app scrolling (#3257)
-
 - **mongodb**: support replica sets for Change Data Capture (CDC) (#3267)
 - **notifications**: define event and preference contracts (#2993)
-
 - **helm**: add optional persistent harness runtimes (#3238)
-
 - **webex**: sign bot-specific team scope for native assistants (#3244)
-
 - **harness**: persist sessions and publish restricted runtime containers
 - add cloudability mcp to FinOps agent and alerting on litellm token usage  (#2019)
 
 ### Fix
 
+- **authz**: preserve CAS admin grant ownership during login reconciliation (#3427)
+- **slack-bot**: send resume_data when resuming a HITL stream (#3430)
+- **ci**: disable automatic latest tags for candidate builds (#3428)
+- **chat**: skip empty metadata updates in sharing mutations (#3425)
+- **tracing**: upgrade langfuse sdk to 4.18 and fix user and feedback attribution (#3429)
+- **release**: separate RC publication from stable releases (#3131)
+- **ci**: identify pinned harden-runner release for scanning (#3424)
+- **release**: link GitHub releases to the matching blog (#3186)
+- **rag**: patch ontology OpenTelemetry trace parsing (#3423)
+- **auth**: backfill missing names for bootstrap SSO users (#3421)
+- **auth**: revoke stale OIDC admin grants (#2197)
+- **mcp**: install jq in the AWS MCP runtime image (#3420)
+- **chat**: revoke shared access and clean up deleted conversation grants (#2326)
+- **helm**: preserve existing external app catalogs (#3415)
 - **ui**: stop logging API response bodies to the browser console (#3410)
 - **rbac**: store MCP wildcard intent on a concrete object (#2965)
 - **slack-ingestor**: persist last_ts checkpoint only after ingest succeeds (#3363)
@@ -44,21 +53,16 @@
 - **ui**: select explicit MCP tools in Agent Builder (#3394)
 - **agents**: skip empty MongoDB checkpoint write batches (#3398)
 - **webex**: read completed meetings from User Hub (#3371)
-
 - **harness**: accept private fsGroup workspaces for Claude isolation (#3383)
-
 - **harness**: isolate remote Claude Code sessions by default (#3377)
 - **chat**: discover new Harness turns in shared tabs (#3376)
-
 - **harness**: tolerate missing caller MCP connections (#3374)
 - **compose**: pull CAIPE images from ghcr.io/caipe-io (#3365)
-
 - **webex**: clarify identity linking completion (#3146)
 - **chat**: persist turn anchors before detached execution (#3368)
 - **ui**: use the live chat picker for every count (#3370)
 - **harness**: retry DocumentDB replay write conflicts (#3369)
 - **mongodb**: batch startup indexes with bounded concurrency (#3245)
-
 - **webex**: bind transcript fallback to the requested occurrence (#3242)
 - **ui**: require agent owner selection before continuing (#3362)
 - **ui**: resolve automatic release blogs by patch version (#3155)
@@ -69,16 +73,12 @@
 - **compose**: pull MinIO from images that are still published (#3094)
 - **chat**: improve selection contrast and use muted blue colors (#3259)
 - **harness**: preserve native model controls during agent publication (#3253)
-
 - **mongodb**: support pod-local replica set host mapping (#3357)
 - **deps**: update vulnerable Cloudability packages (#3355)
 - **deps**: remediate Dependabot alerts (#3314)
 - **auth**: harden OIDC refresh transport and response validation (#3255)
-
 - **ui**: restore live chat navigation in the header (#3247)
-
 - **webex**: keep incomplete space routes recoverable (#3243)
-
 - **llm**: support non-streaming proxies and agent UI overrides (#3035)
 - **ui**: theme the grid logo and keep the CAIPE logo unchanged (#3231)
 - **ui**: follow the app theme in code blocks and prompt editors (#3182)
