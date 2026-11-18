@@ -1134,7 +1134,10 @@ no `_id` / no endpoint), and the customisable AgentGateway base URL.
   existing names and linked identities are preserved.
 - Name repair uses the authenticated subject, never an email lookup. It does
   not create users or change admission, roles, groups, or grants. Failures do
-  not block sign-in, and a later fresh login retries repair.
+  not block sign-in. One three-second deadline cancels stalled credential,
+  lookup or update requests while retaining the current session name. Shared
+  admin-token refreshes used by other callers are independent. A later fresh
+  login can retry repair after re-reading the profile.
 - Existing accounts need both the updated Keycloak initialization and UI.
   Refreshing an old session alone does not fetch a new upstream profile.
 

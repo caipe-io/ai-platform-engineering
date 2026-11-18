@@ -1328,8 +1328,10 @@ describe('login profile name repair', () => {
     expect(token.name).toBe('Test Person')
   })
 
-  it('keeps sign-in successful if profile repair fails', async () => {
-    mockBackfillMissingUserNamesFromClaims.mockRejectedValue(new Error('profile unavailable'))
+  it.each(['Error', 'TimeoutError'])('keeps sign-in successful if profile repair fails with %s', async (name) => {
+    const error = new Error('profile unavailable')
+    error.name = name
+    mockBackfillMissingUserNamesFromClaims.mockRejectedValue(error)
     const token = await runJwt({ token: { name: 'Existing' }, profile: { sub: 'test-user', email: 'test-user@example.test' } })
     expect(mockBackfillMissingUserNamesFromClaims).toHaveBeenCalled()
     expect(token.name).toBe('Existing')

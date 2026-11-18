@@ -85,12 +85,15 @@ async function readErrorBody(response: Response): Promise<string> {
 async function requestTokenFromKeycloak(
   endpoint: string,
   body: URLSearchParams,
-  label: string
+  label: string,
+  signal?: AbortSignal,
 ): Promise<TokenCache> {
+  signal?.throwIfAborted();
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
+    ...(signal ? { signal } : {}),
   });
 
   if (!response.ok) {
@@ -142,7 +145,8 @@ function adminPasswordFallbackAllowed(): boolean {
   return nodeEnv !== "production";
 }
 
-async function fetchFreshAdminToken(): Promise<TokenCache> {
+async function fetchFreshAdminToken(signal?: AbortSignal): Promise<TokenCache> {
+  signal?.throwIfAborted();
   const clientId = process.env.KEYCLOAK_ADMIN_CLIENT_ID?.trim();
   const clientSecret = process.env.KEYCLOAK_ADMIN_CLIENT_SECRET?.trim();
 
@@ -156,9 +160,11 @@ async function fetchFreshAdminToken(): Promise<TokenCache> {
       return await requestTokenFromKeycloak(
         getRealmTokenEndpoint(),
         body,
-        "client_credentials"
+        "client_credentials",
+        signal,
       );
     } catch (err) {
+      signal?.throwIfAborted();
       if (!adminPasswordFallbackAllowed()) {
         // Re-throw the underlying error verbatim so the operator sees
         // exactly which Keycloak response broke us (status + body).
@@ -191,14 +197,25 @@ async function fetchFreshAdminToken(): Promise<TokenCache> {
   return await requestTokenFromKeycloak(
     getMasterTokenEndpoint(),
     body,
-    "password (admin-cli)"
+    "password (admin-cli)",
+    signal,
   );
 }
 
-export async function getAdminToken(): Promise<string> {
+export async function getAdminToken(signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   const now = Date.now();
   if (tokenCache !== null && tokenCache.expiresAtMs > now) {
     return tokenCache.token;
+  }
+
+  if (signal) {
+    // A caller's deadline must neither await nor cancel another request's
+    // shared refresh. Valid cached tokens above are still reusable.
+    const next = await fetchFreshAdminToken(signal);
+    signal.throwIfAborted();
+    tokenCache = next;
+    return next.token;
   }
 
   if (tokenRefreshPromise !== null) {
@@ -219,7 +236,8 @@ export async function getAdminToken(): Promise<string> {
 }
 
 async function adminFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const token = await getAdminToken();
+  const token = await getAdminToken(init.signal ?? undefined);
+  init.signal?.throwIfAborted();
   const url = `${getAdminBaseUrl()}${path.startsWith("/") ? path : `/${path}`}`;
   const headers = new Headers(init.headers);
   headers.set("Authorization", `Bearer ${token}`);
@@ -462,10 +480,11 @@ export async function getRealmUserById(
  * (the Slack bot's user-directory lookups) rely on.
  */
 export async function getRealmUserByIdOrNull(
-  userId: string
+  userId: string,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown> | null> {
   const enc = encodeURIComponent(userId);
-  const response = await adminFetch(`/users/${enc}`, { method: "GET" });
+  const response = await adminFetch(`/users/${enc}`, { method: "GET", ...(signal ? { signal } : {}) });
   if (response.status === 404) return null;
   await assertOk(response, `getRealmUserByIdOrNull(${userId})`);
   return (await response.json()) as Record<string, unknown>;
@@ -650,12 +669,14 @@ export async function removeRealmRolesFromUser(
 
 export async function updateUser(
   userId: string,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<void> {
   const enc = encodeURIComponent(userId);
   const response = await adminFetch(`/users/${enc}`, {
     method: "PUT",
     body: JSON.stringify(data),
+    ...(signal ? { signal } : {}),
   });
   await assertOk(response, "updateUser");
 }
@@ -831,8 +852,11 @@ export async function backfillMissingUserNamesFromClaims(
   const lastName = namePart(["caipe_idp_family_name", "caipe_idp_lastname", "family_name", "lastname"]);
   if (!firstName && !lastName) return undefined;
 
+  // One deadline covers credential acquisition, response bodies, lookup and
+  // update. Optional profile repair must not hold an otherwise valid sign-in.
+  const signal = AbortSignal.timeout(3_000);
   // Never resolve by email or provision a new identity from login profile data.
-  const existing = await getRealmUserByIdOrNull(subject);
+  const existing = await getRealmUserByIdOrNull(subject, signal);
   if (!existing) return undefined;
   const currentFirst = typeof existing.firstName === "string" ? existing.firstName : "";
   const currentLast = typeof existing.lastName === "string" ? existing.lastName : "";
@@ -840,7 +864,8 @@ export async function backfillMissingUserNamesFromClaims(
   if (!currentFirst.trim() && firstName) patch.firstName = firstName;
   if (!currentLast.trim() && lastName) patch.lastName = lastName;
   if (Object.keys(patch).length === 0) return undefined;
-  await updateUser(subject, patch);
+  await updateUser(subject, patch, signal);
+  signal.throwIfAborted();
   return [patch.firstName ?? currentFirst, patch.lastName ?? currentLast].filter(Boolean).join(" ");
 }
 

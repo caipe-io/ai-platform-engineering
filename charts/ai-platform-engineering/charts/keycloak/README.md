@@ -316,7 +316,10 @@ The provider-wide `IMPORT` mode and existing attribute mappers stay unchanged.
 The UI backfills only blank first/last name fields on the authenticated Keycloak
 subject. It preserves existing names, does not infer names from email or a display
 name, and never creates an account or changes grants during repair. A profile
-update failure is logged and does not block sign-in.
+update failure is logged and does not block sign-in. A single three-second
+deadline covers token acquisition, lookup, response bodies and update. A timed-out
+repair retains the current session name and does not cancel another caller's
+shared admin-token refresh.
 
 For existing accounts, upgrade Keycloak initialization and the UI, then start a
 fresh upstream SSO login (sign out of the broker session if necessary). Repair
