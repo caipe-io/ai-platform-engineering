@@ -529,7 +529,7 @@ export function ReportProblemDialog({
                 <div role="alert" className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm sm:col-span-2">
                   Request help is unavailable for this component.
                 </div>
-                <Button className="w-full sm:col-span-2" onClick={() => onOpenChange(false)}>Close</Button>
+                <Button className="w-full sm:col-span-2" onClick={() => handleOpenChange(false)}>Close</Button>
               </>
             )}
             {!unavailable && (<>

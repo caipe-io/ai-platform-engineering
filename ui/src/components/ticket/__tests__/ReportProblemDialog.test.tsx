@@ -545,6 +545,16 @@ describe("Request help", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("resets the draft when the unavailable view is closed", async () => {
+    const onOpenChange = jest.fn();
+    mockFetchFeedbackOptions.mockResolvedValue({ appId: null, label: "Platform", features: ["Other"], feedbackEnabled: false });
+    render(<ReportProblemDialog open onOpenChange={onOpenChange} />);
+    await screen.findByText("Request help is unavailable for this component.");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(screen.queryByText("Request help is unavailable for this component.")).not.toBeInTheDocument();
+  });
+
   it("does not show the unavailable notice while Request help can be chosen", async () => {
     mockFetchFeedbackOptions.mockResolvedValue({ appId: null, label: "Platform", features: ["Other"], serviceDesk, feedbackEnabled: false });
     render(<ReportProblemDialog open onOpenChange={jest.fn()} />);
