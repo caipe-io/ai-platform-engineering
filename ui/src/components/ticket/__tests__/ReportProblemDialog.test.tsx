@@ -545,6 +545,24 @@ describe("Request help", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("sends a context URL within the API limit when the page URL is too long", async () => {
+    const original = window.location.href;
+    try {
+      window.history.pushState({}, "", `/page-a?q=${"x".repeat(2100)}#frag`);
+      await openRequestHelp();
+      fireEvent.change(screen.getByLabelText("Ticket title *"), { target: { value: "Need access" } });
+      fireEvent.change(screen.getByLabelText("Description *"), { target: { value: "Please grant access." } });
+      chooseAreas("Vault");
+      fireEvent.click(screen.getByRole("button", { name: "Submit Request" }));
+      await waitFor(() => expect(mockCreateTicketViaAgent).toHaveBeenCalledTimes(1));
+      const { contextUrl } = mockCreateTicketViaAgent.mock.calls[0][0].request;
+      expect(contextUrl.length).toBeLessThanOrEqual(2000);
+      expect(new URL(contextUrl).pathname).toBe("/page-a");
+    } finally {
+      window.history.pushState({}, "", original);
+    }
+  });
+
   it("resets the draft when the unavailable view is closed", async () => {
     const onOpenChange = jest.fn();
     mockFetchFeedbackOptions.mockResolvedValue({ appId: null, label: "Platform", features: ["Other"], feedbackEnabled: false });

@@ -1,6 +1,6 @@
 "use client";
 
-import { FEEDBACK_SEVERITIES, SERVICE_DESK_DETAILS, describeFeedbackBrowser, type FeedbackSeverity } from "@/lib/feedback-features";
+import { FEEDBACK_SEVERITIES, SERVICE_DESK_DETAILS, boundedContextUrl, describeFeedbackBrowser, type FeedbackSeverity } from "@/lib/feedback-features";
 import { getErrorMessage } from "@/lib/error-utils";
 
 import { Button } from "@/components/ui/button";
@@ -348,6 +348,7 @@ export function ReportProblemDialog({
     setTicketResult(null);
 
     const userEmail = session?.user?.email || "unknown";
+    const requestContextUrl = boundedContextUrl(contextUrl);
 
     appendLog("Submitting feedback...");
     appendLog(`Reporter: ${userEmail}`);
@@ -368,7 +369,7 @@ export function ReportProblemDialog({
         },
         source: "header",
         userEmail,
-        contextUrl,
+        contextUrl: requestContextUrl,
         componentId: null,
       } : {
         description: reportDescription,
@@ -382,7 +383,7 @@ export function ReportProblemDialog({
         source: onBeforeSubmit || conversationId || feedbackContext ? "chat-feedback" : initialComponentId ? "app" : "header",
         appContext: options?.appId === initialComponentId ? appContext : undefined,
         userEmail,
-        contextUrl,
+        contextUrl: requestContextUrl,
         conversationId,
         componentId: options?.appId,
         feedbackContext,

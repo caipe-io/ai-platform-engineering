@@ -68,3 +68,19 @@ export function describeFeedbackBrowser(ua: string): string {
   const os = /iPhone|iPad|iPod/.test(ua) ? "iOS" : /Android/.test(ua) ? "Android" : /Windows/.test(ua) ? "Windows" : /Mac OS X/.test(ua) ? "macOS" : /Linux/.test(ua) ? "Linux" : undefined;
   return browser.join(" ") + (os ? ` on ${os}` : "");
 }
+
+export const MAX_CONTEXT_URL_LENGTH = 2000;
+
+/** Keeps a page URL within the API limit, dropping the hash, then the query, before cutting the path. */
+export function boundedContextUrl(url: string): string {
+  if (url.length <= MAX_CONTEXT_URL_LENGTH) return url;
+  try {
+    const parsed = new URL(url);
+    for (const candidate of [parsed.origin + parsed.pathname + parsed.search, parsed.origin + parsed.pathname]) {
+      if (candidate.length <= MAX_CONTEXT_URL_LENGTH) return candidate;
+    }
+    return (parsed.origin + parsed.pathname).slice(0, MAX_CONTEXT_URL_LENGTH);
+  } catch {
+    return url.slice(0, MAX_CONTEXT_URL_LENGTH);
+  }
+}

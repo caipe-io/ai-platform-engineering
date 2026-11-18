@@ -1,4 +1,4 @@
-import { DEFAULT_PLATFORM_FEEDBACK_FEATURES, SERVICE_DESK_AREAS, SERVICE_DESK_DETAILS, SERVICE_DESK_SEVERITIES, SERVICE_DESK_TYPES, parseFeedbackFeatures, platformFeedbackFeatures } from "../feedback-features";
+import { DEFAULT_PLATFORM_FEEDBACK_FEATURES, SERVICE_DESK_AREAS, SERVICE_DESK_DETAILS, SERVICE_DESK_SEVERITIES, SERVICE_DESK_TYPES, boundedContextUrl, parseFeedbackFeatures, platformFeedbackFeatures } from "../feedback-features";
 it("provides platform areas and accepts a configured list", () => {
   expect(platformFeedbackFeatures(undefined)).toEqual(DEFAULT_PLATFORM_FEEDBACK_FEATURES);
   expect(platformFeedbackFeatures('[" Chat ","Chat","Custom area"]')).toEqual(["Chat", "Custom area"]);
@@ -22,5 +22,20 @@ describe("Request help options", () => {
       expect(SERVICE_DESK_AREAS).toContain(area);
       expect(new Set(fields.map(field => field.label)).size).toBe(fields.length);
     }
+  });
+});
+
+describe("boundedContextUrl", () => {
+  it("keeps a short URL unchanged", () => {
+    expect(boundedContextUrl("https://example.com/a?b=1#c")).toBe("https://example.com/a?b=1#c");
+  });
+  it("drops the hash, then the query, to fit the limit", () => {
+    expect(boundedContextUrl(`https://example.com/a?b=1#${"x".repeat(2000)}`)).toBe("https://example.com/a?b=1");
+    expect(boundedContextUrl(`https://example.com/a?b=${"x".repeat(2000)}`)).toBe("https://example.com/a");
+  });
+  it("cuts an over-long path and always returns at most 2000 characters", () => {
+    const result = boundedContextUrl(`https://example.com/${"p".repeat(2500)}`);
+    expect(result.length).toBe(2000);
+    expect(() => new URL(result)).not.toThrow();
   });
 });
