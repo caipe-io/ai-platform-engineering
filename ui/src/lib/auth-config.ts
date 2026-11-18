@@ -575,6 +575,17 @@ export const authOptions: NextAuthOptions = {
           groups,
           providerId,
         });
+
+        if (subject && (token.isAuthorized === true || adminViaBootstrap)) {
+          try {
+            const { backfillMissingUserNamesFromClaims } = await import("@/lib/rbac/keycloak-admin");
+            const repairedName = await backfillMissingUserNamesFromClaims(subject, profileData);
+            if (repairedName) token.name = repairedName;
+          } catch (error) {
+            // Profile repair must not prevent an otherwise valid sign-in.
+            console.warn("[Auth] Could not backfill missing profile names:", error instanceof Error ? error.message : "profile update failed");
+          }
+        }
       }
 
       // NOTE: When trigger === "update" (from updateSession() or refetchInterval),
