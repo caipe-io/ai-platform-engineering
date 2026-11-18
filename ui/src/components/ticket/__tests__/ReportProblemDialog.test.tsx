@@ -545,6 +545,19 @@ describe("Request help", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("trims the title to the feedback limit when the component switch leaves Request help", async () => {
+    mockFetchFeedbackComponents.mockResolvedValue({ appId: null, components: [{ appId: null, label: "Platform" }, { appId: "example", label: "Example app" }] });
+    mockFetchFeedbackOptions.mockImplementation((_url, _conversation, _signal, component) => component === "example"
+      ? Promise.resolve({ appId: "example", label: "Example app", features: ["Other"] })
+      : Promise.resolve({ appId: null, label: "Platform", features: ["Other"], serviceDesk }));
+    await openRequestHelp();
+    fireEvent.change(screen.getByLabelText("Ticket title *"), { target: { value: "t".repeat(100) } });
+    fireEvent.change(screen.getByLabelText("Component *"), { target: { value: "app:example" } });
+    await waitFor(() => expect(screen.getByLabelText("Feature")).toBeEnabled());
+    await waitFor(() => expect(screen.getByLabelText("Short title *")).toHaveValue("t".repeat(60)));
+    expect(screen.getByText("60/60")).toBeInTheDocument();
+  });
+
   it("sends a context URL within the API limit when the page URL is too long", async () => {
     const original = window.location.href;
     try {
@@ -561,6 +574,27 @@ describe("Request help", () => {
     } finally {
       window.history.pushState({}, "", original);
     }
+  });
+
+  it("keeps a long Request help title while the options reload", async () => {
+    const { rerender } = render(<ReportProblemDialog open onOpenChange={jest.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Request help" }));
+    fireEvent.change(screen.getByLabelText("Ticket title *"), { target: { value: "t".repeat(100) } });
+    mockFetchFeedbackOptions.mockClear();
+    rerender(<ReportProblemDialog open onOpenChange={jest.fn()} conversationId="other-conversation" />);
+    await waitFor(() => expect(mockFetchFeedbackOptions).toHaveBeenCalled());
+    await screen.findByRole("button", { name: "Request help" });
+    fireEvent.click(screen.getByRole("button", { name: "Request help" }));
+    expect(screen.getByLabelText("Ticket title *")).toHaveValue("t".repeat(100));
+  });
+
+  it("trims a long Request help title when the reloaded options no longer offer it", async () => {
+    const { rerender } = render(<ReportProblemDialog open onOpenChange={jest.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Request help" }));
+    fireEvent.change(screen.getByLabelText("Ticket title *"), { target: { value: "t".repeat(100) } });
+    mockFetchFeedbackOptions.mockResolvedValue({ appId: null, label: "Platform", features: ["Other"] });
+    rerender(<ReportProblemDialog open onOpenChange={jest.fn()} conversationId="other-conversation" />);
+    await waitFor(() => expect(screen.getByLabelText("Short title *")).toHaveValue("t".repeat(60)));
   });
 
   it("resets the draft when the unavailable view is closed", async () => {

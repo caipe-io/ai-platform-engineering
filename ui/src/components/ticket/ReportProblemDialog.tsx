@@ -184,6 +184,10 @@ export function ReportProblemDialog({
       : "";
 
   useEffect(() => {
+    if (options && !isServiceDesk) setTitle(current => current.slice(0, 60));
+  }, [options, isServiceDesk]);
+
+  useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
     setComponents([]);
@@ -559,7 +563,7 @@ export function ReportProblemDialog({
               <div className="flex flex-wrap gap-1.5">
                 {(["Bug", "Enhancement"] as const).map(type => (
                   <button key={type} type="button" disabled={options?.feedbackEnabled === false} aria-pressed={!isServiceDesk && issueType === type}
-                    onClick={() => { setIssueType(type); setRequestMode("feedback"); setTitle(current => current.slice(0, 60)); }}
+                    onClick={() => { setIssueType(type); setRequestMode("feedback"); }}
                     className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${!isServiceDesk && issueType === type ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>
                     {type}
                   </button>
