@@ -1221,6 +1221,10 @@ See [the file map](./file-map.md). Every auth-relevant file is listed with what 
   applying the new change. Access-row inserts reuse their original IDs, so
   replay does not duplicate them. Recovery applies only the recorded diff; it
   does not roll back unrelated or previously existing grants.
+- A user-only permission change does not rewrite conversation metadata. Empty
+  `$set` operations are skipped, including when replaying an older saved intent;
+  the conversation must still exist before the intent is finalized. A recovery
+  lock created by an older failing write still needs the verified recovery below.
 - Failed changes are not reported as successful. Idle conflicts can be retried;
   uncertain write outcomes require the verified recovery procedure below.
   Permanent deletion discards pending share intents while holding the same lock.

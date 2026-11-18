@@ -54,8 +54,20 @@ async function applyMutation(mutation: ConversationSharingMutation, assertOwned:
     await assertOwned.runExclusive(() => access.updateMany(change.filter, change.update));
   }
   const conversations = await getCollection<Conversation>('conversations');
-  const result = await assertOwned.runExclusive(() => conversations.updateOne({ _id: mutation._id }, mutation.conversationUpdate));
-  if (result.matchedCount === 0) throw new ApiError('Conversation not found', 404);
+  const update = { ...mutation.conversationUpdate };
+  // User permission changes have no conversation metadata to write. Normalize
+  // saved intents too, so replay does not repeat an empty-operator failure.
+  if (update.$set && Object.keys(update.$set).length === 0) delete update.$set;
+  if (Object.keys(update).length > 0) {
+    const result = await assertOwned.runExclusive(() => conversations.updateOne({ _id: mutation._id }, update));
+    if (result.matchedCount === 0) throw new ApiError('Conversation not found', 404);
+  } else {
+    // Sharing and permanent deletion hold the same lock; retain the existence
+    // check without issuing a database write just to confirm the document.
+    await assertOwned();
+    const conversation = await conversations.findOne({ _id: mutation._id }, { projection: { _id: 1 } });
+    if (!conversation) throw new ApiError('Conversation not found', 404);
+  }
   const journal = await getCollection<ConversationSharingMutation>('conversation_share_mutations');
   await assertOwned.runExclusive(() => journal.deleteOne({ _id: mutation._id }));
 }
