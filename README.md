@@ -21,6 +21,12 @@
 
 ## [Project Documentation](https://caipe.io/)
 
+## Code of Conduct
+
+CAIPE adopts the [CNCF Community Code of
+Conduct](https://github.com/cncf/foundation/blob/main/code-of-conduct.md).
+See our [Code of Conduct](CODE_OF_CONDUCT.md) for reporting guidance.
+
 ## 🤝 Contributing
 
 We’d love your contributions! To get started:
