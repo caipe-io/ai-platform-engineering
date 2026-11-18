@@ -294,3 +294,21 @@ class TestStreamChatPayload:
     )
 
     assert captured["payload"]["reasoning_effort"] == "high"
+
+
+class TestResumeStreamPayload:
+  """resume_stream must send the body the resume route accepts."""
+
+  def test_sends_resume_data_field(self):
+    client = SSEClient(base_url="http://example.test")
+    client._stream_sse = Mock(return_value=iter(()))
+    resume_data = json.dumps({"type": "tool_approval", "interrupt_id": "int-1", "decision": "approve"})
+
+    list(client.resume_stream(agent_id="agent-1", conversation_id="conv-1", form_data=resume_data))
+
+    url, payload = client._stream_sse.call_args.args
+    assert url == "http://example.test/api/v1/chat/stream/resume"
+    assert payload["resume_data"] == resume_data
+    assert "form_data" not in payload
+    assert payload["conversation_id"] == "conv-1"
+    assert payload["agent_id"] == "agent-1"

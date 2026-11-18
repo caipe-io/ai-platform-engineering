@@ -503,7 +503,8 @@ class SSEClient:
     payload = {
       "conversation_id": conversation_id,
       "agent_id": agent_id,
-      "form_data": form_data,
+      # The resume route and the agent runtime read this field as resume_data.
+      "resume_data": form_data,
       "protocol": "agui",
       "trace_id": trace_id,
     }
