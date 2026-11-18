@@ -11,6 +11,8 @@ on:
       - 'pyproject.toml'
       - 'tests/test_release_finalization.py'
       - 'tests/test_harness_release_workflow.py'
+      - 'tests/test_release_blog_links.py'
+      - 'scripts/resolve_release_blog.py'
   push:
     branches: [main]
     paths:
@@ -22,6 +24,8 @@ on:
       - 'pyproject.toml'
       - 'tests/test_release_finalization.py'
       - 'tests/test_harness_release_workflow.py'
+      - 'tests/test_release_blog_links.py'
+      - 'scripts/resolve_release_blog.py'
 
 permissions:
   contents: read
@@ -42,3 +46,4 @@ jobs:
           uv run --no-project --with pytest==9.1.1 --with PyYAML==6.0.3
           --with commitizen==4.19.3 pytest -q .github/actions/tests/test_release_policy.py
           tests/test_release_finalization.py tests/test_harness_release_workflow.py
+          tests/test_release_blog_links.py

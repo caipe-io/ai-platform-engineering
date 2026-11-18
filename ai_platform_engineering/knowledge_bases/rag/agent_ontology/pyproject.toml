@@ -34,9 +34,9 @@ build-backend = "uv_build"
 constraint-dependencies = ["click==8.5.0"]
 # Keep the OpenTelemetry family on the patched release.
 override-dependencies = [
-    "opentelemetry-api==1.45.1",
-    "opentelemetry-exporter-otlp==1.45.1",
-    "opentelemetry-sdk==1.45.1",
+    "opentelemetry-api==1.45.2",
+    "opentelemetry-exporter-otlp==1.45.2",
+    "opentelemetry-sdk==1.45.2",
 ]
 
 [tool.uv.sources]

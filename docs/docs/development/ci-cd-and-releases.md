@@ -97,7 +97,9 @@ Final releases use plain `x.y.z` tags and are always cut manually:
 4. The tag triggers Docker and Helm CI for every component; each notifies `release-finalize.yml` on completion.
 5. `release-finalize.yml` publishes the draft once all required workflows pass, then dispatches post-release security scanning and sanity tests. It retains existing RC Git tags.
 
-If a required workflow fails, the release stays a draft with a failure note for investigation.
+If a required workflow fails, the stable release stays a draft with a failure note
+for investigation. Stable publication also waits for the canonical release-blog
+URL to become reachable; RC publication does not depend on a blog.
 
 ## Changelog Policy
 

@@ -297,7 +297,7 @@ def test_manual_candidates_bypass_stable_release_and_post_requirements() -> None
   assert resolver["with"]["manual_tag"] == "${{ env.RELEASE_VERSION }}"
   assert jobs["commit-release"]["outputs"]["is_final_release"] == "${{ steps.channel.outputs.is_final_release }}"
   assert jobs["publish-release"]["if"] == "needs.commit-release.outputs.is_final_release == 'true'"
-  post = next(step for step in steps if "Require a release post" in step["name"])
+  post = next(step for step in steps if step.get("id") == "release-post")
   assert post["if"] == "steps.channel.outputs.is_final_release == 'true'"
   for step in steps:
     if step.get("uses") in ("./.github/actions/validate-release-tag", "./.github/actions/prepare-release"):
@@ -546,7 +546,8 @@ def test_stable_release_notes_ignore_published_rc_boundaries(repository: Path, r
     ["bash", "-c", publish["run"].replace("${{ github.repository }}", "example/project")],
     cwd=repository,
     env={**os.environ, "PATH": f"{release_cli}:{os.environ['PATH']}", "CALLS": str(calls),
-         "RELEASE_VERSION": "1.1.0", "PREVIOUS_STABLE": values["previous_stable"], "RELEASE_INITIATOR": "test-user"},
+         "RELEASE_VERSION": "1.1.0", "PREVIOUS_STABLE": values["previous_stable"], "RELEASE_INITIATOR": "test-user",
+         "RELEASE_NOTES_URL": "https://example.test/releases/release-1-1-0", "RELEASE_NOTES_VERSION": "1.1.0"},
     check=True, capture_output=True,
   )
   args = json.loads(calls.read_text())["args"]
