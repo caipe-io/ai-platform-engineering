@@ -206,6 +206,10 @@ app's source identity or publish to teams, administrators, or all users.
    recheck app availability, current app roles, and user preferences before
    delivery. Registering or publishing does not subscribe anyone.
 
+Delivery gives a verified enabled account the same baseline `user` role as
+sign-in. Administrator and custom app roles still require current identity-provider
+role mappings; a cached administrator flag does not grant delivery access.
+
 The source ID and label come from the installed app. Updating registrations keeps
 choices for stable event IDs. Removing a type prevents queued delivery of that
 type. The older unregistered app API remains compatible with in-app delivery.

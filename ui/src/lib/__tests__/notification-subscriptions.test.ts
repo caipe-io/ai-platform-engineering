@@ -140,6 +140,31 @@ describe("notification subscriptions and app boundaries", () => {
     expect(mockIdentity).not.toHaveBeenCalled();
     expect(mockRoles).not.toHaveBeenCalled();
   });
+  it("admits the sign-in baseline user role without an explicit realm mapping", async () => {
+    mockUser.mockImplementation(async () => ({ email: "test-user@example.test", events: [{ id: "report.ready" }] }));
+    mockApp.mockReturnValue({ manifest: { access: { requiredRoles: ["user"] } }, installation: { installed: true, enabled: true } });
+    mockIdentity.mockResolvedValue({ enabled: true });
+    mockRoles.mockResolvedValue([{ name: "offline_access" }]);
+    expect(await deliveryAllowed("test-user", "app:example-app", "report.ready", "in_app")).toBe(true);
+    mockIdentity.mockResolvedValue({ enabled: false });
+    expect(await deliveryAllowed("test-user", "app:example-app", "report.ready", "in_app")).toBe(false);
+  });
+  it("does not infer administrator access from a cached account role", async () => {
+    mockUser.mockResolvedValue({ email: "test-user@example.test", metadata: { role: "admin" } });
+    mockApp.mockReturnValue({ manifest: { access: { requiredRoles: ["admin"] } }, installation: { installed: true, enabled: true } });
+    mockIdentity.mockResolvedValue({ enabled: true });
+    mockRoles.mockResolvedValue([]);
+    expect(await deliveryAllowed("test-user", "app:example-app", "report.ready", "in_app")).toBe(false);
+  });
+  it("continues to require a live custom role and honors its revocation", async () => {
+    mockUser.mockResolvedValue({ email: "test-user@example.test", events: [{ id: "report.ready" }] });
+    mockApp.mockReturnValue({ manifest: { access: { requiredRoles: ["example-editor"] } }, installation: { installed: true, enabled: true } });
+    mockIdentity.mockResolvedValue({ enabled: true });
+    mockRoles.mockResolvedValue([{ name: "example-editor" }]);
+    expect(await deliveryAllowed("test-user", "app:example-app", "report.ready", "in_app")).toBe(true);
+    mockRoles.mockResolvedValue([]);
+    expect(await deliveryAllowed("test-user", "app:example-app", "report.ready", "in_app")).toBe(false);
+  });
 });
 
 it("rejects an array masquerading as an app event identifier", async () => {
