@@ -23,13 +23,12 @@ beforeEach(() => {
   }));
 });
 
-it('retains owning records when authorization cleanup fails and permits retry', async () => {
+it('retains owning records when authorization cleanup has an uncertain outcome', async () => {
   const items = [{ _id: 'example-chat' }];
   mockRevoke.mockRejectedValueOnce(new Error('authorization unavailable'));
-  await expect(deleteConversationsPermanently(items)).rejects.toThrow('authorization unavailable');
+  await expect(deleteConversationsPermanently(items)).rejects.toMatchObject({ statusCode: 503, code: 'MUTATION_RECOVERY_REQUIRED' });
   expect(mockDelete).not.toHaveBeenCalled();
-  await deleteConversationsPermanently(items);
-  expect(mockDelete).toHaveBeenLastCalledWith('conversations', { _id: { $in: ['example-chat'] } });
+
 });
 
 it('deletes scoped sharing data and agent checkpoints before deleting owners', async () => {
@@ -52,7 +51,7 @@ it('deletes scoped sharing data and agent checkpoints before deleting owners', a
 it('retains owning records if associated-data cleanup fails', async () => {
   mockDelete.mockRejectedValueOnce(new Error('database unavailable'));
   await expect(deleteConversationsPermanently([{ _id: 'example-chat' }]))
-    .rejects.toThrow('database unavailable');
+    .rejects.toMatchObject({ statusCode: 503, code: 'MUTATION_RECOVERY_REQUIRED' });
   expect(mockDelete.mock.calls.map(([name]) => name)).not.toContain('conversations');
 });
 

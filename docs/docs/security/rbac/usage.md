@@ -1216,23 +1216,37 @@ See [the file map](./file-map.md). Every auth-relevant file is listed with what 
   permission updates for removed recipients return HTTP 404.
 - Each accepted access change is saved in `conversation_share_mutations` before
   its grant diff is applied. A failed request retains that exact intent. The next
-  authorized sharing mutation resumes it before reading current recipients and
+  authorized sharing mutation resumes it, once recovery has safely released the
+  lock, before reading current recipients and
   applying the new change. Access-row inserts reuse their original IDs, so
   replay does not duplicate them. Recovery applies only the recorded diff; it
   does not roll back unrelated or previously existing grants.
-- Failed changes are not reported as successful. If the authorization service or
-  MongoDB is unavailable, restore it and retry the sharing action. Permanent
-  deletion discards pending share intents while holding the same lock.
-- Conversation mutation locks have a 60-second lease, renewed every 20 seconds
-  while a request runs. A later request can atomically reclaim an expired lease;
-  no TTL cleanup job is required. Reclaim, renewal and release check owner tokens,
-  and mutations check ownership between awaited writes. An expired or replaced
-  caller stops rather than continuing metadata updates or releasing a new
-  owner's lock. Pending recovery intents are retained for the next authorized
-  retry. A failed release is logged and its row can be reclaimed after expiry.
-- Legacy lock rows without expiry cannot be automatically declared abandoned.
-  For those rows only, an operator must verify that the old writer has stopped
-  before removing its exact lock. Retain recovery work for the next retry.
+- Failed changes are not reported as successful. Idle conflicts can be retried;
+  uncertain write outcomes require the verified recovery procedure below.
+  Permanent deletion discards pending share intents while holding the same lock.
+- Idle conversation locks have a 60-second lease renewed every 20 seconds. An
+  expired idle lock can be reclaimed atomically using its observed owner token.
+  No TTL job is needed. A resumed idle caller must acquire a new write permit
+  before it can perform another effect.
+- Before dispatching **each** graph or database write, the caller atomically pins
+  the lock with an effect token while checking its owner and unexpired lease.
+  Reclaim rejects pinned locks, even after lease expiry. The pin remains until
+  that write acknowledges completion. This prevents an outstanding old grant
+  from completing after another writer has revoked access or deleted the chat.
+- An error or lost acknowledgement does not prove a remote write stopped. The
+  lock and pending intent are retained, and the API reports HTTP 503 with
+  `MUTATION_RECOVERY_REQUIRED`. This requires verified recovery rather than an
+  automatic age-based takeover. Automatic purge still leaves trash accessible.
+- For a pinned/uncertain write, an operator must stop the original writer and
+  verify that its downstream Mongo/OpenFGA requests have finished or been
+  cancelled. Only then remove the exact `conversation_mutation_locks` row using
+  **both** its observed owner token and effect token in the delete filter. Keep
+  `conversation_share_mutations`, retry through an authorized sharing or deletion
+  route, and verify effective access and exact grant cleanup. Never clear a pin
+  based solely on age: that would reintroduce stale grants after revocation.
+- Legacy lock rows without expiry also require verified operator recovery. Idle
+  lock-release failures can be reclaimed after expiry; in-flight/uncertain
+  effects are never released by `finally` merely because their request failed.
 - Automatic purge failures are logged without blocking the trash list. Explicit
   permanent deletion still fails when cleanup cannot complete and retains the
   owning record for retry.

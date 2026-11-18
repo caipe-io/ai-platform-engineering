@@ -43,32 +43,26 @@ export async function resumeConversationSharingMutation(id: string, assertOwned:
 
 async function applyMutation(mutation: ConversationSharingMutation, assertOwned: MutationLockGuard): Promise<void> {
   if (mutation.grants.writes.length || mutation.grants.deletes.length) {
-    await assertOwned();
-    await reconcileTupleDiff(mutation.grants, { source: 'conversation_sharing' });
+    await assertOwned.runExclusive(() => reconcileTupleDiff(mutation.grants, { source: 'conversation_sharing' }));
   }
   const access = await getCollection<SharingAccess>('sharing_access');
   for (const record of mutation.accessInserts ?? []) {
     // Assigned before journaling, so a partial insert or retry cannot duplicate it.
-    await assertOwned();
-    await access.updateOne({ _id: record._id }, { $setOnInsert: record }, { upsert: true });
+    await assertOwned.runExclusive(() => access.updateOne({ _id: record._id }, { $setOnInsert: record }, { upsert: true }));
   }
   for (const change of mutation.accessUpdates ?? []) {
-    await assertOwned();
-    await access.updateMany(change.filter, change.update);
+    await assertOwned.runExclusive(() => access.updateMany(change.filter, change.update));
   }
   const conversations = await getCollection<Conversation>('conversations');
-  await assertOwned();
-  const result = await conversations.updateOne({ _id: mutation._id }, mutation.conversationUpdate);
+  const result = await assertOwned.runExclusive(() => conversations.updateOne({ _id: mutation._id }, mutation.conversationUpdate));
   if (result.matchedCount === 0) throw new ApiError('Conversation not found', 404);
   const journal = await getCollection<ConversationSharingMutation>('conversation_share_mutations');
-  await assertOwned();
-  await journal.deleteOne({ _id: mutation._id });
+  await assertOwned.runExclusive(() => journal.deleteOne({ _id: mutation._id }));
 }
 
 /** Persist recovery work before any graph or sharing-state side effect. */
 export async function commitConversationSharingMutation(mutation: ConversationSharingMutation, assertOwned: MutationLockGuard): Promise<void> {
   const journal = await getCollection<ConversationSharingMutation>('conversation_share_mutations');
-  await assertOwned();
-  await journal.insertOne(mutation);
+  await assertOwned.runExclusive(() => journal.insertOne(mutation));
   await applyMutation(mutation, assertOwned);
 }

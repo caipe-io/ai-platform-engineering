@@ -1,5 +1,6 @@
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { apiClient } from '@/lib/api-client'
 
 const mockUpdateConversationSharing = jest.fn()
 const mockPush = jest.fn()
@@ -284,5 +285,65 @@ it('ignores an older mutation after closing and reopening the same conversation'
   await waitFor(() => expect(screen.getByLabelText('Permission for recipient@example.com')).toBeEnabled())
   await act(async () => finish({ sharing: { shared_with: [], shared_with_teams: [] } }))
   expect(screen.getByText('recipient@example.com')).toBeInTheDocument()
+  expect(screen.getByLabelText('Remove access for recipient@example.com')).toBeEnabled()
+})
+
+it.each(['permission', 'removal'] as const)('blocks new user/team shares while a %s action is pending', async (action) => {
+  let finish!: (value: unknown) => void;
+  const pending = new Promise((resolve) => { finish = resolve });
+  ;(global.fetch as jest.Mock).mockImplementation((url: string, options?: { method?: string }) => {
+    if (options?.method === 'PATCH') return pending;
+    if (url.includes('/teams')) return Promise.resolve({ ok: true, json: async () => ({ data: [
+      { _id: 'new-team', name: 'New team' },
+    ] }) });
+    return Promise.resolve(sharingResponse());
+  })
+  mockRevokeConversationShare.mockReturnValue(pending)
+  ;(apiClient.searchUsers as jest.Mock).mockResolvedValue([{ email: 'new@example.com', name: 'New reader' }])
+  ;(apiClient.shareConversation as jest.Mock).mockResolvedValue({ sharing: {
+    shared_with: ['new@example.com'], shared_with_teams: [],
+  } })
+  render(<ShareDialog conversationId="example-chat" conversationTitle="Example" open onOpenChange={jest.fn()} />)
+  await waitFor(() => expect(screen.getByLabelText('Permission for recipient@example.com')).toBeEnabled())
+  if (action === 'permission') {
+    fireEvent.change(screen.getByLabelText('Permission for recipient@example.com'), { target: { value: 'comment' } })
+  } else {
+    fireEvent.click(screen.getByLabelText('Remove access for recipient@example.com'))
+  }
+  fireEvent.change(screen.getByPlaceholderText('Search by email or team name...'), { target: { value: 'New' } })
+  const userButton = await screen.findByRole('button', { name: /New reader/ })
+  const teamButton = screen.getByRole('button', { name: /New team/ })
+  expect(userButton).toBeDisabled()
+  expect(teamButton).toBeDisabled()
+  fireEvent.click(userButton)
+  fireEvent.click(teamButton)
+  expect(apiClient.shareConversation).not.toHaveBeenCalled()
+  await act(async () => finish(action === 'permission'
+    ? { ok: true, json: async () => ({ data: { sharing: { shared_with: ['recipient@example.com'], shared_with_teams: [] } } }) }
+    : { sharing: { shared_with: [], shared_with_teams: [] } }))
+  await waitFor(() => expect(screen.getByRole('button', { name: /New reader/ })).toBeEnabled())
+  fireEvent.click(screen.getByRole('button', { name: /New reader/ }))
+  await waitFor(() => expect(apiClient.shareConversation).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(screen.getByLabelText('Remove access for new@example.com')).toBeEnabled())
+})
+
+it('rejects overlapping access handlers before React commits their pending state', async () => {
+  let finish!: (value: unknown) => void;
+  ;(global.fetch as jest.Mock).mockImplementation((_url: string, options?: { method?: string }) => {
+    if (options?.method === 'PATCH') return new Promise((resolve) => { finish = resolve });
+    return Promise.resolve(sharingResponse());
+  })
+  render(<ShareDialog conversationId="example-chat" conversationTitle="Example" open onOpenChange={jest.fn()} />)
+  await waitFor(() => expect(screen.getByLabelText('Permission for recipient@example.com')).toBeEnabled())
+  const permission = screen.getByLabelText('Permission for recipient@example.com')
+  const remove = screen.getByLabelText('Remove access for recipient@example.com')
+  act(() => {
+    fireEvent.change(permission, { target: { value: 'comment' } })
+    fireEvent.click(remove)
+  })
+  expect(mockRevokeConversationShare).not.toHaveBeenCalled()
+  await act(async () => finish({ ok: true, json: async () => ({ data: {
+    sharing: { shared_with: ['recipient@example.com'], shared_with_teams: [] },
+  } }) }))
   expect(screen.getByLabelText('Remove access for recipient@example.com')).toBeEnabled()
 })

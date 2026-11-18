@@ -104,6 +104,8 @@ export function ShareDialog({
   if (activeDialogRef.current.conversationId !== conversationId || activeDialogRef.current.open !== open) {
     activeDialogRef.current = { conversationId, open };
   }
+  const mutationOwnerRef = useRef<object | null>(null);
+  const mutationDialogRef = useRef(activeDialogRef.current);
   const initialSharingRef = useRef(initialSharing);
   const permissionsConversationIdRef = useRef(conversationId);
   const shareableTeamsRef = useRef<Team[] | null>(null);
@@ -141,11 +143,20 @@ export function ShareDialog({
   }, []);
 
   const beginSharingMutation = () => {
-    invalidateSharingLoad();
     const dialog = activeDialogRef.current;
+    if (mutationDialogRef.current === dialog && mutationOwnerRef.current) return null;
+    const owner = {};
+    mutationDialogRef.current = dialog;
+    mutationOwnerRef.current = owner;
+    invalidateSharingLoad();
     const generation = ++sharingMutationGenerationRef.current;
-    return () => activeDialogRef.current === dialog && dialog.open
-      && sharingMutationGenerationRef.current === generation;
+    return {
+      isCurrent: () => activeDialogRef.current === dialog && dialog.open
+        && sharingMutationGenerationRef.current === generation,
+      finish: () => {
+        if (mutationOwnerRef.current === owner) mutationOwnerRef.current = null;
+      },
+    };
   };
 
   const loadSharingInfo = useCallback(async () => {
@@ -333,8 +344,10 @@ export function ShareDialog({
   ]);
 
   const handleShareUser = async (email: string) => {
-    if (!canManageSharing) return;
-    const isCurrent = beginSharingMutation();
+    if (!canManageSharing || loading || pendingAccessAction !== null) return;
+    const mutation = beginSharingMutation();
+    if (!mutation) return;
+    const { isCurrent } = mutation;
     setLoading(true);
     try {
       const updatedConversation = await apiClient.shareConversation(conversationId, {
@@ -374,12 +387,15 @@ export function ShareDialog({
       }
     } finally {
       if (isCurrent()) setLoading(false);
+      mutation.finish();
     }
   };
 
   const handleShareTeam = async (teamId: string) => {
-    if (!canManageSharing) return;
-    const isCurrent = beginSharingMutation();
+    if (!canManageSharing || loading || pendingAccessAction !== null) return;
+    const mutation = beginSharingMutation();
+    if (!mutation) return;
+    const { isCurrent } = mutation;
     setLoading(true);
     try {
       const updatedConversation = await apiClient.shareConversation(conversationId, {
@@ -413,6 +429,7 @@ export function ShareDialog({
       alert(`Failed to share with team: ${getErrorMessage(err, "") || 'Unknown error'}`);
     } finally {
       if (isCurrent()) setLoading(false);
+      mutation.finish();
     }
   };
 
@@ -430,8 +447,10 @@ export function ShareDialog({
     target: { email?: string; team_id?: string },
     newPermission: SharePermission
   ) => {
-    if (!canManageSharing) return;
-    const isCurrent = beginSharingMutation();
+    if (!canManageSharing || loading || pendingAccessAction !== null) return;
+    const mutation = beginSharingMutation();
+    if (!mutation) return;
+    const { isCurrent } = mutation;
     const targetKey = target.email ? `user:${target.email}` : `team:${target.team_id}`;
     const previousPermission = target.email
       ? userPermissions[target.email] || 'view'
@@ -479,12 +498,15 @@ export function ShareDialog({
       alert(`Failed to update permission: ${getErrorMessage(err, "") || 'Unknown error'}`);
     } finally {
       if (isCurrent()) setPendingAccessAction(null);
+      mutation.finish();
     }
   };
 
   const handleRemoveAccess = async (target: { email?: string; team_id?: string }) => {
-    if (!canManageSharing) return;
-    const isCurrent = beginSharingMutation();
+    if (!canManageSharing || loading || pendingAccessAction !== null) return;
+    const mutation = beginSharingMutation();
+    if (!mutation) return;
+    const { isCurrent } = mutation;
     const targetKey = target.email ? `user:${target.email}` : `team:${target.team_id}`;
     setPendingAccessAction(`remove:${targetKey}`);
     try {
@@ -521,6 +543,7 @@ export function ShareDialog({
       alert(`Failed to remove access: ${getErrorMessage(err, "") || 'Unknown error'}`);
     } finally {
       if (isCurrent()) setPendingAccessAction(null);
+      mutation.finish();
     }
   };
 
@@ -667,7 +690,7 @@ export function ShareDialog({
                       <button
                         key={user.email}
                         onClick={() => handleShareUser(user.email)}
-                        disabled={loading}
+                        disabled={loading || pendingAccessAction !== null}
                         className="w-full px-3 py-2 text-left hover:bg-muted flex items-center gap-2 text-sm rounded-md"
                       >
                         <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-medium">
@@ -692,7 +715,7 @@ export function ShareDialog({
                       <button
                         key={teamShareRef(team)}
                         onClick={() => handleShareTeam(teamShareRef(team))}
-                        disabled={loading}
+                        disabled={loading || pendingAccessAction !== null}
                         className="w-full px-3 py-2 text-left hover:bg-muted flex items-center gap-2 text-sm rounded-md"
                       >
                         <div className="h-8 w-8 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-400">

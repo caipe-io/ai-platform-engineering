@@ -13,7 +13,9 @@ jest.mock('@/lib/rbac/openfga-owned-resources-reconcile', () => ({
 
 const journal = new Map<string, ConversationSharingMutation>();
 const locks = new Set<string>();
-const guard = jest.fn(async () => {});
+const guard = Object.assign(jest.fn(async () => {}), {
+  runExclusive: async <T,>(effect: () => Promise<T>): Promise<T> => { await guard(); return effect(); },
+});
 const access = new Map<string, unknown>();
 const tuples = new Set<string>();
 const persistConversation = jest.fn();
@@ -148,7 +150,9 @@ it('prevents permanent deletion from racing with a sharing writer', async () => 
 });
 
 it('retains recovery work and stops metadata writes when lease ownership is lost after grants', async () => {
-  const ownership = jest.fn().mockResolvedValue(undefined);
+  const ownership = Object.assign(jest.fn().mockResolvedValue(undefined), {
+    runExclusive: async <T,>(effect: () => Promise<T>): Promise<T> => { await ownership(); return effect(); },
+  });
   reconcile.mockImplementationOnce(async () => { ownership.mockRejectedValue(new Error('lease lost')); });
   await expect(commitConversationSharingMutation(intent(), ownership)).rejects.toThrow('lease lost');
   expect(journal.has('example-chat')).toBe(true);

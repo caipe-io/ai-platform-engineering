@@ -632,7 +632,7 @@ describe('PATCH /api/chat/conversations/[id]/share — permission updates', () =
 
     const res = await PATCH(req, { params: Promise.resolve({ id: conv._id }) });
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(503);
     expect(convsCol.updateOne).not.toHaveBeenCalled();
   });
 
@@ -803,7 +803,7 @@ describe('POST /api/chat/conversations/[id]/share — permission storage', () =>
 
     const res = await POST(req, { params: Promise.resolve({ id: conv._id }) });
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(503);
     expect(sharingAccessCol.insertMany).not.toHaveBeenCalled();
     expect(convsCol.updateOne).not.toHaveBeenCalled();
   });
@@ -1205,9 +1205,13 @@ describe('serialized conversation sharing changes', () => {
     };
     const conversations = mockCollections['conversations'] as ReturnType<typeof createMockCollection>;
     conversations.updateOne.mockRejectedValueOnce(new Error('Mongo metadata unavailable'));
-    expect((await change('POST', { user_emails: ['secondary@example.com'], permission: 'view' })).status).toBe(500);
+    expect((await change('POST', { user_emails: ['secondary@example.com'], permission: 'view' })).status).toBe(503);
     expect(pending).not.toBeNull();
     expect(state.sharing.shared_with).toEqual([VIEWER_EMAIL]);
+    // An uncertain remote write requires verified recovery, not lease takeover.
+    expect((await change('DELETE', { email: 'secondary@example.com' })).status).toBe(409);
+    await (mockCollections['conversation_mutation_locks'] as { deleteOne: (filter: unknown) => Promise<unknown> })
+      .deleteOne({ _id: TEST_CONV_ID }); // Simulate verified recovery after the old write settled.
     expect((await change('DELETE', { email: 'secondary@example.com' })).status).toBe(200);
     expect(pending).toBeNull();
     expect(state.sharing.shared_with).toEqual([VIEWER_EMAIL]);
