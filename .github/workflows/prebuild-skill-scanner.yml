@@ -1,5 +1,4 @@
 name: "[Prebuild] Skill Scanner Docker Build and Push"
-description: "Build and push Skill Scanner Docker image for prebuild branches"
 
 # Mirrors prebuild-caipe-ui.yml. The skill-scanner image is referenced by the
 # `skill-scanner` Helm subchart (charts/ai-platform-engineering/charts/skill-scanner)
@@ -177,6 +176,8 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
+          flavor: |
+            latest=false
           images: ghcr.io/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=${{ env.PREBUILD_TAG }}

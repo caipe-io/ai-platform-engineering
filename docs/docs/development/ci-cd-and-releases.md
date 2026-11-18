@@ -48,6 +48,10 @@ Each workflow figures out its own tag via `.github/actions/determine-release-tag
 Only a resolved stable `x.y.z` version also receives the `latest` image alias.
 This applies to manual builds too: an RC/hotfix input never updates `latest`, and
 a manual main build without a version publishes `canary`.
+Every Docker metadata step explicitly sets `flavor: latest=false`, including
+prebuilds and manifest merges. Docker's default automatic Latest generation for
+tag refs must stay disabled; the explicit stable-only raw tag rule controls the
+release alias. Keep existing variant suffixes alongside this setting.
 
 ## Prebuild Artifacts
 
