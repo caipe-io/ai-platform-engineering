@@ -217,3 +217,72 @@ it('discards responses from a previous conversation, without overwriting the sid
   expect(screen.queryByText('stale@example.com')).not.toBeInTheDocument()
   expect(mockUpdateConversationSharing).not.toHaveBeenCalled()
 })
+
+function sharingResponse(permission: 'view' | 'comment' = 'view') {
+  return { ok: true, status: 200, json: async () => ({ data: {
+    sharing: { shared_with: ['recipient@example.com'], shared_with_teams: [] },
+    access_list: [{ granted_to: 'recipient@example.com', permission }],
+  } }) };
+}
+
+it('keeps a new conversation and its pending removal intact when an older removal finishes', async () => {
+  let finishFirst!: (value: unknown) => void;
+  let finishSecond!: (value: unknown) => void;
+  mockRevokeConversationShare
+    .mockImplementationOnce(() => new Promise((resolve) => { finishFirst = resolve }))
+    .mockImplementationOnce(() => new Promise((resolve) => { finishSecond = resolve }))
+  ;(global.fetch as jest.Mock).mockImplementation(async () => sharingResponse())
+  const props = { conversationTitle: 'Example', open: true, onOpenChange: jest.fn() }
+  const { rerender } = render(<ShareDialog {...props} conversationId="primary" />)
+  await waitFor(() => expect(screen.getByLabelText('Permission for recipient@example.com')).toBeEnabled())
+  fireEvent.click(screen.getByLabelText('Remove access for recipient@example.com'))
+  rerender(<ShareDialog {...props} conversationId="secondary" />)
+  await waitFor(() => expect(screen.getByLabelText('Permission for recipient@example.com')).toBeEnabled())
+  mockUpdateConversationSharing.mockClear()
+  fireEvent.click(screen.getByLabelText('Remove access for recipient@example.com'))
+  await act(async () => finishFirst({ sharing: { shared_with: [], shared_with_teams: [] } }))
+  expect(screen.getByText('recipient@example.com')).toBeInTheDocument()
+  expect(screen.getByLabelText('Remove access for recipient@example.com')).toBeDisabled()
+  expect(mockUpdateConversationSharing).toHaveBeenCalledWith('primary', expect.objectContaining({ shared_with: [] }))
+  expect(mockUpdateConversationSharing).not.toHaveBeenCalledWith('secondary', expect.anything())
+  await act(async () => finishSecond({ sharing: { shared_with: [], shared_with_teams: [] } }))
+  expect(screen.queryByText('recipient@example.com')).not.toBeInTheDocument()
+})
+
+it('does not roll back the current permission or show an old error after switching conversations', async () => {
+  let failFirst!: (error: Error) => void;
+  ;(global.fetch as jest.Mock).mockImplementation((url: string, options?: { method?: string }) => {
+    if (options?.method === 'PATCH') return new Promise((_resolve, reject) => { failFirst = reject })
+    return Promise.resolve(sharingResponse(url.includes('/secondary/') ? 'comment' : 'view'))
+  })
+  const alert = jest.spyOn(window, 'alert').mockImplementation(() => {})
+  try {
+    const props = { conversationTitle: 'Example', open: true, onOpenChange: jest.fn() }
+    const { rerender } = render(<ShareDialog {...props} conversationId="primary" />)
+    await waitFor(() => expect(screen.getByLabelText('Permission for recipient@example.com')).toBeEnabled())
+    fireEvent.change(screen.getByLabelText('Permission for recipient@example.com'), { target: { value: 'comment' } })
+    rerender(<ShareDialog {...props} conversationId="secondary" />)
+    await waitFor(() => expect(screen.getByLabelText('Permission for recipient@example.com')).toHaveValue('comment'))
+    await act(async () => failFirst(new Error('Previous change failed')))
+    expect(screen.getByLabelText('Permission for recipient@example.com')).toHaveValue('comment')
+    expect(screen.getByLabelText('Permission for recipient@example.com')).toBeEnabled()
+    expect(alert).not.toHaveBeenCalled()
+    expect(props.onOpenChange).not.toHaveBeenCalled()
+  } finally { alert.mockRestore() }
+})
+
+it('ignores an older mutation after closing and reopening the same conversation', async () => {
+  let finish!: (value: unknown) => void;
+  mockRevokeConversationShare.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+  ;(global.fetch as jest.Mock).mockImplementation(async () => sharingResponse())
+  const props = { conversationId: 'example-chat', conversationTitle: 'Example', onOpenChange: jest.fn() }
+  const { rerender } = render(<ShareDialog {...props} open />)
+  await waitFor(() => expect(screen.getByLabelText('Permission for recipient@example.com')).toBeEnabled())
+  fireEvent.click(screen.getByLabelText('Remove access for recipient@example.com'))
+  rerender(<ShareDialog {...props} open={false} />)
+  rerender(<ShareDialog {...props} open />)
+  await waitFor(() => expect(screen.getByLabelText('Permission for recipient@example.com')).toBeEnabled())
+  await act(async () => finish({ sharing: { shared_with: [], shared_with_teams: [] } }))
+  expect(screen.getByText('recipient@example.com')).toBeInTheDocument()
+  expect(screen.getByLabelText('Remove access for recipient@example.com')).toBeEnabled()
+})

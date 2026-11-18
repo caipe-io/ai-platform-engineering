@@ -272,7 +272,7 @@ export const POST = withErrorHandler(async (
       throw new ApiError('permission must be "view" or "comment"', 400);
     }
 
-    return withConversationSharingLock(conversationId, async () => {
+    return withConversationSharingLock(conversationId, async (assertOwned) => {
       const conversations = await getCollection<Conversation>('conversations');
       let conversation = await conversations.findOne({ _id: conversationId });
 
@@ -281,7 +281,7 @@ export const POST = withErrorHandler(async (
       }
 
       await requireConversationResourcePermission(session, user.email, conversation, 'share');
-      if (await resumeConversationSharingMutation(conversationId)) {
+      if (await resumeConversationSharingMutation(conversationId, assertOwned)) {
         conversation = await conversations.findOne({ _id: conversationId });
         if (!conversation) throw new ApiError('Conversation not found', 404);
       }
@@ -368,7 +368,7 @@ export const POST = withErrorHandler(async (
       await commitConversationSharingMutation({
         _id: conversationId, grants: grantDiff, accessInserts,
         conversationUpdate: { $set: update },
-      });
+      }, assertOwned);
 
       const updated = await conversations.findOne({ _id: conversationId });
 
@@ -399,7 +399,7 @@ export const PATCH = withErrorHandler(async (
       throw new ApiError('email or team_id is required', 400);
     }
 
-    return withConversationSharingLock(conversationId, async () => {
+    return withConversationSharingLock(conversationId, async (assertOwned) => {
       const conversations = await getCollection<Conversation>('conversations');
       let conversation = await conversations.findOne({ _id: conversationId });
       if (!conversation) {
@@ -407,7 +407,7 @@ export const PATCH = withErrorHandler(async (
       }
 
       await requireConversationResourcePermission(session, user.email, conversation, 'share');
-      if (await resumeConversationSharingMutation(conversationId)) {
+      if (await resumeConversationSharingMutation(conversationId, assertOwned)) {
         conversation = await conversations.findOne({ _id: conversationId });
         if (!conversation) throw new ApiError('Conversation not found', 404);
       }
@@ -446,7 +446,7 @@ export const PATCH = withErrorHandler(async (
       await commitConversationSharingMutation({
         _id: conversationId, grants, accessUpdates,
         conversationUpdate: { $set: update },
-      });
+      }, assertOwned);
 
       const updated = await conversations.findOne({ _id: conversationId });
       return successResponse(updated);
@@ -477,7 +477,7 @@ export const DELETE = withErrorHandler(async (
       throw new ApiError(`Invalid email format: ${email}`, 400);
     }
 
-    return withConversationSharingLock(conversationId, async () => {
+    return withConversationSharingLock(conversationId, async (assertOwned) => {
       const conversations = await getCollection<Conversation>('conversations');
       let conversation = await conversations.findOne({ _id: conversationId });
       if (!conversation) {
@@ -485,7 +485,7 @@ export const DELETE = withErrorHandler(async (
       }
 
       await requireConversationResourcePermission(session, user.email, conversation, 'share');
-      if (await resumeConversationSharingMutation(conversationId)) {
+      if (await resumeConversationSharingMutation(conversationId, assertOwned)) {
         conversation = await conversations.findOne({ _id: conversationId });
         if (!conversation) throw new ApiError('Conversation not found', 404);
       }
@@ -551,7 +551,7 @@ export const DELETE = withErrorHandler(async (
       await commitConversationSharingMutation({
         _id: conversationId, grants, accessUpdates,
         conversationUpdate: { $pull: pull, ...(Object.keys(update).length ? { $set: update } : {}) },
-      });
+      }, assertOwned);
 
       const updated = await conversations.findOne({ _id: conversationId });
       return successResponse(updated);

@@ -99,7 +99,7 @@ function createMockCollection() {
     }),
     findOne: jest.fn().mockResolvedValue(null),
     insertOne: jest.fn().mockResolvedValue({ insertedId: new ObjectId() }),
-    updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
+    updateOne: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
     deleteOne: jest.fn().mockResolvedValue({ deletedCount: 1 }),
     deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
     countDocuments: jest.fn().mockResolvedValue(0),

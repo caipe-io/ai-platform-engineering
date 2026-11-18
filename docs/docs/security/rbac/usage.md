@@ -1223,12 +1223,16 @@ See [the file map](./file-map.md). Every auth-relevant file is listed with what 
 - Failed changes are not reported as successful. If the authorization service or
   MongoDB is unavailable, restore it and retry the sharing action. Permanent
   deletion discards pending share intents while holding the same lock.
-- Locks are non-expiring to prevent a paused writer from overlapping another
-  replica. If a process dies while holding one, an operator must first verify
-  that writer is no longer running, then remove only that conversation's row
-  from `conversation_mutation_locks`. Retain its journal entry for the next
-  authorized retry. Never expire a live writer's lock or delete recovery work
-  merely to clear an error.
+- Conversation mutation locks have a 60-second lease, renewed every 20 seconds
+  while a request runs. A later request can atomically reclaim an expired lease;
+  no TTL cleanup job is required. Reclaim, renewal and release check owner tokens,
+  and mutations check ownership between awaited writes. An expired or replaced
+  caller stops rather than continuing metadata updates or releasing a new
+  owner's lock. Pending recovery intents are retained for the next authorized
+  retry. A failed release is logged and its row can be reclaimed after expiry.
+- Legacy lock rows without expiry cannot be automatically declared abandoned.
+  For those rows only, an operator must verify that the old writer has stopped
+  before removing its exact lock. Retain recovery work for the next retry.
 - Automatic purge failures are logged without blocking the trash list. Explicit
   permanent deletion still fails when cleanup cannot complete and retains the
   owning record for retry.

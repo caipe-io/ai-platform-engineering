@@ -18,6 +18,7 @@ beforeEach(() => {
   mockGetCollection.mockImplementation(async (name: string) => ({
     deleteMany: (filter: unknown) => mockDelete(name, filter),
     insertOne: jest.fn().mockResolvedValue({}),
+    updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
     deleteOne: jest.fn().mockResolvedValue({}),
   }));
 });

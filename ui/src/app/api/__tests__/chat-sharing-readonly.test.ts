@@ -118,8 +118,8 @@ function createMockCollection() {
     insertOne: jest.fn().mockResolvedValue({ insertedId: new ObjectId() }),
     deleteOne: jest.fn().mockResolvedValue({ deletedCount: 1 }),
     insertMany: jest.fn().mockResolvedValue({ insertedCount: 0 }),
-    updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
-    updateMany: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
+    updateOne: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
+    updateMany: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
     countDocuments: jest.fn().mockResolvedValue(0),
   };
 }
@@ -1123,6 +1123,8 @@ describe('serialized conversation sharing changes', () => {
         held.add(_id);
       }),
       deleteOne: jest.fn(async ({ _id }: { _id: string }) => held.delete(_id)),
+      updateOne: jest.fn(async () => ({ matchedCount: 1 })),
+      findOne: jest.fn(async () => null),
     };
     mockGetServerSession.mockResolvedValue({ user: { email: OWNER_EMAIL }, sub: 'owner-sub' });
   });

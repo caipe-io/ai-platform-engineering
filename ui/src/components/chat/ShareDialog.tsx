@@ -99,8 +99,11 @@ export function ShareDialog({
   const [pendingAccessAction, setPendingAccessAction] = useState<string | null>(null);
   const [sharingInfoLoading, setSharingInfoLoading] = useState(false);
   const sharingLoadGenerationRef = useRef(0);
+  const sharingMutationGenerationRef = useRef(0);
   const activeDialogRef = useRef({ conversationId, open });
-  activeDialogRef.current = { conversationId, open };
+  if (activeDialogRef.current.conversationId !== conversationId || activeDialogRef.current.open !== open) {
+    activeDialogRef.current = { conversationId, open };
+  }
   const initialSharingRef = useRef(initialSharing);
   const permissionsConversationIdRef = useRef(conversationId);
   const shareableTeamsRef = useRef<Team[] | null>(null);
@@ -136,6 +139,14 @@ export function ShareDialog({
     sharingLoadGenerationRef.current += 1;
     setSharingInfoLoading(false);
   }, []);
+
+  const beginSharingMutation = () => {
+    invalidateSharingLoad();
+    const dialog = activeDialogRef.current;
+    const generation = ++sharingMutationGenerationRef.current;
+    return () => activeDialogRef.current === dialog && dialog.open
+      && sharingMutationGenerationRef.current === generation;
+  };
 
   const loadSharingInfo = useCallback(async () => {
     const generation = ++sharingLoadGenerationRef.current;
@@ -228,6 +239,8 @@ export function ShareDialog({
 
   // Load current sharing info once when the dialog opens or the conversation changes.
   useEffect(() => {
+    setLoading(false);
+    setPendingAccessAction(null);
     if (!open) {
       setSharingInfoLoading(false);
       return;
@@ -321,7 +334,7 @@ export function ShareDialog({
 
   const handleShareUser = async (email: string) => {
     if (!canManageSharing) return;
-    invalidateSharingLoad();
+    const isCurrent = beginSharingMutation();
     setLoading(true);
     try {
       const updatedConversation = await apiClient.shareConversation(conversationId, {
@@ -329,9 +342,6 @@ export function ShareDialog({
         permission: defaultPermission,
       });
 
-      setSharedWith([...sharedWith, email]);
-      setUserPermissions({ ...userPermissions, [email]: defaultPermission });
-      
       // Update store with new sharing info so Sidebar shows icon immediately
       if (updatedConversation?.sharing) {
         updateConversationSharing(conversationId, {
@@ -342,15 +352,20 @@ export function ShareDialog({
           share_link_enabled: updatedConversation.sharing.share_link_enabled,
         });
       }
-      
+
+      if (!isCurrent()) return;
+      setSharedWith([...sharedWith, email]);
+      setUserPermissions({ ...userPermissions, [email]: defaultPermission });
+
       setSearchInput("");
       setUserResults([]);
       setTeamResults([]);
       setNoResults(false);
     } catch (err) {
+      if (!isCurrent()) return;
       console.error("Failed to share:", err);
       const errorMessage = getErrorMessage(err, "") || "Failed to share conversation";
-      
+
       if (errorMessage.includes("not found") || errorMessage.includes("404")) {
         alert("This conversation doesn't exist in the database. Please create a new conversation to use sharing features.");
         onOpenChange(false);
@@ -358,20 +373,20 @@ export function ShareDialog({
         alert(`Failed to share: ${errorMessage}`);
       }
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   };
 
   const handleShareTeam = async (teamId: string) => {
     if (!canManageSharing) return;
-    invalidateSharingLoad();
+    const isCurrent = beginSharingMutation();
     setLoading(true);
     try {
       const updatedConversation = await apiClient.shareConversation(conversationId, {
         team_ids: [teamId],
         permission: defaultPermission,
       });
-      
+
       // Update store with new sharing info so Sidebar shows icon immediately
       if (updatedConversation?.sharing) {
         updateConversationSharing(conversationId, {
@@ -383,18 +398,21 @@ export function ShareDialog({
         });
       }
 
+      if (!isCurrent()) return;
       // Reload sharing info to get updated state (updates dialog UI)
       await loadSharingInfo();
-      
+      if (!isCurrent()) return;
+
       setSearchInput("");
       setUserResults([]);
       setTeamResults([]);
       setNoResults(false);
     } catch (err) {
+      if (!isCurrent()) return;
       console.error("Failed to share with team:", err);
       alert(`Failed to share with team: ${getErrorMessage(err, "") || 'Unknown error'}`);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   };
 
@@ -413,7 +431,7 @@ export function ShareDialog({
     newPermission: SharePermission
   ) => {
     if (!canManageSharing) return;
-    invalidateSharingLoad();
+    const isCurrent = beginSharingMutation();
     const targetKey = target.email ? `user:${target.email}` : `team:${target.team_id}`;
     const previousPermission = target.email
       ? userPermissions[target.email] || 'view'
@@ -450,6 +468,7 @@ export function ShareDialog({
         });
       }
     } catch (err) {
+      if (!isCurrent()) return;
       if (target.email && previousPermission) {
         setUserPermissions((prev) => ({ ...prev, [target.email!]: previousPermission }));
       }
@@ -459,17 +478,27 @@ export function ShareDialog({
       console.error('Failed to update permission:', err);
       alert(`Failed to update permission: ${getErrorMessage(err, "") || 'Unknown error'}`);
     } finally {
-      setPendingAccessAction(null);
+      if (isCurrent()) setPendingAccessAction(null);
     }
   };
 
   const handleRemoveAccess = async (target: { email?: string; team_id?: string }) => {
     if (!canManageSharing) return;
-    invalidateSharingLoad();
+    const isCurrent = beginSharingMutation();
     const targetKey = target.email ? `user:${target.email}` : `team:${target.team_id}`;
     setPendingAccessAction(`remove:${targetKey}`);
     try {
       const updatedConversation = await apiClient.revokeConversationShare(conversationId, target);
+      if (updatedConversation?.sharing) {
+        updateConversationSharing(conversationId, {
+          is_public: false,
+          shared_with: updatedConversation.sharing.shared_with,
+          shared_with_teams: updatedConversation.sharing.shared_with_teams,
+          team_permissions: updatedConversation.sharing.team_permissions,
+          share_link_enabled: updatedConversation.sharing.share_link_enabled,
+        });
+      }
+      if (!isCurrent()) return;
       if (target.email) {
         setSharedWith((prev) => prev.filter((email) => email !== target.email));
         setUserPermissions((prev) => {
@@ -486,20 +515,12 @@ export function ShareDialog({
           return next;
         });
       }
-      if (updatedConversation?.sharing) {
-        updateConversationSharing(conversationId, {
-          is_public: false,
-          shared_with: updatedConversation.sharing.shared_with,
-          shared_with_teams: updatedConversation.sharing.shared_with_teams,
-          team_permissions: updatedConversation.sharing.team_permissions,
-          share_link_enabled: updatedConversation.sharing.share_link_enabled,
-        });
-      }
     } catch (err) {
+      if (!isCurrent()) return;
       console.error('Failed to remove access:', err);
       alert(`Failed to remove access: ${getErrorMessage(err, "") || 'Unknown error'}`);
     } finally {
-      setPendingAccessAction(null);
+      if (isCurrent()) setPendingAccessAction(null);
     }
   };
 
@@ -507,7 +528,7 @@ export function ShareDialog({
 
   // Render modal as a portal at document body level
   return createPortal(
-    <div 
+    <div
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4"
       onClick={(e) => {
         // Close dialog when clicking backdrop
@@ -516,7 +537,7 @@ export function ShareDialog({
         }
       }}
     >
-      <div 
+      <div
         className="bg-background rounded-lg shadow-xl w-full max-w-md p-6 mx-auto my-auto"
         role="dialog"
         aria-modal="true"
@@ -634,7 +655,7 @@ export function ShareDialog({
               <option value="view">Can view</option>
               <option value="comment">Can edit</option>
             </Select>
-            
+
             {/* Search results dropdown */}
             {((userResults.length > 0 || teamResults.length > 0 || noResults) && searchInput.length >= 2) && (
               <div className="absolute top-full left-0 right-0 mt-1 bg-background border rounded-md shadow-lg max-h-64 overflow-y-auto z-10">
@@ -689,7 +710,7 @@ export function ShareDialog({
                     ))}
                   </div>
                 )}
-                
+
                 {/* Only provisioned Keycloak users are shareable. */}
                 {noResults && !searching && userResults.length === 0 && teamResults.length === 0 && (
                   <div className="px-3 py-4">

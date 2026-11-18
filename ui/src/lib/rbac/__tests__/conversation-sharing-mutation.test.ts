@@ -13,6 +13,7 @@ jest.mock('@/lib/rbac/openfga-owned-resources-reconcile', () => ({
 
 const journal = new Map<string, ConversationSharingMutation>();
 const locks = new Set<string>();
+const guard = jest.fn(async () => {});
 const access = new Map<string, unknown>();
 const tuples = new Set<string>();
 const persistConversation = jest.fn();
@@ -30,6 +31,8 @@ jest.mock('@/lib/mongodb', () => ({ getCollection: async (name: string) => {
       locks.add(_id);
     },
     deleteOne: async ({ _id }: { _id: string }) => locks.delete(_id),
+    updateOne: async () => ({ matchedCount: 1 }),
+    findOne: async () => null,
   };
   if (name === 'conversation_share_mutations') return {
     insertOne: (...args: unknown[]) => insertJournal(...args),
@@ -74,12 +77,12 @@ beforeEach(() => {
 
 it('journals before grants, then resumes a failed metadata write without removing existing grants', async () => {
   persistConversation.mockRejectedValueOnce(new Error('Mongo unavailable'));
-  await expect(withConversationSharingLock('example-chat', () => commitConversationSharingMutation(intent())))
+  await expect(withConversationSharingLock('example-chat', () => commitConversationSharingMutation(intent(), guard)))
     .rejects.toThrow('Mongo unavailable');
   expect(journal.has('example-chat')).toBe(true);
   expect(insertJournal.mock.invocationCallOrder[0]).toBeLessThan(reconcile.mock.invocationCallOrder[0]);
   expect(locks.size).toBe(0);
-  await withConversationSharingLock('example-chat', () => resumeConversationSharingMutation('example-chat'));
+  await withConversationSharingLock('example-chat', () => resumeConversationSharingMutation('example-chat', guard));
   expect(journal.size).toBe(0);
   expect(access.size).toBe(1);
   expect(tuples).toEqual(new Set([
@@ -91,7 +94,7 @@ it('journals before grants, then resumes a failed metadata write without removin
 
 it('does not create grants unless the retry intent was durably saved', async () => {
   insertJournal.mockRejectedValueOnce(new Error('journal unavailable'));
-  await expect(commitConversationSharingMutation(intent())).rejects.toThrow('journal unavailable');
+  await expect(commitConversationSharingMutation(intent(), guard)).rejects.toThrow('journal unavailable');
   expect(reconcile).not.toHaveBeenCalled();
   expect(persistAccess).not.toHaveBeenCalled();
 });
@@ -101,10 +104,10 @@ it('recovers a partial access-row write with the same IDs and no duplicate rows'
   mutation.accessInserts!.push({ ...mutation.accessInserts![0], _id: new ObjectId(), granted_to: 'secondary@example.com' });
   const save = persistAccess.getMockImplementation()!;
   persistAccess.mockImplementationOnce(save).mockRejectedValueOnce(new Error('partial insert'));
-  await expect(commitConversationSharingMutation(mutation)).rejects.toThrow('partial insert');
+  await expect(commitConversationSharingMutation(mutation, guard)).rejects.toThrow('partial insert');
   expect(access.size).toBe(1);
   expect(journal.has('example-chat')).toBe(true);
-  await resumeConversationSharingMutation('example-chat');
+  await resumeConversationSharingMutation('example-chat', guard);
   expect(access.size).toBe(2);
   expect(journal.size).toBe(0);
 });
@@ -118,18 +121,18 @@ it('retains work when authorization fails and prevents competing mutations befor
   expect(effects).not.toHaveBeenCalled();
   release(); await first;
   reconcile.mockRejectedValueOnce(new Error('authorization unavailable'));
-  await expect(commitConversationSharingMutation(intent())).rejects.toThrow('authorization unavailable');
+  await expect(commitConversationSharingMutation(intent(), guard)).rejects.toThrow('authorization unavailable');
   expect(journal.has('example-chat')).toBe(true);
   expect(persistAccess).not.toHaveBeenCalled();
-  await resumeConversationSharingMutation('example-chat');
+  await resumeConversationSharingMutation('example-chat', guard);
   expect(journal.size).toBe(0);
 });
 
 it('retains the journal until both metadata and journal finalization succeed', async () => {
   deleteJournal.mockRejectedValueOnce(new Error('acknowledgement lost'));
-  await expect(commitConversationSharingMutation(intent())).rejects.toThrow('acknowledgement lost');
+  await expect(commitConversationSharingMutation(intent(), guard)).rejects.toThrow('acknowledgement lost');
   expect(journal.has('example-chat')).toBe(true);
-  await resumeConversationSharingMutation('example-chat');
+  await resumeConversationSharingMutation('example-chat', guard);
   expect(access.size).toBe(1);
   expect(journal.size).toBe(0);
 });
@@ -142,4 +145,14 @@ it('prevents permanent deletion from racing with a sharing writer', async () => 
     .rejects.toMatchObject({ statusCode: 409 });
   expect(revoke).not.toHaveBeenCalled();
   release(); await writer;
+});
+
+it('retains recovery work and stops metadata writes when lease ownership is lost after grants', async () => {
+  const ownership = jest.fn().mockResolvedValue(undefined);
+  reconcile.mockImplementationOnce(async () => { ownership.mockRejectedValue(new Error('lease lost')); });
+  await expect(commitConversationSharingMutation(intent(), ownership)).rejects.toThrow('lease lost');
+  expect(journal.has('example-chat')).toBe(true);
+  expect(persistAccess).not.toHaveBeenCalled();
+  expect(persistConversation).not.toHaveBeenCalled();
+  expect(deleteJournal).not.toHaveBeenCalled();
 });
