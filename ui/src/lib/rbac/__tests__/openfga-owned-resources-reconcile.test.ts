@@ -37,6 +37,7 @@ jest.mock("@/lib/mongodb", () => ({
 
 import { OpenFgaReconcileRequiredError } from "@/lib/authz";
 import {
+  deleteAllConversationRelationshipTuples,
   deleteAllMcpServerRelationshipTuples,
   deleteAllMcpToolRelationshipTuples,
   reconcileConfigDrivenMcpServerRelationships,
@@ -372,5 +373,34 @@ describe("reconcileMcpServerRelationships", () => {
         source: "mcp_server_create",
       }),
     );
+  });
+});
+
+
+describe("deleteAllConversationRelationshipTuples", () => {
+  it("revokes every page of grants, including grants absent from sharing metadata", async () => {
+    const object = "conversation:example-chat";
+    const keys = [
+      { user: "user:test-user", relation: "owner", object },
+      { user: "team:primary#member", relation: "reader", object },
+      { user: "service_account:example", relation: "writer", object },
+    ];
+    mockReadOpenFgaTuples
+      .mockResolvedValueOnce(tuplePage(keys.slice(0, 2), "next"))
+      .mockResolvedValueOnce(tuplePage(keys.slice(2)));
+    await deleteAllConversationRelationshipTuples("example-chat");
+    expect(mockReadOpenFgaTuples).toHaveBeenNthCalledWith(2, {
+      tuple: { object }, continuationToken: "next",
+    });
+    expect(mockReconcileTupleDiff).toHaveBeenCalledWith(
+      { writes: [], deletes: keys }, { source: "conversation_delete" },
+    );
+  });
+
+  it("fails closed when grant reconciliation is disabled", async () => {
+    mockIsOpenFgaReconciliationEnabled.mockReturnValue(false);
+    await expect(deleteAllConversationRelationshipTuples("example-chat"))
+      .rejects.toThrow(OpenFgaReconcileRequiredError);
+    expect(mockReconcileTupleDiff).not.toHaveBeenCalled();
   });
 });

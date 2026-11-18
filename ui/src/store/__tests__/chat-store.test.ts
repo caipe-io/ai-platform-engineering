@@ -316,6 +316,29 @@ describe('chat-store', () => {
     });
   });
 
+  it('does not rewrite conversation state when sharing metadata is unchanged', () => {
+    const sharing = {
+      is_public: false,
+      shared_with: ['recipient@example.com'],
+      shared_with_teams: ['platform'],
+      team_permissions: { platform: 'view' as const },
+      share_link_enabled: false,
+    };
+    const conversation = makeConversation({ sharing });
+    useChatStore.setState({ conversations: [conversation] });
+    const before = useChatStore.getState();
+
+    before.updateConversationSharing(conversation.id, {
+      ...sharing,
+      shared_with: [...sharing.shared_with],
+      shared_with_teams: [...sharing.shared_with_teams],
+      team_permissions: { ...sharing.team_permissions },
+    });
+
+    expect(useChatStore.getState()).toBe(before);
+    expect(useChatStore.getState().conversations[0]).toBe(conversation);
+  });
+
 
   // --------------------------------------------------------------------------
   // last active conversation pointer

@@ -66,6 +66,44 @@ function isConversationMissingError(error: unknown): boolean {
   return message.includes("404") || message.includes("not found");
 }
 
+function stringArraysEqual(left?: string[], right?: string[]): boolean {
+  const normalizedLeft = left ?? [];
+  const normalizedRight = right ?? [];
+  return (
+    normalizedLeft.length === normalizedRight.length &&
+    normalizedLeft.every((value, index) => value === normalizedRight[index])
+  );
+}
+
+function recordsEqual(
+  left?: Record<string, "view" | "comment">,
+  right?: Record<string, "view" | "comment">,
+): boolean {
+  const leftEntries = Object.entries(left ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  const rightEntries = Object.entries(right ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return (
+    leftEntries.length === rightEntries.length &&
+    leftEntries.every(
+      ([key, value], index) =>
+        key === rightEntries[index]?.[0] && value === rightEntries[index]?.[1],
+    )
+  );
+}
+
+function sharingEqual(
+  left: Conversation['sharing'],
+  right: Conversation['sharing'],
+): boolean {
+  return (
+    left?.is_public === right?.is_public &&
+    left?.public_permission === right?.public_permission &&
+    left?.share_link_enabled === right?.share_link_enabled &&
+    stringArraysEqual(left?.shared_with, right?.shared_with) &&
+    stringArraysEqual(left?.shared_with_teams, right?.shared_with_teams) &&
+    recordsEqual(left?.team_permissions, right?.team_permissions)
+  );
+}
+
 // Track streaming state per conversation
 interface StreamingState {
   conversationId: string;
@@ -859,18 +897,27 @@ const storeImplementation: StateCreator<ChatState> = (set, get) => ({
       },
 
       updateConversationSharing: (conversationId: string, sharing: Conversation['sharing']) => {
-        set((state: ChatState) => ({
-          conversations: state.conversations.map((conv: Conversation) =>
-            conv.id === conversationId
-              ? {
-                  ...conv,
-                  sharing,
-                  updatedAt: new Date(),
-                }
-              : conv
-          ),
-        }));
-        debugLog('[ChatStore] Updated conversation sharing:', conversationId, sharing);
+        let didUpdate = false;
+        set((state: ChatState) => {
+          const conversation = state.conversations.find((conv) => conv.id === conversationId);
+          if (!conversation || sharingEqual(conversation.sharing, sharing)) return state;
+
+          didUpdate = true;
+          return {
+            conversations: state.conversations.map((conv: Conversation) =>
+              conv.id === conversationId
+                ? {
+                    ...conv,
+                    sharing,
+                    updatedAt: new Date(),
+                  }
+                : conv
+            ),
+          };
+        });
+        if (didUpdate) {
+          debugLog('[ChatStore] Updated conversation sharing:', conversationId, sharing);
+        }
       },
 
       updateConversationTitle: async (conversationId: string, title: string) => {
