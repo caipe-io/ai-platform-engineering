@@ -24,6 +24,7 @@ UserSettings,
 UserStats,
 } from '@/types/mongodb';
 import type { AuthFailureAction,AuthFailureReason } from "./auth-error";
+import { debugLog } from "./debug-log";
 
 export type ConversationListFilter = 'web' | 'all' | 'autonomous' | 'scheduled' | 'api';
 
@@ -59,7 +60,7 @@ class APIClient {
     options?: RequestInit
   ): Promise<T> {
     const url = `${this.baseURL}${endpoint}`;
-    console.log(`[APIClient] Making request to: ${url}`);
+    debugLog(`[APIClient] Making request to: ${url}`);
     
     const response = await fetch(url, {
       ...options,
@@ -70,7 +71,7 @@ class APIClient {
       },
     });
 
-    console.log(`[APIClient] Response status: ${response.status} ${response.statusText}`);
+    debugLog(`[APIClient] Response status: ${response.status} ${response.statusText}`);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -78,19 +79,18 @@ class APIClient {
       // Don't log certain expected errors as console errors
       if (response.status === 401) {
         // 401: Authentication required - expected when auth is not configured
-        console.log(`[APIClient] Authentication required for ${endpoint} - user not logged in`);
+        debugLog(`[APIClient] Authentication required for ${endpoint} - user not logged in`);
       } else if (response.status === 404) {
         // 404: Resource not found - this is expected in many cases:
         // - New conversations not yet saved to MongoDB
         // - Deleted conversations
         // - Conversations being navigated away from
-        console.log(`[APIClient] Resource not found: ${endpoint}`);
+        debugLog(`[APIClient] Resource not found: ${endpoint}`);
       } else {
         // Log other errors
         console.error(`[APIClient] Error response:`, {
           status: response.status,
           statusText: response.statusText,
-          body: errorText
         });
       }
       
@@ -106,7 +106,7 @@ class APIClient {
       try {
         parsed = JSON.parse(errorText) as typeof parsed;
       } catch {
-        parsed = { error: response.statusText || errorText };
+        parsed = { error: `HTTP ${response.status}` };
       }
       throw new APIClientError(
         parsed.error || `HTTP ${response.status}`,
@@ -118,47 +118,22 @@ class APIClient {
     }
 
     const responseText = await response.text();
-    console.log(`[APIClient] Response body:`, responseText.substring(0, 500));
-    
     let result: ApiResponse<T>;
     try {
       result = JSON.parse(responseText);
-    } catch (parseError) {
-      console.error(`[APIClient] Failed to parse JSON:`, {
-        error: parseError,
-        responseText: responseText.substring(0, 500)
-      });
+    } catch {
+      console.error(`[APIClient] Failed to parse JSON response`);
       throw new Error('Invalid JSON response from server');
     }
-
-    console.log(`[APIClient] Parsed result:`, {
-      success: result.success,
-      hasData: !!result.data,
-      dataType: typeof result.data,
-      error: result.error
-    });
 
     if (!result.success) {
       throw new Error(result.error || 'Request failed');
     }
 
     if (result.data === undefined || result.data === null) {
-      console.error(`[APIClient] Result data is undefined/null:`, {
-        result,
-        success: result.success,
-        error: result.error,
-        hasData: result.data !== undefined,
-        dataValue: result.data
-      });
+      console.error('[APIClient] Result data is undefined/null');
       throw new Error(result.error || 'Response data is undefined');
     }
-
-    console.log(`[APIClient] Returning data:`, {
-      dataType: typeof result.data,
-      isArray: Array.isArray(result.data),
-      keys: result.data ? Object.keys(result.data) : [],
-      preview: JSON.stringify(result.data).substring(0, 200)
-    });
 
     return result.data as T;
   }
@@ -204,14 +179,14 @@ class APIClient {
   }
 
   async getConversation(id: string): Promise<Conversation> {
-    return this.request(`/api/chat/conversations/${id}`);
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}`);
   }
 
   async updateConversation(
     id: string,
     data: UpdateConversationRequest
   ): Promise<Conversation> {
-    return this.request(`/api/chat/conversations/${id}`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -221,26 +196,26 @@ class APIClient {
     id: string,
     metadata: Record<string, unknown>,
   ): Promise<Conversation> {
-    return this.request(`/api/chat/conversations/${id}/metadata`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}/metadata`, {
       method: 'PATCH',
       body: JSON.stringify({ metadata }),
     });
   }
 
   async deleteConversation(id: string): Promise<{ deleted: boolean; permanent: boolean }> {
-    return this.request(`/api/chat/conversations/${id}`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
   }
 
   async permanentDeleteConversation(id: string): Promise<{ deleted: boolean; permanent: boolean }> {
-    return this.request(`/api/chat/conversations/${id}?permanent=true`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}?permanent=true`, {
       method: 'DELETE',
     });
   }
 
   async restoreConversation(id: string): Promise<Conversation> {
-    return this.request(`/api/chat/conversations/${id}/restore`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}/restore`, {
       method: 'POST',
     });
   }
@@ -253,13 +228,13 @@ class APIClient {
   }
 
   async archiveConversation(id: string): Promise<Conversation> {
-    return this.request(`/api/chat/conversations/${id}/archive`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}/archive`, {
       method: 'POST',
     });
   }
 
   async pinConversation(id: string): Promise<Conversation> {
-    return this.request(`/api/chat/conversations/${id}/pin`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(id)}/pin`, {
       method: 'POST',
     });
   }
@@ -278,7 +253,7 @@ class APIClient {
     if (params?.order) searchParams.set('order', params.order);
 
     return this.request(
-      `/api/chat/conversations/${conversationId}/messages?${searchParams}`
+      `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages?${searchParams}`
     );
   }
 
@@ -286,7 +261,7 @@ class APIClient {
     conversationId: string,
     data: AddMessageRequest
   ): Promise<Message> {
-    return this.request(`/api/chat/conversations/${conversationId}/messages`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(conversationId)}/messages`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -301,7 +276,7 @@ class APIClient {
     removed_messages: number;
     checkpoint_id: string | null;
   }> {
-    return this.request(`/api/chat/conversations/${conversationId}/rewind`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(conversationId)}/rewind`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -331,7 +306,7 @@ class APIClient {
     if (params?.page_size) searchParams.set('page_size', params.page_size.toString());
 
     return this.request(
-      `/api/chat/conversations/${conversationId}/turns?${searchParams}`
+      `/api/chat/conversations/${encodeURIComponent(conversationId)}/turns?${searchParams}`
     );
   }
 
@@ -339,7 +314,7 @@ class APIClient {
     conversationId: string,
     data: UpsertTurnRequest,
   ): Promise<Turn> {
-    return this.request(`/api/chat/conversations/${conversationId}/turns`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(conversationId)}/turns`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -353,9 +328,30 @@ class APIClient {
     conversationId: string,
     data: ShareConversationRequest
   ): Promise<Conversation> {
-    return this.request(`/api/chat/conversations/${conversationId}/share`, {
+    return this.request(`/api/chat/conversations/${encodeURIComponent(conversationId)}/share`, {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  }
+
+  async updateConversationSharePermission(
+    conversationId: string,
+    target: { email?: string; team_id?: string },
+    permission: 'view' | 'comment',
+  ): Promise<Conversation> {
+    return this.request(`/api/chat/conversations/${conversationId}/share`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ...target, permission }),
+    });
+  }
+
+  async revokeConversationShare(
+    conversationId: string,
+    target: { email?: string; team_id?: string },
+  ): Promise<Conversation> {
+    return this.request(`/api/chat/conversations/${conversationId}/share`, {
+      method: 'DELETE',
+      body: JSON.stringify(target),
     });
   }
 
@@ -426,9 +422,9 @@ class APIClient {
     });
   }
 
-  async searchUsers(query: string): Promise<UserPublicInfo[]> {
+  async searchUsers(query: string, signal?: AbortSignal): Promise<UserPublicInfo[]> {
     const searchParams = new URLSearchParams({ q: query });
-    return this.request(`/api/users/search?${searchParams}`);
+    return this.request(`/api/users/search?${searchParams}`, { signal });
   }
 
   async getUserStats(): Promise<UserStats> {

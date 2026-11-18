@@ -1,6 +1,8 @@
 // MongoDB collection type definitions
 
 import type { StreamEvent } from "@/lib/streaming/types";
+import type { ProductTourId } from "@/lib/product-tour-catalog";
+import type { ProductTourState } from "@/lib/product-tour";
 import type { TimelineSegment } from "@/types/dynamic-agent-timeline";
 import { ObjectId } from "mongodb";
 
@@ -177,6 +179,7 @@ export interface Message {
     kind?: string;
     execution_context_id?: string;
     parent_run_id?: string;
+    execution_error_code?: "HARNESS_AGENT_NOT_READY";
     turn_status?: string;
     is_interrupted?: boolean;
     // Integration linking metadata supports scoped stats and source deep links.
@@ -280,6 +283,12 @@ export interface UserSettings {
     home_experience?: "new" | "classic";
     /** Favorite app IDs shown in the Apps catalog. */
     favorite_agentic_apps?: string[];
+    /** Server-backed progress for the post-install end-user product tour. */
+    product_tour?: ProductTourState;
+    /** Personal opt-out; operator availability is enforced separately. */
+    caipe_tour_enabled?: boolean;
+    llm_provider_secrets?: import("@/lib/llm-provider-credentials").ProviderSecretBindings;
+    task_tours?: Partial<Record<Exclude<ProductTourId, "workspace">, ProductTourState>>;
   };
   notifications: {
     email_enabled: boolean;
@@ -369,6 +378,7 @@ export interface SharingAccess {
   granted_at: Date;
   accessed_at?: Date;
   revoked_at?: Date;
+  revoked_by?: string;
 }
 
 // ============================================================================
@@ -447,7 +457,8 @@ export interface AddMessageRequest {
     // same label. Ignored when agent_name is provided directly.
     agent_id?: string;
     is_final?: boolean;
-    turn_status?: string; // "done" | "interrupted" | "waiting_for_input"
+    execution_error_code?: "HARNESS_AGENT_NOT_READY";
+    turn_status?: string; // "done" | "interrupted" | "waiting_for_input" | "cancelled"
     is_interrupted?: boolean;
     task_id?: string;
     timeline_segments?: TimelineSegment[]; // Plan/thinking/answer reconstruction

@@ -398,7 +398,7 @@ docker run \
   --cap-drop=ALL \
   --pids-limit=256 \
   --memory=512m --cpus=1 \
-  -p 8002:8002 \
+  -p 127.0.0.1:8002:8002 \
   -e DYNAMIC_AGENTS_URL=http://host.docker.internal:8001 \
   autonomous-agents
 ```
@@ -489,3 +489,61 @@ Follow the project-wide contribution guidelines in [AGENTS.md](../../../../AGENT
 - Branch naming: `prebuild/feat/autonomous-agents-<description>`
 - Commits: conventional commits + DCO sign-off (`git commit -s`)
 - Lint before committing: `uv run ruff check src/`
+
+### Manual runs with context
+
+`GET /api/v1/tasks/{id}` advertises `manual_run_context_version: 1`.
+Authenticated task owners and administrators can POST to
+`/api/v1/tasks/{id}/run` with `{ "request_id": "<UUID>", "context": { ... } }`.
+The task must be enabled. The raw request is limited to 32 KiB before JSON parsing.
+Context is untrusted JSON limited to 16 KiB;
+`_caipe_manual_request` is reserved for server-stamped caller provenance.
+Task instructions and tool permissions remain unchanged.
+
+The response includes `run_id`; poll the existing task run-history endpoint.
+Reuse the same request UUID after an uncertain response to get the original
+run instead of scheduling another one (within the trigger-record retention
+window). New UUIDs represent new intents. This uses the shared process-local
+FIFO, concurrency limits, backpressure and Mongo trigger claims; queued work
+is not durable across process restarts. Empty-body and `null` POSTs, `{}`, and
+JSON objects without either `request_id` or `context` preserve the legacy
+manual trigger behavior. Supplying either new field requires both. Malformed
+JSON returns 422, and the 32 KiB raw-body limit applies to every manual POST.
+
+Manual retries look up an existing claim before reserving queue capacity, so
+an already accepted request can recover its run ID even when queues are full.
+The run ID is written atomically with the manual claim; queue acceptance is
+recorded only after enqueueing succeeds. Retries return 200 only with that
+acceptance marker, a matching live FIFO entry, or a matching persisted run.
+An unconfirmed claim returns 503 with `Retry-After: 1`, even if it has a run ID.
+Clients must retain the same UUID, never accept an unconfirmed ID as success.
+
+Failed claims and failed enqueues attempt rollback without hiding the original
+error. If rollback fails, a bounded process-local cache lets the next retry
+reconcile that known-failed attempt after Mongo recovers. Recovery slots are
+reserved before claim writes; when all slots are occupied, fresh requests get
+503 before writing a claim. Failed rollback state is never evicted. New requests
+also retry the oldest rollback when capacity is full, so admission resumes when
+Mongo recovers. Unknown pending
+claims, including after a process restart, fail closed with 503 until acceptance
+can be confirmed or the claim expires; they are not speculatively executed.
+
+This API uses the existing task-management trust boundary: only the authenticated
+UI proxy may supply caller identity/admin headers. The service does not verify
+those headers independently and must remain internal; do not expose its task
+management routes directly. App bearer calls retain their existing non-admin
+role. Browser actions use the host's authenticated session proxy, preserving
+owner/admin checks rather than impersonating a task owner.
+
+The development Compose service does not publish port 8002. Use the UI's
+`/api/autonomous/...` routes for task management. For an in-container health
+check, run:
+
+```bash
+docker compose -f docker-compose.dev.yaml exec autonomous-agents \
+  python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8002/health').status)"
+```
+
+Standalone local Docker examples bind only to loopback; only trusted local
+processes may access that listener. Kubernetes ingress must stay scoped to
+webhook routes, as configured by the chart defaults.

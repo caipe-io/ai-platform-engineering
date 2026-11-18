@@ -46,16 +46,14 @@ it.each(["localStorage", "mongodb"])("shows only explicitly bound, owned app cha
   else expect(apiClient.getConversations).toHaveBeenCalledWith(expect.objectContaining({ source: "web", client_type: "webui", archived: false }));
 });
 
-it("defers each row's validation and controls until its actions are requested", async () => {
+it("shows validated actions directly on each history row", async () => {
   mockStorageMode.mockReturnValue("localStorage");
   mockConversations.push(conversation("Another allowed chat", binding));
   render(<AppAssistantHistory appId="example-app" agentId="example-agent" onSelect={jest.fn()} onArchived={jest.fn()} />);
   await screen.findByRole("button", { name: "Another allowed chat" });
-  expect(mockActions).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Actions for Allowed app chat" }));
-  expect(await screen.findByText("Validated row actions")).toBeInTheDocument();
-  expect(mockActions).toHaveBeenCalledTimes(1);
-  expect(mockActions).toHaveBeenCalledWith(expect.objectContaining({ appId: "example-app", agentId: "example-agent", conversationId: "Allowed app chat" }));
+  expect(screen.queryByRole("button", { name: "Actions for Allowed app chat" })).not.toBeInTheDocument();
+  expect(screen.getAllByText("Validated row actions")).toHaveLength(2);
+  expect(mockActions).toHaveBeenCalledWith(expect.objectContaining({ appId: "example-app", agentId: "example-agent", conversationId: "Allowed app chat", deferLoad: true }));
 });
 
 it.each(["localStorage", "mongodb"])("includes unbound history only with legacy opt-in in %s mode", async mode => {

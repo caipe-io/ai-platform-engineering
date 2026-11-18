@@ -26,7 +26,8 @@
     "splunk",
     "victorops",
     "webex",
-    "webex-meetings"
+    "webex-meetings",
+    "cloudability"
   ],
   "rag_components": [
     "agent-ontology",

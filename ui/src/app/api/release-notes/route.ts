@@ -1,3 +1,5 @@
+import { parseReleaseNotesMarkdown } from "@/lib/release-notes-markdown";
+import { normalizeReleaseNotesOverride, validateReleaseNotesOverride, hasReleaseNotesOverride, MAX_RELEASE_NOTES_LENGTH } from "@/lib/release-notes-override";
 import fs from "fs";
 import { NextRequest,NextResponse } from "next/server";
 import path from "path";
@@ -17,8 +19,7 @@ const RELEASES_DIR = "docs/releases";
 const CONTENTS_API_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/contents/${RELEASES_DIR}?ref=${GITHUB_REF}`;
 const RAW_BASE_URL = `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_REF}/${RELEASES_DIR}`;
 
-// One curated post per minor series, named `YYYY-MM-DD-release-X-Y-0.md`. Retired
-// per-patch posts share the shape, so only the major and minor are used.
+// Curated posts include patch releases; an X-Y-0 post also covers its minor series.
 const RELEASE_FILE_PATTERN = /release-(\d+)-(\d+)-(\d+)\.mdx?$/i;
 
 const LISTING_TTL_MS = 10 * 60 * 1000;
@@ -82,8 +83,10 @@ export interface ReleaseNotesResponse {
   title: string | null;
   date: string | null;
   body: string | null;
-  source: "generated" | "github-compare" | "github" | "local" | "none";
+  source: "manual" | "repository-markdown" | "generated" | "github-compare" | "github" | "local" | "none";
   changelogUrl: string | null;
+  markdownBaseUrl?: string;
+  error?: string;
 }
 
 interface MainIncrementReleaseNotes {
@@ -340,7 +343,7 @@ function buildReleaseFile(name: string, rawUrl: string, localPath?: string): Rel
   if (!match) return null;
   return {
     name,
-    version: `${Number(match[1])}.${Number(match[2])}.0`,
+    version: `${Number(match[1])}.${Number(match[2])}.${Number(match[3])}`,
     rawUrl,
     localPath,
   };
@@ -413,14 +416,12 @@ function seriesVersion(value: string): string {
 }
 
 /**
- * Release posts are published once per minor series, so patches and prereleases
- * resolve to their series post. A version whose series has no post yet stays
- * unmatched rather than borrowing notes from an earlier series.
+ * Prefer the deployed patch's post, including for its prerelease builds. If no
+ * exact post exists, use only the same minor series' X-Y-0 post.
  */
-function selectRelease(files: ReleaseFile[], requestedBase: string): ReleaseFile | null {
-  if (files.length === 0) return null;
-  const series = seriesVersion(requestedBase);
-  return files.find((file) => file.version === series) ?? null;
+function selectReleaseCandidates(files: ReleaseFile[], requestedBase: string): ReleaseFile[] {
+  const versions = new Set([requestedBase, seriesVersion(requestedBase)]);
+  return [...versions].flatMap(version => files.filter(file => file.version === version));
 }
 
 async function readReleaseContent(file: ReleaseFile): Promise<{ body: string; source: "github" | "local" } | null> {
@@ -460,32 +461,47 @@ async function readReleaseContent(file: ReleaseFile): Promise<{ body: string; so
   return null;
 }
 
-/**
- * Split YAML frontmatter from the markdown body and surface the `title`.
- * Also removes the Docusaurus `<!-- truncate -->` marker so the dialog renders a
- * single continuous body.
- */
-function parseFrontmatter(raw: string): { title: string | null; date: string | null; body: string } {
-  let title: string | null = null;
-  let date: string | null = null;
-  let body = raw;
 
-  const frontmatterMatch = raw.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
-  if (frontmatterMatch) {
-    const frontmatter = frontmatterMatch[1];
-    body = raw.slice(frontmatterMatch[0].length);
-    const titleMatch = frontmatter.match(/^title:\s*(.+)$/m);
-    if (titleMatch) {
-      title = titleMatch[1].trim().replace(/^["']|["']$/g, "");
-    }
-    const dateMatch = frontmatter.match(/^date:\s*(.+)$/m);
-    if (dateMatch) {
-      date = dateMatch[1].trim().replace(/^["']|["']$/g, "");
-    }
-  }
+type RepositoryMarkdownResult = { body: string } | { error: string };
+const repositoryMarkdownRequests = new Map<string, Promise<RepositoryMarkdownResult>>();
 
-  body = body.replace(/<!--\s*truncate\s*-->/g, "").trim();
-  return { title, date, body };
+async function readRepositoryMarkdown(cacheKey: string, url: string): Promise<RepositoryMarkdownResult> {
+  const cached = contentCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < CONTENT_TTL_MS) return { body: cached.body };
+  const pending = repositoryMarkdownRequests.get(cacheKey);
+  if (pending) return pending;
+  const request = (async (): Promise<RepositoryMarkdownResult> => {
+    try {
+      const token = process.env.RELEASE_NOTES_GITHUB_TOKEN?.trim() || process.env.GITHUB_TOKEN?.trim() || process.env.GITHUB_PERSONAL_ACCESS_TOKEN?.trim();
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(10000), cache: "no-store", redirect: "error",
+        headers: { Accept: "application/vnd.github.raw+json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      });
+      if (!response.ok) return { error: `Release Markdown could not be fetched (HTTP ${response.status}). Check the file, ref, and repository access.` };
+      const reader = response.body?.getReader();
+      if (!reader) return { error: "Release Markdown is empty." };
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > MAX_RELEASE_NOTES_LENGTH) {
+            await reader.cancel();
+            return { error: "Release Markdown exceeds 128 KiB." };
+          }
+          chunks.push(value);
+        }
+      } finally { reader.releaseLock(); }
+      const body = Buffer.concat(chunks).toString("utf8");
+      contentCache.set(cacheKey, { at: Date.now(), body });
+      return { body };
+    } catch { return { error: "Release Markdown could not be fetched. Check repository access and try again." }; }
+  })();
+  repositoryMarkdownRequests.set(cacheKey, request);
+  try { return await request; }
+  finally { repositoryMarkdownRequests.delete(cacheKey); }
 }
 
 export async function GET(request: NextRequest) {
@@ -511,6 +527,36 @@ export async function GET(request: NextRequest) {
       // Authenticate on every read, before configuration, cache or GitHub work.
       // This deliberately allows ordinary admitted users, not just admins.
       await getAuthFromBearerOrSession(request);
+      const collection = await getCollection<{ _id: string; release_notes?: { override?: unknown } }>("platform_config");
+      const document = await collection.findOne({ _id: PLATFORM_CONFIG_ID } as never);
+      const override = normalizeReleaseNotesOverride(document?.release_notes?.override);
+      if (hasReleaseNotesOverride({ override }, requestedVersion)) {
+        const headers = { "Cache-Control": "private, no-store" };
+        const invalid = validateReleaseNotesOverride(override);
+        if (invalid) return NextResponse.json({ ...empty, error: invalid }, { status: 400, headers });
+        let content = override.markdown;
+        let changelogUrl: string | null = override.changelog_url || null;
+        let markdownBaseUrl: string | undefined;
+        if (override.source === "repository") {
+          const repository = approvedReleaseNotesRepository(override.markdown_repository);
+          if (!repository) return NextResponse.json({ ...empty, error: "Release notes repository is not approved." }, { status: 400, headers });
+          const coords = parseReleaseNotesRepository(repository)!;
+          const encodedPath = override.markdown_path.split("/").map(encodeURIComponent).join("/");
+          const ref = encodeURIComponent(override.markdown_ref);
+          const url = `https://api.github.com/repos/${coords.owner}/${coords.repository}/contents/${encodedPath}?ref=${ref}`;
+          const cacheKey = JSON.stringify([repository, override.markdown_ref, override.markdown_path]);
+          const result = await readRepositoryMarkdown(cacheKey, url);
+          if ("error" in result) return NextResponse.json({ ...empty, error: result.error }, { status: 502, headers });
+          content = result.body;
+          changelogUrl = `${repository}/blob/${ref}/${encodedPath}`;
+          markdownBaseUrl = `https://raw.githubusercontent.com/${coords.owner}/${coords.repository}/${ref}/${encodedPath}`;
+        }
+        const parsed = parseReleaseNotesMarkdown(content);
+        if (!parsed.body.trim()) return NextResponse.json({ ...empty, error: "Release Markdown has no content." }, { status: 502, headers });
+        return NextResponse.json({ ...empty, ...parsed, matchedVersion: requestedVersion,
+          source: override.source === "manual" ? "manual" : "repository-markdown", changelogUrl, markdownBaseUrl,
+        }, { headers });
+      }
       const configuredCompare = await readConfiguredGithubCompare();
       const headers = { "Cache-Control": "private, no-store" };
       if (!configuredCompare) return NextResponse.json(empty, { status: 400, headers });
@@ -546,31 +592,22 @@ export async function GET(request: NextRequest) {
     }
 
     const files = await getReleaseFiles();
-    const selected = selectRelease(files, baseVersion(requestedVersion));
-    if (!selected) {
-      return NextResponse.json(empty);
+    for (const selected of selectReleaseCandidates(files, baseVersion(requestedVersion))) {
+      const content = await readReleaseContent(selected);
+      if (!content) continue;
+      const { title, date, body } = parseReleaseNotesMarkdown(content.body);
+      if (!body) continue;
+      return NextResponse.json({
+        requestedVersion,
+        matchedVersion: selected.version,
+        title,
+        date,
+        body,
+        source: content.source,
+        changelogUrl: null,
+      } satisfies ReleaseNotesResponse);
     }
-
-    const content = await readReleaseContent(selected);
-    if (!content) {
-      return NextResponse.json(empty);
-    }
-
-    const { title, date, body } = parseFrontmatter(content.body);
-    if (!body) {
-      return NextResponse.json(empty);
-    }
-
-    const result: ReleaseNotesResponse = {
-      requestedVersion,
-      matchedVersion: selected.version,
-      title,
-      date,
-      body,
-      source: content.source,
-      changelogUrl: null,
-    };
-    return NextResponse.json(result);
+    return NextResponse.json(empty);
   } catch (error) {
     if (useConfiguredCompare && error instanceof ApiError) {
       return NextResponse.json(empty, {
@@ -578,8 +615,8 @@ export async function GET(request: NextRequest) {
       });
     }
     if (useConfiguredCompare) {
-      console.error("[Release Notes API] Configured compare unavailable");
-      return NextResponse.json(empty, { status: 500, headers: { "Cache-Control": "private, no-store" } });
+      console.error("[Release Notes API] Configured release notes unavailable");
+      return NextResponse.json({ ...empty, error: "Configured release notes are unavailable. Check repository access and try again." }, { status: 500, headers: { "Cache-Control": "private, no-store" } });
     }
     console.error("[Release Notes API] Error resolving release notes:", error);
     return NextResponse.json(empty, { status: 500 });

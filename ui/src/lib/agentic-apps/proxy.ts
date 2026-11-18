@@ -21,6 +21,7 @@ import {
 } from "@/lib/agentic-apps/runtime";
 import { mintAgenticAppToken } from "@/lib/agentic-apps/tokens";
 import { ApiError, getAuthenticatedUser } from "@/lib/api-middleware";
+import { readBodyWithLimit } from "@/lib/request-body";
 import { DEFAULT_AGENTIC_APP_MAX_REQUEST_BODY_BYTES } from "@/types/agentic-app";
 import type { AgenticAppAuthMode } from "@/types/agentic-app";
 import { nativeExtensionById } from "@/native-extensions/runtime";
@@ -277,35 +278,6 @@ async function proxyExternalMcpRequest(
   return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
 }
 
-async function readBodyWithLimit(request: Request, limit: number): Promise<ArrayBuffer | null> {
-  if (!request.body) return new ArrayBuffer(0);
-  const reader = request.body.getReader();
-  let body = new Uint8Array(0);
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value.byteLength > limit - total) {
-        await reader.cancel();
-        return null;
-      }
-      const nextTotal = total + value.byteLength;
-      if (nextTotal > body.byteLength) {
-        // Storage grows with payload bytes, independently of transport chunk count.
-        const capacity = Math.min(limit, Math.max(nextTotal, body.byteLength * 2, 1024));
-        const nextBody = new Uint8Array(capacity);
-        nextBody.set(body.subarray(0, total));
-        body = nextBody;
-      }
-      body.set(value, total);
-      total = nextTotal;
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return total === body.byteLength ? body.buffer : body.buffer.slice(0, total);
-}
 
 function buildForwardHeaders(input: {
   request: Request;

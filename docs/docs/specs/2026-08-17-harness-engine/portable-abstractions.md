@@ -1,12 +1,12 @@
 # Portable Harness Engine Abstractions
 
-> **Pending integration design:** [Deep Agents Adapter and Pluggable Agent Builder](deep-agents-integration-pending.md) proposes a future runtime extraction and capability-driven editor. It does not change the implemented independent-service boundary below.
+> **Integration design:** [Deep Agents Adapter and Pluggable Agent Builder](deep-agents-integration-pending.md) describes runtime reuse and the capability-driven editor. Consult the [Engine README](https://github.com/caipe-io/ai-platform-engineering/blob/main/ai_platform_engineering/harness_engine/README.md#opt-in-deep-agents-integration) for supported APIs and rollout instructions.
 
 ## Decision
 
-In [delivery Phase 1](delivery-phases.md), Harness Engine is an independent control plane beside Dynamic Agents. Phase 2 separately adds `DeepAgentsAdapter`; Phase 3 adds external sandbox execution; Phase 4 adds cross-harness delegation.
+In [delivery Phase 1](delivery-phases.md), Harness Engine is an independent control plane beside Dynamic Agents. The opt-in Deep Agents integration adds `DeepAgentsAdapter`; external sandbox execution and cross-harness delegation have separate qualification gates.
 
-- It does not import or change `ai_platform_engineering/dynamic_agents/`.
+- Provider-only installations remain independent of `dynamic_agents`. The optional Deep Agents integration imports and reuses the existing runtime.
 - It owns complete portable agent blueprints and immutable versions.
 - AgentCore and Claude Agent SDK implement one adapter contract.
 - The Next.js BFF stays horizontally stateless.

@@ -1,5 +1,7 @@
 "use client";
 
+import { hasReleaseNotesOverride, type ReleaseNotesOverride } from "@/lib/release-notes-override";
+
 import { useSession } from "next-auth/react";
 import { useCallback,useEffect,useMemo,useState } from "react";
 
@@ -22,10 +24,13 @@ export interface ReleaseMarkdown {
   title: string | null;
   date: string | null;
   body: string;
+  source?: string | null;
+  markdownBaseUrl?: string;
   changelogUrl?: string | null;
 }
 
 interface ReleaseNotesResponse {
+  markdownBaseUrl?: string;
   matchedVersion?: string | null;
   title?: string | null;
   date?: string | null;
@@ -49,6 +54,8 @@ interface ChangelogResponse {
 }
 
 export interface ReleaseNotesNotificationConfig {
+  override?: ReleaseNotesOverride;
+  override_revision?: string;
   enabled: boolean;
   repository_url: string | null;
   previous_commit: string | null;
@@ -84,7 +91,7 @@ function baseVersion(value: string): string {
   return value.trim().replace(/^v/i, "").split(/[-+]/)[0];
 }
 
-function resolvePromptVersion(versionInfo: { version?: string; packageVersion?: string } | null): string | null {
+export function resolvePromptVersion(versionInfo: { version?: string; packageVersion?: string } | null): string | null {
   const candidates = [versionInfo?.version, versionInfo?.packageVersion].map(normalizeVersion);
   return (
     candidates.find(
@@ -116,12 +123,34 @@ export function releaseNotesRequestUrl(
   config?: Partial<ReleaseNotesNotificationConfig> | null,
 ): string {
   const params = new URLSearchParams({ version });
-  if (hasConfiguredReleaseNotesCompare(config)) {
+  if (hasConfiguredReleaseNotesCompare(config) || hasReleaseNotesOverride(config, version)) {
     // The API resolves the stored platform config server-side so callers
     // cannot use the UI server's GitHub token to compare an arbitrary repo.
     params.set("compare", "platform");
   }
   return `/api/release-notes?${params.toString()}`;
+}
+
+/** Keep the preview and login prompt on the same version and source policy. */
+export function hasMatchingReleaseNotes(
+  version: string,
+  notes: ReleaseNotesResponse | null,
+  config?: Partial<ReleaseNotesNotificationConfig> | null,
+): notes is ReleaseNotesResponse & { body: string } {
+  const curatedOverride = hasReleaseNotesOverride(config, version);
+  const expectedSource = curatedOverride
+    ? config?.override?.source === "manual" ? "manual" : "repository-markdown"
+    : hasConfiguredReleaseNotesCompare(config) ? "github-compare" : null;
+  const sourceMatches = expectedSource
+    ? notes?.source === expectedSource
+    : ["github", "local", "generated"].includes(notes?.source ?? "");
+  const deployedBase = baseVersion(version);
+  const matchedVersion = normalizeVersion(notes?.matchedVersion);
+  const hasSeriesBlog =
+    (notes?.source === "github" || notes?.source === "local") &&
+    matchedVersion === deployedBase.replace(/\.\d+$/, ".0");
+  return sourceMatches && Boolean(notes?.body) &&
+    (matchedVersion === normalizeVersion(version) || matchedVersion === deployedBase || hasSeriesBlog);
 }
 
 function notificationsEnabledFromSettings(settings: SettingsResponse | null): boolean {
@@ -205,8 +234,11 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
         }
 
         const activeReleaseVersion = deployedReleaseVersion;
-        const customCompareConfigured = hasConfiguredReleaseNotesCompare(releaseNotesConfig);
-        const activeAnnouncementId = customCompareConfigured
+        const curatedOverride = hasReleaseNotesOverride(releaseNotesConfig, activeReleaseVersion);
+        const customCompareConfigured = !curatedOverride && hasConfiguredReleaseNotesCompare(releaseNotesConfig);
+        const activeAnnouncementId = curatedOverride
+          ? `${activeReleaseVersion}:curated:${releaseNotesConfig?.override_revision}`
+          : customCompareConfigured
           ? JSON.stringify([
               activeReleaseVersion,
               releaseNotesConfig.repository_url,
@@ -229,41 +261,41 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
           return;
         }
 
-        const matchingRelease = customCompareConfigured
+        const matchingRelease = customCompareConfigured || curatedOverride
           ? null
           : changelogPayload?.releases?.find(
               (item) => normalizeVersion(item.version) === activeReleaseVersion,
             ) ?? null;
         setRelease(matchingRelease);
 
+        const unavailableNotes: ReleaseMarkdown | null = curatedOverride ? {
+          matchedVersion: activeReleaseVersion, title: null, date: null, body: "",
+          source: releaseNotesConfig?.override?.source === "manual" ? "manual" : "repository-markdown",
+          changelogUrl: releaseNotesConfig?.override?.source === "manual" ? releaseNotesConfig.override.changelog_url : null,
+        } : null;
         try {
           const notesResponse = await fetch(releaseNotesRequestUrl(activeReleaseVersion, releaseNotesConfig));
           const notesPayload: ReleaseNotesResponse | null = notesResponse.ok
             ? await notesResponse.json()
             : null;
           if (!cancelled) {
-            const hasExactChangelog = Boolean(matchingRelease);
-            const hasConfiguredCompareNotes =
-              customCompareConfigured && notesPayload?.source === "github-compare";
-            const hasExactCuratedNotes =
-              Boolean(notesPayload?.body) &&
-              (normalizeVersion(notesPayload?.matchedVersion) === activeReleaseVersion ||
-                normalizeVersion(notesPayload?.matchedVersion) === baseVersion(activeReleaseVersion));
             setReleaseMarkdown(
-              (hasConfiguredCompareNotes || !hasExactChangelog) && hasExactCuratedNotes
+              hasMatchingReleaseNotes(activeReleaseVersion, notesPayload, releaseNotesConfig)
                 ? {
                     matchedVersion: notesPayload.matchedVersion ?? null,
                     title: notesPayload.title ?? null,
                     date: notesPayload.date ?? null,
                     body: notesPayload.body,
+                    source: notesPayload.source,
+                    markdownBaseUrl: notesPayload.markdownBaseUrl,
                     changelogUrl: notesPayload.changelogUrl ?? null,
                   }
-                : null,
+                : unavailableNotes,
             );
           }
         } catch (notesError) {
           console.warn("[release-upgrade-prompt] Failed to load curated release notes:", notesError);
-          if (!cancelled) setReleaseMarkdown(null);
+          if (!cancelled) setReleaseMarkdown(unavailableNotes);
         }
 
         if (cancelled) return;

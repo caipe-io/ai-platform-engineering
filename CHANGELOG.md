@@ -1,3 +1,146 @@
+## Unreleased
+
+### Feat
+
+- **models**: connect and test saved model providers end to end (#3389)
+- **ui**: add first-install setup and product tour (#2763)
+- **app-sdk**: support opt-in assistant checkbox controls (#3134)
+- **ui**: unify agents with soft gradient cards (#3403)
+- **ui**: browse and test remote agents in a card catalog (#3401)
+- **ui**: unify CAIPE, A2A and configured ACP agents (#3391)
+- **agents**: discover remote A2A cards and Kubernetes Services (#3384)
+- **harness**: gate Claude research on source evidence (#3395)
+- **harness**: manage Claude operator profiles in Agent Builder (#3386)
+- **harness**: execute compiled subagents through saved runtimes (#3390)
+- **sharepoint-mcp**: support documents, pages and scoped search (#2968)
+- **ui**: glide Ask Tome into its assistant launcher (#3387)
+
+- **integrations**: add opt-in Harness Gateway transport for Slack and Webex (#3241)
+
+- **skills**: import pinned original GitHub packages (#3249)
+- **harness-engine**: include portable runtimes in standard installs (#3190)
+- **autonomous**: accept idempotent manual run context (#3213)
+- **apps**: preserve URLs and isolate app scrolling (#3257)
+
+- **mongodb**: support replica sets for Change Data Capture (CDC) (#3267)
+- **notifications**: define event and preference contracts (#2993)
+
+- **helm**: add optional persistent harness runtimes (#3238)
+
+- **webex**: sign bot-specific team scope for native assistants (#3244)
+
+- **harness**: persist sessions and publish restricted runtime containers
+- add cloudability mcp to FinOps agent and alerting on litellm token usage  (#2019)
+
+### Fix
+
+- **ui**: stop logging API response bodies to the browser console (#3410)
+- **rbac**: store MCP wildcard intent on a concrete object (#2965)
+- **slack-ingestor**: persist last_ts checkpoint only after ingest succeeds (#3363)
+- **ci**: initialize the RBAC Docker stack environment (#3217)
+- **mcp-server**: support configurable ExternalSecret API versions (#3252)
+- **harness**: guard chat admission against unavailable tools (#3392)
+- **ui**: validate and namespace operator profile IDs (#3393)
+- **ui**: select explicit MCP tools in Agent Builder (#3394)
+- **agents**: skip empty MongoDB checkpoint write batches (#3398)
+- **webex**: read completed meetings from User Hub (#3371)
+
+- **harness**: accept private fsGroup workspaces for Claude isolation (#3383)
+
+- **harness**: isolate remote Claude Code sessions by default (#3377)
+- **chat**: discover new Harness turns in shared tabs (#3376)
+
+- **harness**: tolerate missing caller MCP connections (#3374)
+- **compose**: pull CAIPE images from ghcr.io/caipe-io (#3365)
+
+- **webex**: clarify identity linking completion (#3146)
+- **chat**: persist turn anchors before detached execution (#3368)
+- **ui**: use the live chat picker for every count (#3370)
+- **harness**: retry DocumentDB replay write conflicts (#3369)
+- **mongodb**: batch startup indexes with bounded concurrency (#3245)
+
+- **webex**: bind transcript fallback to the requested occurrence (#3242)
+- **ui**: require agent owner selection before continuing (#3362)
+- **ui**: resolve automatic release blogs by patch version (#3155)
+- **apps**: support shared platform assistant agents (#3189)
+- **auth**: preserve deep links through login retries (#3269)
+- **ui**: add light-mode styling to Skills gallery action buttons (#3183)
+- **skills**: preserve distinct catalog skill identities (#3225)
+- **compose**: pull MinIO from images that are still published (#3094)
+- **chat**: improve selection contrast and use muted blue colors (#3259)
+- **harness**: preserve native model controls during agent publication (#3253)
+
+- **mongodb**: support pod-local replica set host mapping (#3357)
+- **deps**: update vulnerable Cloudability packages (#3355)
+- **deps**: remediate Dependabot alerts (#3314)
+- **auth**: harden OIDC refresh transport and response validation (#3255)
+
+- **ui**: restore live chat navigation in the header (#3247)
+
+- **webex**: keep incomplete space routes recoverable (#3243)
+
+- **llm**: support non-streaming proxies and agent UI overrides (#3035)
+- **ui**: theme the grid logo and keep the CAIPE logo unchanged (#3231)
+- **ui**: follow the app theme in code blocks and prompt editors (#3182)
+- **compose**: publish langfuse-web on host port 3001 (#3145)
+- **cloudability**: repair dependency pins and local package resolution (#3216)
+
+### Refactor
+
+- **agents**: reuse Deep Agents 0.7.37 for remote delegation (#3382)
+
+## 1.3.6 (2026-11-02)
+
+### Fix
+
+- **ui**: clarify curated release note version targeting (#3204)
+
+## 1.3.5 (2026-11-02)
+
+### Feat
+
+- **feedback**: unify component reports through the host (#2397)
+
+### Fix
+
+- **github-mcp**: run github-mcp-server in http mode in docker-compose (#3193)
+
+## 1.3.4 (2026-10-30)
+
+### Feat
+
+- **ui**: support curated release note overrides (#3143)
+- **ui**: configure Agentic App connection guidance (#3144)
+
+### Fix
+
+- **ci**: install and refresh AWS MCP runtime CLIs (#3154)
+
+## 1.3.3 (2026-10-29)
+
+### Feat
+
+- **rag**: support AWS ingestor workload identity (#2975)
+- **ui**: add opt-in aggregate shell load counts (#3003)
+- **aws-mcp**: support EKS workload identity (#2611)
+
+### Fix
+
+- **dynamic-agents**: support structured response middleware (#2715)
+- **keycloak**: reconcile configured user profile attributes (#3149)
+- **streaming**: ignore SSE frames without data (#3148)
+- **webex-meetings**: preserve bounded calendar date windows (#2969)
+- **webex-meetings**: recover transcripts through recording occurrences (#2997)
+- **ui**: apply dark utilities beneath theme roots (#2999)
+- **apps**: expose running host build metadata to iframe apps (#3133)
+
+## 1.3.2 (2026-10-29)
+
+### Fix
+
+- **webex-bot**: bound streamed replies and preserve full responses (#3046)
+- **webex-bot**: separate agent display name from bot mention (#2979)
+
 ## 1.3.1 (2026-10-29)
 
 ### Fix
@@ -10,12 +153,9 @@
 
 - **home**: show starred apps in movable Favorites widget (#3125)
 - **chat**: stage app Markdown attachments in assistant composer (#3124)
-
 - **auth**: add host-owned secondary authentication (#3116)
-
 - **agentic-apps**: bring catalog presentation and favorites upstream (#3109)
 - **keycloak**: make MCP DCR opt-in with resource isolation (#2661)
-
 - **ui**: align hosted navigation and preferences (#3105)
 - **chat**: unify hosted chat and breadcrumbs (#3104)
 - **apps**: stabilize assistant drafts and iframe navigation (#3102)
@@ -24,47 +164,34 @@
 - **app-sdk**: declare shared assistant extension contracts (#3066)
 - **agentic-apps**: add shared assistant history and actions (#3064)
 - **agentic-apps**: include iframe apps in sidebar navigation (#3061)
-
 - **webex**: dispatch linked user chats to native app assistants (#3070)
 - **ui**: restrict release-note comparisons to deployment-approved repos (#2663)
 - **notifications**: let an installed app create a notification for named users (#3018)
 - **notifications**: let an installed app create a notification for named users
-
 - **ui**: enable remote MCP providers by default (#3047)
 - **dynamic-agents**: add opt-in app context prompt adapter (#3008)
-
 - **harness-engine**: add portable runtime and BFF gateway (#2401)
 - **ui**: restyle CAIPE chat composer (#3036)
-
 - **chat**: expose native feedback and opt-in chat excerpts (#3038)
 - **app-sdk**: expose authorized native conversation controls (#3037)
 - **helm**: select shared database credentials (#3024)
-
 - **chat**: add personal folders and agent grouping (#3019)
 - **agentic-apps**: unify assistant overlay and app-owned chat routing (#2693)
-
 - **setup**: add --ui-url/--idp-url and --expose=nodeport (#3006)
-
 - **charts**: support deployment-owned OpenFGA models (#2940)
 - **auth**: require authenticated development with local Keycloak (#2906)
-
 - **ui**: add shared AgenticAppManifest and native UI contract (#2852)
-
 - **dynamic-agents**: integrate remote agents as tool calls via A2A protocol (#2373)
 - **openfga-bridge**: log agent_context_kind per tools/call decision (#2907)
 - **sharepoint-mcp**: support pdf/pptx metadata and streaming through http routes (#2903)
 - **victorops**: expose computed current on-call users (#2872)
-
 - **ui**: forward platform admin notifications to Slack (#2865)
 - **sharepoint**: refresh read-only MCP prebuild on latest main (#2860)
-
 - **publication-approval**: confirm drift instead of superseding on approve (#2849)
 - **eks**: add Auto Mode RAG pool and PodDisruptionBudgets (#1446)
 - **rag**: ingest web pages behind header-based authentication (#2808)
-
 - **admin**: improve user identity and access visibility (#2810)
 - **authz**: establish BFF access API foundation (#2807)
-
 - **rag**: support Confluence folder and whole-space ingestion (#2805)
 - **agents**: add configurable reasoning effort (#2798)
 
@@ -75,21 +202,15 @@
 - **ui**: avoid Webex lookup when resolving chat defaults (#3123)
 - **chat**: show attached page context in assistant (#3122)
 - **ui**: keep breadcrumb icons beside labels (#3121)
-
 - **ui**: keep host breadcrumbs on one line (#3120)
-
 - **apps**: bundle Tome catalog logo in host (#3119)
-
 - **ui**: preserve project app navigation appearance (#3114)
 - **keycloak**: hide platform scope from OAuth discovery (#3115)
 - **credentials**: reject revoked provider connections (#3113)
-
 - **credentials**: reuse OAuth tokens outside refresh window (#3002)
 - **auth**: prevent OIDC refresh retry loops (#2774)
-
 - **chat**: avoid false interrupted banner for pending turns (#3095)
 - **agentic-apps**: improve shared assistant popup usability (#3107)
-
 - **apps**: restore external MCP auth and iframe shortcuts (#3099)
 - **docs**: patch qs serialization denial of service (#3106)
 - **ui**: synchronize hosted theme and dark utilities (#3103)
@@ -98,9 +219,7 @@
 - **deps**: resolve current dependency scanning alerts (#3089)
 - **runtime**: pin patched Node releases for Node2Shell (#3088)
 - **agentic-apps**: honor iframe assistant overlay ownership (#3060)
-
 - **auth**: preserve shared token consistency across replicas (#3085)
-
 - **auth**: reject tokens missing allowed client ID (#2583)
 - **deps**: update vulnerable dependencies and preserve trace redaction (#3048)
 - **helm**: remove duplicated rag-stack key in umbrella values.yaml (#3045)
@@ -108,32 +227,24 @@
 - **workflows**: reject incomplete streams and expose step artifacts (#3075)
 - **dynamic-agents**: guard truncated and incomplete tool calls (#2875)
 - **notifications**: enforce safe links and unique app credentials
-
 - **chat**: preserve browser session authorization for streams (#3057)
 - **chat**: restore retry and regenerate next to edit (#3009)
 - **harness-engine**: update vulnerable dependencies (#3044)
 - **ui**: preserve nested markdown list structure (#3000)
-
 - **setup**: initialize and recover fresh local workspaces (#3028)
 - **ui**: stop skill workspace refetching store in a loop for catalog skills (#2991)
 - **deps**: upgrade uv to 0.13.4 to remove compromised CA trust (#3041)
-
 - **ci**: limit MCP registry publishing concurrency (#3027)
-
 - **setup**: make fresh kind installs usable without manual patches (#3005)
 - **charts**: give openfga migrate hook its own service account (#3004)
 - **webex-meetings**: redact recording password and host keys (#2996)
 - **rag**: upgrade MCP SDK for session limits (#2985)
-
 - **oncall**: use VictorOps as live source (#2981)
-
 - **ui**: redirect unauthenticated app navigations to a relative login URL (#2923)
 - **security**: upgrade runtime uv to patched Rustls (#2921)
 - **security**: scan releases after publication (#2920)
 - **security**: patch RSA verification and glob nesting vulnerabilities (#2918)
-
 - **ui**: upgrade vulnerable npm dependency overrides (#2917)
-
 - **deps**: update MongoDB persistence and urllib3 security pins (#2916)
 - **docs**: upgrade vulnerable documentation dependencies (#2915)
 - **security**: scope scans to release revisions and validate namespaces (#2642)
@@ -146,13 +257,10 @@
 - **argocd**: filter applications by status (#2689)
 - **audit**: cancel abandoned scans and bound query memory (#2900)
 - **ci**: skip prebuild images for fork pull requests (#2898)
-
 - **platform**: restore adaptive reasoning and chat history filters (#2878)
-
 - **rag**: authorize ingestion credential reads by verified platform identity (#2876)
 - **rag-stack**: preserve gp2 default with default StorageClass option (#2088)
 - **dynamic-agents**: raise MCP tool-load retry budget to 5 attempts (#2786)
-
 - **rag**: correct fetch_document tool name in truncation hint (#2856)
 - **ui**: fix team admin dialog search and layout issues (#2842)
 - **security**: report failed post-release Grype dispatch (#2847)
@@ -163,18 +271,14 @@
 - **autonomous**: correct owner token forward to agent and mcp (#2708)
 - **webex-meetings-mcp**: fix timezone issue (#2838)
 - **rag**: retry ingestor POST on 429, split batch on 413 (#2600)
-
 - **agents**: restore Azure and Bedrock reasoning (#2809)
-
 - **auth**: debounce Keycloak sub mapping writes for repeated identity calls (#2800)
 
 ### Refactor
 
 - **rag**: remove cnoe-agent-utils from ontology (#3050)
 - **agentic-apps**: share assistant popup across renderers (#3063)
-
 - **dynamic-agents**: remove cnoe-agent-utils, add a shared llm_wrapper (#2820)
-
 - **authz**: route agent execution through fresh CAS decisions (#2813)
 
 ## 1.2.0 (2026-09-22)
@@ -4290,6 +4394,8 @@ exclusively. Legacy response formats are no longer supported.
 - **rag**: build on all tags
 
 ## 0.1.17 (2025-10-06)
+
+
 
 ## 0.1.16 (2025-10-04)
 

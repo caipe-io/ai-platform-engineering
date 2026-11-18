@@ -108,6 +108,7 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | caipe-ui.config.KEYCLOAK_RESOURCE_SERVER_ID | string | `"caipe-platform"` |  |
 | caipe-ui.config.KEYCLOAK_URL | string | `""` |  |
 | caipe-ui.config.LOGO_STYLE | string | `"default"` |  |
+| caipe-ui.config.LOGO_THEMED | string | `""` |  |
 | caipe-ui.config.LOGO_URL | string | `"/logo.svg"` |  |
 | caipe-ui.config.MONGODB_DATABASE | string | `"caipe"` |  |
 | caipe-ui.config.NEXTAUTH_URL | string | `"http://localhost:3000"` |  |
@@ -116,6 +117,7 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | caipe-ui.config.OPENFGA_RECONCILE_ENABLED | string | `"true"` |  |
 | caipe-ui.config.OPENFGA_STORE_NAME | string | `"caipe-openfga"` |  |
 | caipe-ui.config.SCHEDULER_URL | string | `"http://caipe-scheduler:8080"` |  |
+| caipe-ui.config.SETUP_WIZARD_ENABLED | string | `"true"` | Offer the setup checklist and automatic product tour. Set to `"false"` to suppress both; manual setup and tour replay remain available. |
 | caipe-ui.config.SHOW_POWERED_BY | string | `"false"` |  |
 | caipe-ui.config.SKILLS_DIR | string | `"/app/data/skills"` |  |
 | caipe-ui.config.SKILLS_HELPER_FILE | string | `"/app/data/skills-live-skills/caipe-skills.py"` |  |
@@ -268,7 +270,7 @@ helm show values oci://ghcr.io/caipe-io/charts/ai-platform-engineering --version
 | global.agentgateway.static.jwtAuth.issuer | string | `""` |  |
 | global.agentgateway.static.jwtAuth.jwksUrl | string | `""` |  |
 | global.createLlmSecret | bool | `false` |  |
-| global.externalSecrets.apiVersion | string | `"v1beta1"` |  |
+| global.externalSecrets.apiVersion | string | `""` | ExternalSecret API version: v1 or v1beta1. Empty uses global.llmSecrets.externalSecrets.apiVersion, then v1beta1. A nonempty value takes precedence over the legacy setting. |
 | global.externalSecrets.enabled | bool | `false` |  |
 | global.image | object | `{"tag":""}` | Global image tag override. When set, overrides the default appVersion-based image tag for ALL subcharts (MCP servers, dynamic agents, UI, etc.) in a single place. Individual subchart `image.tag` values still take highest precedence. |
 | global.llmSecrets.create | bool | `false` |  |

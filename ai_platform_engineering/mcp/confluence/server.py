@@ -21,6 +21,7 @@ from tools import attachments
 from tools import blogposts
 from tools import labels
 from tools import pages
+from tools import search
 from tools import spaces
 from tools import space_permissions
 from tools import footer_comments
@@ -326,6 +327,7 @@ def main():
     mcp.tool()(labels.get_content_labels)
     mcp.tool()(labels.add_labels_to_content)
     mcp.tool()(pages.get_pages)
+    mcp.tool()(search.search_content)
     mcp.tool()(pages.create_page)
     mcp.tool()(spaces.get_spaces)
     mcp.tool()(spaces.create_space)

@@ -222,7 +222,7 @@ export function SecretsManager() {
   };
 
   return (
-    <section className="space-y-6">
+    <section data-tour="saved-secrets" className="space-y-6">
       <WorkspacePageActions>
         <Button type="button" onClick={() => setCreateOpen(true)}>
           Add Secret

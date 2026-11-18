@@ -5,7 +5,7 @@ agentic_apps:
       source: example
       manifest:
         id: weather
-        displayName: Weather Example
+        displayName: Weather App
         description: A small authenticated External App backed by Open-Meteo.
         apiVersion: "1.0"
         runtime:

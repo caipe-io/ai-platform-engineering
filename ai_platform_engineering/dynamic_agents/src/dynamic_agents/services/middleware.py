@@ -412,6 +412,17 @@ MIDDLEWARE_REGISTRY: dict[str, MiddlewareSpec] = {
             "exit_behavior": "end|error|continue",
         },
     ),
+    "structured_response": MiddlewareSpec(
+        cls=object,
+        default_params={"allowed_schema_ids": ""},
+        enabled_by_default=False,
+        allow_multiple=False,
+        label="Structured Response",
+        description="Allows app clients to request validated structured JSON output",
+        param_schema={
+            "allowed_schema_ids": "string",
+        },
+    ),
     "tool_call_limit": MiddlewareSpec(
         cls=ToolCallLimitMiddleware,
         default_params={"run_limit": 500, "exit_behavior": "continue"},
@@ -508,12 +519,14 @@ def _build_pii(params: dict[str, Any]) -> PIIMiddleware:
 def _instantiate_model(
     model_id: str,
     model_provider: str,
+    streaming: bool | None = None,
 ) -> Any:
     """Instantiate an LLM via `build_chat_model` for middleware that need a model.
 
     Args:
         model_id: LLM model identifier.
         model_provider: LLM provider string.
+        streaming: Agent's streaming override, or None for the deployment default.
 
     Returns:
         Initialized BaseChatModel instance.
@@ -521,22 +534,26 @@ def _instantiate_model(
     return get_configured_llm(
         model_id=model_id,
         model_provider=model_provider,
+        streaming=streaming,
     )
 
 
 def _build_llm_tool_selector(params: dict[str, Any]) -> LLMToolSelectorMiddleware:
     """Build LLMToolSelectorMiddleware from params.
 
-    Requires ``model_id`` and ``model_provider`` in params to instantiate
-    the selector LLM.  Falls back to no model (uses agent's own model)
-    if not provided.
+    Uses a resolved saved connection when present, otherwise instantiates
+    ``model_id`` with ``model_provider``. Without either configuration,
+    uses the agent's own model.
     """
     kwargs: dict[str, Any] = {"max_tools": params.get("max_tools", 10)}
 
     model_id = params.get("model_id")
     model_provider = params.get("model_provider")
-    if model_id and model_provider:
-        kwargs["model"] = _instantiate_model(model_id, model_provider)
+    resolved_model = params.get("resolved_model")
+    if resolved_model is not None:
+        kwargs["model"] = resolved_model.instantiate(streaming=params.get("model_streaming"))
+    elif model_id and model_provider:
+        kwargs["model"] = _instantiate_model(model_id, model_provider, params.get("model_streaming"))
 
     return LLMToolSelectorMiddleware(**kwargs)
 
@@ -544,21 +561,35 @@ def _build_llm_tool_selector(params: dict[str, Any]) -> LLMToolSelectorMiddlewar
 def _build_model_fallback(params: dict[str, Any]) -> ModelFallbackMiddleware | None:
     """Build ModelFallbackMiddleware from params.
 
-    Requires ``model_id`` and ``model_provider`` to specify the fallback
-    model.  Returns None if no model is configured (middleware is skipped).
+    Uses a resolved saved connection or a ``model_id``/``model_provider``
+    pair. Returns None if no model is configured (middleware is skipped).
     """
     model_id = params.get("model_id")
     model_provider = params.get("model_provider")
-    if not model_id or not model_provider:
+    resolved_model = params.get("resolved_model")
+    if resolved_model is not None:
+        fallback_model = resolved_model.instantiate(streaming=params.get("model_streaming"))
+    elif model_id and model_provider:
+        fallback_model = _instantiate_model(model_id, model_provider, params.get("model_streaming"))
+    else:
         logger.warning("model_fallback enabled but no model_id/model_provider configured, skipping")
         return None
 
-    fallback_model = _instantiate_model(model_id, model_provider)
     return ModelFallbackMiddleware(fallback_model)
+
+
+def _build_structured_response(_params: dict[str, Any]) -> None:
+    """Structured response is handled by AgentRuntime tool injection.
+
+    The registry entry exists so the UI can configure the capability per
+    agent. It does not add a LangChain middleware object to the stack.
+    """
+    return None
 
 
 # Keys that need special construction instead of simple cls(**params)
 _SPECIAL_BUILDERS: dict[str, Callable[..., Any]] = {
+    "structured_response": _build_structured_response,
     "context_editing": _build_context_editing,
     "pii": _build_pii,
     "llm_tool_selector": _build_llm_tool_selector,
@@ -647,6 +678,8 @@ def build_middleware(
     model_provider: str = "unknown",
     attachment_store: Any | None = None,
     enable_prompt_cache: bool = False,
+    model_streaming: bool | None = None,
+    resolved_models: dict[str, Any] | None = None,
 ) -> list[AgentMiddleware]:
     """Build the middleware stack from an agent's features config.
 
@@ -665,6 +698,7 @@ def build_middleware(
         session_id: Optional conversation ID for log context.
         agent_name: Agent name for metric labels.
         model_id: Model identifier for metric labels.
+        model_streaming: Agent's streaming override for middleware-owned models.
 
     Returns:
         Ordered list of middleware instances.
@@ -703,6 +737,11 @@ def build_middleware(
 
         # Merge user params over defaults
         params = {**spec.default_params, **entry.params}
+        if spec.model_params and model_streaming is not None:
+            params["model_streaming"] = model_streaming
+
+        if resolved_models and params.get("model_id") in resolved_models:
+            params["resolved_model"] = resolved_models[params["model_id"]]
 
         # Special-case construction for middleware with non-trivial init
         builder = _SPECIAL_BUILDERS.get(entry.type)
@@ -714,7 +753,7 @@ def build_middleware(
             instance = spec.cls(**params)
 
         result.append(instance)
-        logger.debug("Middleware '%s' added with params: %s", entry.type, params)
+        logger.debug("Middleware '%s' added", entry.type)
 
     # Rehydrate attachment references into inline bytes just before the model
     # call. Placed before ToolResultInvariant so the final pre-model messages

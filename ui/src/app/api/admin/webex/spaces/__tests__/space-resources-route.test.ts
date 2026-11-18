@@ -287,6 +287,37 @@ afterEach(() => {
 });
 
 describe("Webex space ReBAC resource APIs", () => {
+  it("keeps readable mappings with missing routes visible for repair without borrowing another bot's route", async () => {
+    mockCollections[RBAC_COLLECTION_NAMES.webexSpaceTeamMappings] = createMockCollection([
+      { bot_id: "primary", webex_workspace_id: workspaceAlias, webex_space_id: spaceId,
+        space_name: "Example Room", team_slug: "example-team", active: true },
+      { bot_id: "secondary", webex_workspace_id: workspaceAlias, webex_space_id: spaceId,
+        space_name: "Other Bot Room", team_slug: "other-team", active: true },
+      { bot_id: "primary", webex_workspace_id: workspaceAlias, webex_space_id: "private-space",
+        space_name: "Private Room", active: true },
+    ]);
+    mockCollections[RBAC_COLLECTION_NAMES.webexSpaceAgentRoutes] = createMockCollection([
+      { bot_id: "secondary", workspace_id: workspaceAlias, space_id: spaceId,
+        agent_id: "other-agent", status: "active" },
+    ]);
+    mockCheckOpenFgaTuple.mockImplementation(async (tuple: { object: string }) => ({
+      allowed: tuple.object === `webex_space:${workspaceAlias}--${spaceId}`,
+    }));
+    const { GET } = await import("../route");
+
+    const response = await GET(request("/api/admin/webex/spaces?bot_id=primary&health=1"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.spaces).toEqual([
+      expect.objectContaining({
+        bot_id: "primary", space_id: spaceId, team_slug: "example-team", can_manage: true,
+        health: expect.objectContaining({ openfga_reachable: true, warnings_count: 1 }),
+      }),
+    ]);
+    expect(body.data.spaces[0].primary_agent_id).toBeUndefined();
+  });
+
   it("filters the Webex space list to concrete spaces the caller can read or manage", async () => {
     mockCollections[RBAC_COLLECTION_NAMES.webexSpaceTeamMappings] = createMockCollection([
       {

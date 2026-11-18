@@ -1,0 +1,4 @@
+interface:
+  display_name: "Regression and Release Readiness"
+  short_description: "Feature E2E coverage and release readiness evidence"
+  default_prompt: "Use $caipe-regression-suite to run the applicable E2E matrix or assess release readiness with explicit coverage gaps."

@@ -2,8 +2,6 @@
 
 import { getErrorMessage } from "@/lib/error-utils";
 
-// assisted-by Codex Codex-sonnet-4-6
-
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +46,19 @@ export function AllowedToolsPicker({ value, onChange, disabled }: AllowedToolsPi
   const [expandedServers, setExpandedServers] = React.useState<Set<string>>(new Set());
   const [searchQueries, setSearchQueries] = React.useState<Record<string, string>>({});
   const [missingTools, setMissingTools] = React.useState<Record<string, string[]>>({});
+  const current = React.useRef({ value, onChange, disabled });
+  const mounted = React.useRef(true);
+  const probes = React.useRef(new Map<string, Promise<MCPToolInfo[] | undefined>>());
+  React.useEffect(() => { current.current = { value, onChange, disabled }; }, [value, onChange, disabled]);
+  React.useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  const updateValue = (next: AllowedToolsPickerProps["value"]) => {
+    current.current.value = next;
+    current.current.onChange(next);
+  };
 
   // Compute total missing tools for warning banner
   const totalMissingTools = React.useMemo(() => {
@@ -78,19 +89,20 @@ export function AllowedToolsPicker({ value, onChange, disabled }: AllowedToolsPi
     fetchServers();
   }, []);
 
-  const handleProbe = async (serverId: string) => {
+  const loadTools = async (serverId: string): Promise<MCPToolInfo[] | undefined> => {
     setProbeStates((prev) => ({
       ...prev,
       [serverId]: { loading: true },
     }));
 
     try {
-      const response = await fetch(`/api/mcp-servers/probe?id=${serverId}`, {
+      const response = await fetch(`/api/mcp-servers/probe?id=${encodeURIComponent(serverId)}&list_only=true`, {
         method: "POST",
         credentials: "include",
       });
       const data = await response.json();
-      if (data.success) {
+      if (!mounted.current) return;
+      if (response.ok && data.success) {
         if (data.data?.success === false) {
           setProbeStates((prev) => ({
             ...prev,
@@ -101,6 +113,11 @@ export function AllowedToolsPicker({ value, onChange, disabled }: AllowedToolsPi
           }));
           return;
         }
+        if (!Array.isArray(data.data?.tools) || data.data.tools.some(
+          (tool: MCPToolInfo) => !tool || typeof tool.name !== "string" || !tool.name.trim() || tool.name === "*",
+        )) {
+          throw new Error("Server returned an invalid tool list");
+        }
         const tools = data.data.tools as MCPToolInfo[];
         setProbeStates((prev) => ({
           ...prev,
@@ -108,7 +125,7 @@ export function AllowedToolsPicker({ value, onChange, disabled }: AllowedToolsPi
         }));
         
         // Detect missing tools - tools in config but not returned by probe
-        const configuredTools = value[serverId];
+        const configuredTools = current.current.value[serverId];
         if (Array.isArray(configuredTools) && configuredTools.length > 0) {
           const availableToolNames = new Set(tools.map((t) => t.name));
           const missing = configuredTools.filter((t) => !availableToolNames.has(t));
@@ -126,6 +143,7 @@ export function AllowedToolsPicker({ value, onChange, disabled }: AllowedToolsPi
         
         // Auto-expand after successful probe
         setExpandedServers((prev) => new Set([...prev, serverId]));
+        return tools;
       } else {
         setProbeStates((prev) => ({
           ...prev,
@@ -133,11 +151,20 @@ export function AllowedToolsPicker({ value, onChange, disabled }: AllowedToolsPi
         }));
       }
     } catch (err) {
+      if (!mounted.current) return;
       setProbeStates((prev) => ({
         ...prev,
         [serverId]: { loading: false, error: getErrorMessage(err, "") || "Probe failed" },
       }));
     }
+  };
+
+  const handleProbe = (serverId: string) => {
+    const pending = probes.current.get(serverId);
+    if (pending) return pending;
+    const request = loadTools(serverId).finally(() => { probes.current.delete(serverId); });
+    probes.current.set(serverId, request);
+    return request;
   };
 
   const isServerSelected = (serverId: string) => {
@@ -158,26 +185,33 @@ export function AllowedToolsPicker({ value, onChange, disabled }: AllowedToolsPi
     return tools === true || (Array.isArray(tools) && tools.length === 0);
   };
 
-  const toggleServer = (serverId: string) => {
+  const toggleServer = async (serverId: string) => {
     if (disabled) return;
     
     const newValue = { ...value };
     if (isServerSelected(serverId)) {
       delete newValue[serverId];
     } else {
-      // Select server with all tools
-      newValue[serverId] = true;
+      // Freeze the advertised catalog; future tools require an explicit grant.
+      setExpandedServers((prev) => new Set([...prev, serverId]));
+      const before = current.current.value[serverId];
+      const tools = probeStates[serverId]?.tools ?? await handleProbe(serverId);
+      if (!mounted.current || current.current.disabled || current.current.value[serverId] !== before) return;
+      if (!tools?.length) return;
+      updateValue({ ...current.current.value, [serverId]: [...new Set(tools.map((tool) => tool.name))] });
+      return;
     }
-    onChange(newValue);
+    updateValue(newValue);
   };
 
   const toggleAllTools = (serverId: string) => {
     if (disabled || !isServerSelected(serverId)) return;
     
     const newValue = { ...value };
-    // Switch to all tools
-    newValue[serverId] = true;
-    onChange(newValue);
+    const tools = probeStates[serverId]?.tools;
+    if (!tools?.length) return;
+    newValue[serverId] = [...new Set(tools.map((tool) => tool.name))];
+    updateValue(newValue);
   };
 
   const toggleTool = (serverId: string, toolName: string) => {
@@ -192,7 +226,9 @@ export function AllowedToolsPicker({ value, onChange, disabled }: AllowedToolsPi
       newValue[serverId] = [toolName];
     } else if (isAllToolsSelected(serverId)) {
       // Currently all tools selected, switch to all except this one
-      newValue[serverId] = allTools.filter((t) => t !== toolName);
+      const remaining = allTools.filter((t) => t !== toolName);
+      if (remaining.length) newValue[serverId] = remaining;
+      else delete newValue[serverId];
     } else {
       // Currently specific tools selected
       const currentTools = [...(Array.isArray(value[serverId]) ? value[serverId] as string[] : [])];
@@ -208,29 +244,22 @@ export function AllowedToolsPicker({ value, onChange, disabled }: AllowedToolsPi
       } else {
         // Add tool
         currentTools.push(toolName);
-        // If all tools are now selected, switch to true
-        if (allTools.length > 0 && currentTools.length === allTools.length) {
-          newValue[serverId] = true;
-        } else {
-          newValue[serverId] = currentTools;
-        }
+        newValue[serverId] = currentTools;
       }
     }
-    onChange(newValue);
+    updateValue(newValue);
   };
 
   const toggleExpanded = (serverId: string) => {
+    if (!expandedServers.has(serverId) && !probeStates[serverId]?.tools) {
+      void handleProbe(serverId);
+    }
     setExpandedServers((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(serverId)) {
         newSet.delete(serverId);
       } else {
         newSet.add(serverId);
-        // Auto-probe if not already probed and not currently loading
-        const probe = probeStates[serverId];
-        if (!probe?.tools && !probe?.loading) {
-          handleProbe(serverId);
-        }
       }
       return newSet;
     });
@@ -288,6 +317,9 @@ export function AllowedToolsPicker({ value, onChange, disabled }: AllowedToolsPi
 
   return (
     <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">
+        Selecting a server selects its currently listed tools. New tools must be selected separately.
+      </p>
       {/* Warning banner for missing tools */}
       {totalMissingTools > 0 && (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 mb-2">
@@ -323,7 +355,9 @@ export function AllowedToolsPicker({ value, onChange, disabled }: AllowedToolsPi
                 <button
                   type="button"
                   onClick={() => toggleServer(server._id)}
-                  disabled={disabled}
+                  aria-label={`Select tools from ${server.name}`}
+                  aria-pressed={isSelected}
+                  disabled={disabled || probe?.loading}
                   className={cn(
                     "h-4 w-4 rounded border flex items-center justify-center transition-colors flex-shrink-0",
                     isSelected
@@ -421,7 +455,7 @@ export function AllowedToolsPicker({ value, onChange, disabled }: AllowedToolsPi
                           disabled={disabled}
                           className="text-xs text-primary hover:underline whitespace-nowrap"
                         >
-                          {isAllToolsSelected(server._id) ? "All selected" : "Select all"}
+                          Select all listed tools
                         </button>
                       )}
                     </div>
@@ -445,6 +479,8 @@ export function AllowedToolsPicker({ value, onChange, disabled }: AllowedToolsPi
                             <button
                               type="button"
                               onClick={() => toggleTool(server._id, tool.name)}
+                              aria-label={`Select ${tool.name}`}
+                              aria-pressed={selected}
                               disabled={disabled}
                               className={cn(
                                 "h-3 w-3 rounded border flex items-center justify-center flex-shrink-0 mt-0.5",

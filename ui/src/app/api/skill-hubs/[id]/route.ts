@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { githubHubOptions } from "@/lib/github-hub-options";
 import {
 ApiError,
 getAuthFromBearerOrSession,
@@ -60,6 +62,14 @@ export const PATCH = withErrorHandler(
         updated_at: new Date().toISOString(),
       };
       const unset: Record<string, "" | 1> = {};
+      if (existing.type === "github") {
+        const options = githubHubOptions(body);
+        if (body.revision !== undefined) {
+          if (options.revision) update.revision = options.revision;
+          else unset.revision = "";
+        }
+        if (body.entry_paths !== undefined) update.entry_paths = options.entry_paths || [];
+      }
       if (body.enabled !== undefined) update.enabled = !!body.enabled;
       if (body.location !== undefined) {
         // Use the existing hub's `type` so a GitLab subgroup URL is
@@ -110,6 +120,10 @@ export const PATCH = withErrorHandler(
         }
       }
 
+      if (["revision", "entry_paths", "include_paths", "location", "credentials_ref", "max_tree_pages"].some(key => body[key] !== undefined)) {
+        update.cache_generation = randomUUID();
+        update.last_success_at = null;
+      }
       const writeOp: Record<string, unknown> = { $set: update };
       if (Object.keys(unset).length > 0) writeOp.$unset = unset;
       await collection.updateOne({ id }, writeOp);

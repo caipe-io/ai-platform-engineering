@@ -31,7 +31,9 @@ Sequence diagrams and flow narratives for "what happens when X". Pair this with 
 | App-owned operation | The checks above, interactive-user identity, installed/enabled app, app launch access and declared HTTP policy |
 | Engine run detail, event polling and replay subscription | Engine run ownership, current agent use, conversation read and matching saved agent |
 | Engine cancellation by run ID | Engine run ownership, current agent use, conversation write and matching saved agent |
-| Direct Engine run admission | Current agent use and conversation write, matching saved agent and a provider-owned Harness Gateway binding |
+| Direct Engine run admission | Current agent use and conversation write, matching saved agent and an Engine-owned Harness Gateway binding |
+| Pending interrupt inspection | Authenticated principal, current agent use, conversation read and matching saved agent before returning native or Engine approval state |
+| Native session adoption or rollback | Authenticated principal, current agent use, conversation write and matching saved agent; quiescent reconciliation under the gateway transition lock and native producer fence |
 
 - Agent selection in a request cannot override a saved conversation participant.
   Legacy conversations without an agent participant retain their existing
@@ -40,6 +42,13 @@ Sequence diagrams and flow narratives for "what happens when X". Pair this with 
   `service_account:<sub>` in CAS/OpenFGA checks. App-owned streams require an
   interactive user. Engine requests carry an internal service credential and
   the verified caller subject; provider SDKs receive no user bearer token.
+- Opt-in Deep Agents execution additionally receives the current delegated
+  bearer in transient context. It reuses native CAS and MCP authorization and
+  checks selected native child agents. Credentials are excluded from persisted
+  run/event records, and runtime cache keys include caller and credential scope.
+- Resume must identify the persisted interrupt and respond to its saved form or
+  allowed tool decision. Idempotent retries return the existing attempt;
+  uncertain dispatched approvals are fenced instead of executed again.
 - The existing Slack write exception applies only to stored Slack conversations
   and still requires agent use and a matching saved agent. History and replay
   reads require conversation read permission; the write exception grants no
@@ -55,6 +64,67 @@ Sequence diagrams and flow narratives for "what happens when X". Pair this with 
 ## Login + First-Time Broker Login
 
 This is the **once-per-session** flow. After it completes, the user holds a Keycloak-backed UI session and usually never sees Keycloak (or the upstream IdP — Okta / Duo SSO / etc.) again until the Keycloak SSO session can no longer be refreshed.
+
+### Returning to a protected page
+
+- Opening `/chat/example?tab=activity` without a valid session redirects to
+  `/login` with that path and query as the `callbackUrl`. The request proxy
+  overwrites caller-supplied return headers before rewrites; the server session
+  guard reads the original destination from this request-only header.
+- `ui/src/lib/auth/callback-url.ts` validates relative paths and absolute URLs
+  from the browser's own origin. External origins, credentials, malformed
+  destinations, and login loops fall back to `/`.
+- Before sign-in, the login page saves the destination in tab-local session
+  storage for 15 minutes. On an OAuth error return, it restores the saved destination
+  only if `callbackUrl` is missing. Explicit callbacks take priority, and an
+  ordinary fresh login, session expiry, session reset, or loop recovery does not
+  restore a previous attempt.
+- Successful application admission clears the saved destination. Client-side
+  session recovery also preserves the current query and fragment.
+- Returning to a page still requires the normal session, admission, and
+  resource authorization checks. See [Authentication flow](../auth-flow.md)
+  for the broader browser-session flow.
+
+### Removing login-derived admin access
+
+- Login-derived super-admin membership is recorded as a managed `oidc_claim`
+  source, including the configured provider and admin group. Legacy
+  `login-bootstrap` sources are also recognized as login-managed.
+- A new login or the existing refreshed-claim group check reconciles current
+  claims. Losing the admin group retires login-managed sources and removes
+  their super-admin membership and owned baseline admin tuples, including when the
+  user no longer passes the application admission group.
+- Independent active admin sources and `BOOTSTRAP_ADMIN_EMAILS` retain their
+  access. A failed tuple cleanup is retried on a later reconciliation even
+  when its provenance source was already marked removed.
+- Per-identity reconciliation and direct admin-grant changes use the shared
+  Mongo mutation lock across UI replicas. A newer demotion waits until an
+  in-flight promotion finishes; it cannot complete first and then be undone
+  by that promotion. Contention times out after ten seconds and is reported
+  as a failed reconciliation, rather than running without the lock.
+- Direct admin baseline tuples have separate login and independent ownership
+  in `admin_grant_ownership`. Manual grants through the tuple editor or shared
+  write adapter survive login demotion, even when added after promotion.
+- **Existing installations:** old direct grants have no reliable ownership
+  history. An existing unrecorded tuple is preserved and logged for operator
+  review; super-admin membership alone does not prove that login owns it.
+  Audit former admins' direct baseline tuples in the OpenFGA tuple editor.
+  Explicitly remove grants that were login-only. If that user is still an
+  eligible admin, the next login recreates the grant with recorded ownership.
+  Do not seed ownership from team membership alone.
+- Changes made directly to OpenFGA outside the shared application adapter do
+  not record ownership. Use the application tuple editor for manual grants.
+- Mutation locks do not expire automatically: an expired lease could allow a
+  stalled writer to restore privileges. If a UI process dies while holding a
+  lock, first stop that process and ensure its writes have drained, then remove
+  its `agent_mutation_locks` record (`_id: rbac-admin:<subject>`) and retry the
+  affected user's reconciliation. Never remove a live writer's lock.
+- Refreshed claims are rechecked on the existing four-hour interval. This is
+  not an immediate identity-provider logout or a background sweep of inactive
+  users. Current roles are also persisted during request identity bookkeeping;
+  a role transition bypasses its short write-deduplication window.
+
+### Broker account setup
 
 The default Keycloak "first broker login" flow shows a "Review Profile" page and, if a local account with the same email already exists, a "Confirm Link Account" page. **Both are eliminated** by the custom flow patched in by `init-idp.sh`:
 
@@ -1093,6 +1163,22 @@ every classification path (`bare_gateway_base`, `gateway_root_only`,
 no `_id` / no endpoint), and the customisable AgentGateway base URL.
 
 ---
+
+## Missing names on pre-provisioned accounts
+
+- Email-only bootstrap accounts gain missing first/last names on a fresh SSO
+  login when the upstream provider supplies structured name claims.
+- Broker session notes carry fresh profile values to the UI ID token without
+  changing provider-wide `IMPORT` behavior. Only blank stored fields are filled;
+  existing names and linked identities are preserved.
+- Name repair uses the authenticated subject, never an email lookup. It does
+  not create users or change admission, roles, groups, or grants. Failures do
+  not block sign-in. One three-second deadline cancels stalled credential,
+  lookup or update requests while retaining the current session name. Shared
+  admin-token refreshes used by other callers are independent. A later fresh
+  login can retry repair after re-reading the profile.
+- Existing accounts need both the updated Keycloak initialization and UI.
+  Refreshing an old session alone does not fetch a new upstream profile.
 
 ## 0.5.1 Schema Migration Tab
 

@@ -167,6 +167,7 @@ jobs:
               ],
               webex_bot: [
                 'ai_platform_engineering/integrations/webex_bot/**',
+                'ai_platform_engineering/integrations/slack_bot/utils/**',
                 'build/Dockerfile.webex-bot',
               ],
               rag: [

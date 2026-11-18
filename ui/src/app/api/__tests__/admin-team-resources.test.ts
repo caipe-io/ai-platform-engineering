@@ -60,11 +60,11 @@ jest.mock("@/lib/authz", () => ({
 jest.mock("@/lib/rbac/openfga", () => ({
   buildTeamResourceTupleDiff: (...a: unknown[]) => mockBuildTeamResourceTupleDiff(...a),
   checkOpenFgaTuple: (...a: unknown[]) => mockCheckOpenFgaTuple(...a),
-  TEAM_TOOL_WILDCARD_SENTINEL_OBJECT: "tool:*",
+  TEAM_TOOL_WILDCARD_SENTINEL_OBJECT: "tool:__all_mcp_servers_intent__",
   teamToolWildcardSentinelTuple: (slug: string) => ({
     user: `team:${slug}#member`,
     relation: "caller",
-    object: "tool:*",
+    object: "tool:__all_mcp_servers_intent__",
   }),
 }));
 
@@ -257,11 +257,11 @@ async function loadRoute() {
   jest.doMock("@/lib/rbac/openfga", () => ({
     buildTeamResourceTupleDiff: (...a: unknown[]) => mockBuildTeamResourceTupleDiff(...a),
     checkOpenFgaTuple: (...a: unknown[]) => mockCheckOpenFgaTuple(...a),
-    TEAM_TOOL_WILDCARD_SENTINEL_OBJECT: "tool:*",
+    TEAM_TOOL_WILDCARD_SENTINEL_OBJECT: "tool:__all_mcp_servers_intent__",
     teamToolWildcardSentinelTuple: (slug: string) => ({
       user: `team:${slug}#member`,
       relation: "caller",
-      object: "tool:*",
+      object: "tool:__all_mcp_servers_intent__",
     }),
   }));
   jest.doMock("@/lib/rbac/team-resource-listing", () => ({

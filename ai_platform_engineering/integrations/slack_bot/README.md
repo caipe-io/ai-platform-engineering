@@ -58,3 +58,20 @@ not construct a Bolt app, call the platform API, retry, sleep, or exit the proce
 - Put domain behavior tests beside the owning extracted module.
 - Keep application-boundary tests limited to construction, registration, and startup ordering.
 - Preserve Slack-visible text, routing precedence, retry behavior, authorization denials, and audit calls with characterization tests.
+
+## Optional Harness Gateway transport
+
+- Set `SLACK_HARNESS_GATEWAY_ENABLED=true` to admit durable Engine runs and
+  subscribe to their replayable AG-UI events through `CAIPE_API_URL` (the BFF).
+- Default: `false`. Webex has a separate `WEBEX_HARNESS_GATEWAY_ENABLED` switch.
+- Requires the BFF's Harness Engine configuration and an Engine-enabled agent.
+  This setting does not migrate native conversations or enable a runtime.
+- Explicit native/app bindings retain `/api/v1/chat/stream/start` dispatch;
+  permission failures and ambiguous admission errors never trigger fallback.
+- Applies to streaming chat and non-streaming `invoke`. HITL submissions retain
+  the existing BFF resume route.
+- Shared transport: `utils/harness_gateway.py`. Contract tests:
+  `tests/test_bot_harness_gateway.py` at repository root.
+
+See the [transport contract](../../../docs/docs/integrations/bot-harness-gateway.md)
+for Helm settings, reconnect behavior, authorization, and restart limitations.

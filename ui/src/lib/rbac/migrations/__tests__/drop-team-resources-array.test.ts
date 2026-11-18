@@ -6,7 +6,7 @@
  * array-only grant as its canonical OpenFGA tuple (belt-and-suspenders on top of
  * the universal backfill) and then `$unset`s the field. Key properties:
  *   - grant→tuple mapping mirrors deriveUniversalRebacPlan,
- *   - `tool_wildcard` survives as the `tool:*` intent sentinel,
+ *   - `tool_wildcard` survives as the `tool:__all_mcp_servers_intent__` intent sentinel,
  *   - invalid ids are skipped + warned, slugless teams unset without backfill,
  *   - re-run (no `resources` fields left) is a no-op.
  */
@@ -50,7 +50,7 @@ describe("computeDropTeamResourcesRewrites", () => {
       { user: "team:platform#member", relation: "reader", object: "knowledge_base:runbooks" },
       { user: "team:platform#member", relation: "user", object: "skill:triage" },
       { user: "team:platform#member", relation: "user", object: "task:nightly-sync" },
-      { user: "team:platform#member", relation: "caller", object: "tool:*" },
+      { user: "team:platform#member", relation: "caller", object: "tool:__all_mcp_servers_intent__" },
     ]);
   });
 
@@ -146,7 +146,7 @@ describe("applyDropTeamResourcesArrayMigration", () => {
 
     expect(writeTuples).toHaveBeenCalledWith([
       { user: "team:platform#member", relation: "user", object: "agent:github" },
-      { user: "team:platform#member", relation: "caller", object: "tool:*" },
+      { user: "team:platform#member", relation: "caller", object: "tool:__all_mcp_servers_intent__" },
     ]);
     expect(updateOne).toHaveBeenCalledTimes(1);
     const [filter, update] = updateOne.mock.calls[0];

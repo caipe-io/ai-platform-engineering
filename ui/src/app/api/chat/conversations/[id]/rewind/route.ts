@@ -1,3 +1,4 @@
+import { getPinnedHarnessGatewayTarget, getHarnessGatewayNativeThread, invokeHarnessGatewayRun } from "@/lib/harness-gateway";
 import { createAuthzTraceContext } from "@/lib/rbac/authz-tracing";
 import {
   successResponse,
@@ -165,7 +166,15 @@ export async function POST(
 
   let backendResponse: Response;
   try {
-    backendResponse = await fetch(backendUrl, {
+    const pinned = authResult.subject ? await getPinnedHarnessGatewayTarget(body.agent_id, authResult.subject, conversationId) : null;
+    if (pinned instanceof NextResponse) return pinned;
+    if (pinned?.kind === "dynamic_agents" && authResult.subject) {
+      backendUrl.pathname = `/api/v1/conversations/${await getHarnessGatewayNativeThread(body.agent_id, authResult.subject, conversationId)}/rewind`;
+    }
+    backendResponse = pinned?.kind === "harness_engine" ? await invokeHarnessGatewayRun({
+      command: "rewind", agent_id: body.agent_id, conversation_id: conversationId, turn_id: turnId,
+      rewind_data: { message_content: targetMessage.content, content_occurrence: contentOccurrence },
+    }, authResult) : await fetch(backendUrl, {
       method: "POST",
       headers: buildBackendHeaders("application/json", authResult),
       body: JSON.stringify({

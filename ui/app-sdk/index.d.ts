@@ -17,6 +17,10 @@ export interface NativeExtensionBreadcrumb {
 }
 
 export interface NativeExtensionProps {
+  /** Opens the host-owned form for this extension and its registered component handler. */
+  feedback?: { open: (options?: { feature?: string; appContext?: Record<string, string>;
+    onBeforeSubmit?: (request: { description: string; issueType?: "Bug" | "Enhancement" }) => Promise<{ feedbackType: "like" | "dislike"; reason: string; additionalFeedback?: string }>;
+  }) => void };
   apiBasePath: string;
   pathname: string;
   search: string;

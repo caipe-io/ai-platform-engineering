@@ -1,10 +1,12 @@
 "use client";
 
+import { AssistantConnectionGuidance } from "./AssistantConnectionGuidance";
 import { FileText, LoaderCircle, MessageCircle, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AssistantOptions, AssistantConfiguration } from "../../../app-sdk/assistant-options.mjs";
 import { useAssistantComposerOptions } from "./AssistantComposerOptions";
+import { useAssistantDockMotion } from "@/hooks/use-assistant-dock-motion";
 import { AssistantConversationToolbar } from "./AssistantConversationToolbar";
 import HostConversationActions from "@/native-extensions/HostConversationActions";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -78,13 +80,15 @@ export function AgenticAppAssistantOverlay({
   const containerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const launcherRef = useRef<HTMLButtonElement>(null);
+  const renderPanel = useAssistantDockMotion(open, appId === "tome", panelRef, launcherRef);
   const resizeRef = useRef<{ pointerId: number; x: number; y: number; width: number; height: number; maxWidth: number; maxHeight: number } | null>(null);
   const [historyRevision, setHistoryRevision] = useState(0);
-  const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration);
   const [assistantConversation, setAssistantConversation] = useState<{
     key: string;
     id: string;
   } | null>(null);
+  const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration,
+    `${appId}:${assistantAgentId}:${assistantConversation?.id ?? ""}`);
   const [conversationError, setConversationError] = useState<{
     key: string;
     message: string;
@@ -354,7 +358,7 @@ export function AgenticAppAssistantOverlay({
 
   return (
     <div ref={containerRef} className="pointer-events-none fixed inset-x-4 bottom-4 top-18 z-40 flex min-h-0 flex-col items-end justify-end gap-3 sm:inset-x-6 sm:bottom-6" style={{ bottom: configuration?.bottomInset }}>
-      {open ? (
+      {renderPanel ? (
         <Tabs value={view} onValueChange={value => setView(value as typeof view)} asChild>
         <section
           ref={panelRef}
@@ -376,19 +380,22 @@ export function AgenticAppAssistantOverlay({
               variant="title" conversationTitle={selectedTitle} disabled={conversationActionPending}
               onHistoryChange={() => setHistoryRevision(value => value + 1)} onArchived={() => onArchived(assistantConversation.id)} />
               : <h2 className="min-w-0 truncate text-sm font-semibold">New chat</h2>}
-            <AssistantConversationToolbar
-              viewTabs={<TabsList aria-label={`${bubbleLabel} views`} indicator="none" className="h-8 w-fit shrink-0 overflow-hidden border border-foreground/30 bg-transparent p-0">
-                <TabsTrigger value="chat" className="h-full rounded-none px-4 py-1 data-[state=active]:bg-foreground data-[state=active]:text-background">Chat</TabsTrigger>
-                <TabsTrigger value="history" className="h-full rounded-none border-l border-foreground/30 px-4 py-1 data-[state=active]:bg-foreground data-[state=active]:text-background">History</TabsTrigger>
-              </TabsList>}
-              menuOpen={displayMenuOpen} onMenuOpenChange={setDisplayMenuOpen}
-              expanded={expanded} pending={conversationActionPending}
-              canStart={view === "history" || hasSelectedConversation}
-              onNewChat={() => void handleNewChat()}
-              onExpand={() => setExpanded(true)} onResetSize={() => { setExpanded(false); setPanelSize(defaultSize); }}
-              chatHref={hasSelectedConversation && assistantConversation ? `/chat/${encodeURIComponent(assistantConversation.id)}` : undefined}
-              onMinimize={() => onOpenChange(false)} />
+            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+              <AssistantConnectionGuidance appId={appId} />
+              <AssistantConversationToolbar
+                menuOpen={displayMenuOpen} onMenuOpenChange={setDisplayMenuOpen}
+                expanded={expanded} pending={conversationActionPending}
+                canStart={view === "history" || hasSelectedConversation}
+                onNewChat={() => void handleNewChat()}
+                onExpand={() => setExpanded(true)} onResetSize={() => { setExpanded(false); setPanelSize(defaultSize); }}
+                chatHref={hasSelectedConversation && assistantConversation ? `/chat/${encodeURIComponent(assistantConversation.id)}` : undefined}
+                onMinimize={() => onOpenChange(false)} />
+            </div>
           </header>
+          <TabsList aria-label={`${bubbleLabel} views`} indicator="underline" className="h-11 w-full shrink-0 justify-start gap-3 rounded-none border-b border-border bg-background px-4 py-0">
+            <TabsTrigger value="chat" className="h-full rounded-none px-1">Chat</TabsTrigger>
+            <TabsTrigger value="history" className="h-full rounded-none px-1">History</TabsTrigger>
+          </TabsList>
           {activeContext?.summary && view === "chat" ? (
             <div role="note" aria-label="Attached page context" className="flex items-start gap-2 border-b border-border bg-muted/30 px-4 py-2 text-xs">
               <FileText className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
@@ -427,6 +434,7 @@ export function AgenticAppAssistantOverlay({
                 requestOptions={requestOptions} composerHeader={composerHeader}
                 placeholder={options?.presentation?.placeholder ?? `${bubbleLabel}…`}
                 emptyStateTitle={bubbleLabel}
+                showAgentHeader={false}
                 showAuditNotice={options?.presentation?.showAuditNotice}
                 feedbackPrompt={options?.presentation?.feedbackPrompt}
                 clientContext={clientContext}
@@ -449,6 +457,7 @@ export function AgenticAppAssistantOverlay({
       <button
         ref={launcherRef}
         type="button"
+        aria-expanded={open}
         aria-label={`Open ${bubbleLabel}`}
         className="pointer-events-auto inline-flex shrink-0 items-center gap-2 rounded-full border border-cyan-200/30 bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 shadow-lg shadow-cyan-950/30 transition hover:bg-cyan-200"
         onClick={() => onOpenChange(!open)}

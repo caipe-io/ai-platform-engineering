@@ -16,9 +16,12 @@ services:
   ####################################################################################################
 
   # Official GitHub MCP server for all-in-one mode.
+  # The image defaults to stdio, which exits as soon as stdin closes in a detached container.
+  # Run the http subcommand to serve streamable HTTP on port 8082.
   github-mcp-server:
     image: ghcr.io/github/github-mcp-server:latest
     container_name: github-mcp-server
+    command: ["http", "--port", "8082"]
     environment:
       - GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_PERSONAL_ACCESS_TOKEN}
     ports: ["18000:8082"]
@@ -27,7 +30,7 @@ services:
       - mcp-servers
 
   mcp-backstage:
-    image: ghcr.io/cnoe-io/mcp-backstage:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-backstage:${IMAGE_TAG:-1.3.6}
     container_name: mcp-backstage
     env_file: [.env]
     ports: ["18001:8000"]
@@ -49,7 +52,7 @@ services:
   # ArgoCD MCP
 
   mcp-argocd:
-    image: ghcr.io/cnoe-io/mcp-argocd:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-argocd:${IMAGE_TAG:-1.3.6}
     container_name: mcp-argocd
     env_file: [.env]
     ports: ["18002:8000"]
@@ -87,7 +90,7 @@ services:
   # Jira MCP
 
   mcp-jira:
-    image: ghcr.io/cnoe-io/mcp-jira:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-jira:${IMAGE_TAG:-1.3.6}
     container_name: mcp-jira
     env_file: [.env]
     ports: ["18004:8000"]
@@ -109,7 +112,7 @@ services:
   # Komodor MCP
 
   mcp-komodor:
-    image: ghcr.io/cnoe-io/mcp-komodor:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-komodor:${IMAGE_TAG:-1.3.6}
     container_name: mcp-komodor
     env_file: [.env]
     ports: ["18005:8000"]
@@ -130,7 +133,7 @@ services:
   # PagerDuty MCP
 
   mcp-pagerduty:
-    image: ghcr.io/cnoe-io/mcp-pagerduty:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-pagerduty:${IMAGE_TAG:-1.3.6}
     container_name: mcp-pagerduty
     env_file: [.env]
     ports: ["18006:8000"]
@@ -180,7 +183,7 @@ services:
   # Splunk
 
   mcp-splunk:
-    image: ghcr.io/cnoe-io/mcp-splunk:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-splunk:${IMAGE_TAG:-1.3.6}
     container_name: mcp-splunk
     env_file: [.env]
     ports: ["18008:8000"]
@@ -202,7 +205,7 @@ services:
   # Webex
 
   mcp-webex:
-    image: ghcr.io/cnoe-io/mcp-webex:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-webex:${IMAGE_TAG:-1.3.6}
     container_name: mcp-webex
     env_file: [.env]
     ports: ["18009:8000"]
@@ -224,7 +227,7 @@ services:
   # NetUtils MCP
 
   mcp-netutils:
-    image: ghcr.io/cnoe-io/mcp-netutils:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/mcp-netutils:${IMAGE_TAG:-1.3.6}
     container_name: mcp-netutils
     env_file: [.env]
     ports: ["18011:8000"]
@@ -247,7 +250,7 @@ services:
   # site-specific Graph grant. It is intentionally excluded from mcp-servers so
   # the credential-free OSS first-install path remains runnable.
   mcp-sharepoint:
-    image: ghcr.io/cnoe-io/mcp-sharepoint:${IMAGE_TAG:-0.5.16}
+    image: ghcr.io/caipe-io/mcp-sharepoint:${IMAGE_TAG:-1.3.6}
     container_name: mcp-sharepoint
     env_file: [.env]
     ports: ["18014:8000"]
@@ -361,7 +364,7 @@ services:
   #   - Configure via MONGODB_* environment variables
   #   - See mongodb service configuration above
   caipe-ui:
-    image: ghcr.io/cnoe-io/caipe-ui:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-ui:${IMAGE_TAG:-1.3.6}
     container_name: caipe-ui
     ports: ["3000:3000"]
     env_file:
@@ -370,7 +373,7 @@ services:
       - NODE_ENV=production
       # Safe release metadata shown by System Health. A specific
       # PLATFORM_COMPONENT_VERSION_* value may override this shared tag.
-      - CAIPE_RELEASE_VERSION=${IMAGE_TAG:-0.5.66}
+      - CAIPE_RELEASE_VERSION=${IMAGE_TAG:-1.3.6}
       # Pass the active Compose profile set through to the UI so product
       # health can show profile-enabled integrations as degraded/down even
       # when their container crashes before serving traffic.
@@ -411,6 +414,9 @@ services:
       - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET:-}
       - OIDC_DISCOVERY_URL=${OIDC_DISCOVERY_URL:-}
       - OIDC_TOKEN_ENDPOINT=${OIDC_TOKEN_ENDPOINT:-}
+      # Keycloak user tokens target the platform resource server, while the
+      # browser client uses caipe-ui. Keep both audiences valid for BFF OBO.
+      - OIDC_ACCEPTED_AUDIENCES=${OIDC_ACCEPTED_AUDIENCES:-caipe-platform}
       - OIDC_GROUP_CLAIM=${OIDC_GROUP_CLAIM:-}
       - OIDC_REQUIRED_GROUP=${OIDC_REQUIRED_GROUP:-}
       - OIDC_REQUIRED_ADMIN_GROUP=${OIDC_REQUIRED_ADMIN_GROUP:-}
@@ -426,26 +432,35 @@ services:
       - KEYCLOAK_ADMIN_CLIENT_ID=${KEYCLOAK_ADMIN_CLIENT_ID:-caipe-platform}
       - KEYCLOAK_ADMIN_CLIENT_SECRET=${KEYCLOAK_ADMIN_CLIENT_SECRET:-caipe-platform-dev-secret}
       # Workflow runner - set WORKFLOW_RUNNER_ENABLED=true to show Run Workflow button and Multi-Step Workflows
-      - WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED:-false}
+      - WORKFLOW_RUNNER_ENABLED=${WORKFLOW_RUNNER_ENABLED:-true}
       # Projects - set PROJECTS_ENABLED=true to show the Projects workspace
       - PROJECTS_ENABLED=${PROJECTS_ENABLED:-false}
       # Top-level workflows and schedules are independent, opt-in navigation surfaces.
-      - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-false}
-      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-false}
+      - WORKFLOWS_ENABLED=${WORKFLOWS_ENABLED:-true}
+      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
       - SCHEDULER_ADMIN_ONLY=${SCHEDULER_ADMIN_ONLY:-false}
-      - DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED:-false}
+      - SCHEDULER_URL=${SCHEDULER_URL:-http://caipe-scheduler:8080}
+      - SCHEDULER_SERVICE_TOKEN=${SCHEDULER_SERVICE_TOKEN:-caipe-scheduler-local-token}
+      - DYNAMIC_AGENTS_ENABLED=${DYNAMIC_AGENTS_ENABLED:-true}
+      - SETUP_WIZARD_ENABLED=${SETUP_WIZARD_ENABLED:-true}
       # Compact header shortcut that reuses the existing feedback dialog.
       - PROVIDE_FEEDBACK_ENABLED=${PROVIDE_FEEDBACK_ENABLED:-false}
       - DYNAMIC_AGENTS_URL=${DYNAMIC_AGENTS_URL:-http://dynamic-agents:8001}
-      # Connections & Secrets. Docker Compose reads provider bootstrap values
-      # from .env; Kubernetes deployments use ESO to inject the same env names.
-      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-false}
+      - HARNESS_ENGINE_URL=${HARNESS_ENGINE_URL:-http://harness-engine:8010}
+      - HARNESS_ENGINE_INTERNAL_TOKEN=${HARNESS_ENGINE_INTERNAL_TOKEN:-}
+      # Connections & Secrets. The local Compose install exposes the credential
+      # workspace by default so users can configure OAuth connectors. Kubernetes
+      # deployments should inject production values from their secret store.
+      - CAIPE_CREDENTIALS_ENABLED=${CAIPE_CREDENTIALS_ENABLED:-true}
       - CREDENTIAL_STORE_BACKEND=${CREDENTIAL_STORE_BACKEND:-mongodb-envelope}
       - CREDENTIAL_KEY_PROVIDER=${CREDENTIAL_KEY_PROVIDER:-local-cmk}
       - CREDENTIAL_KMS_CMK_ID=${CREDENTIAL_KMS_CMK_ID:-}
       - CREDENTIAL_KMS_REGION=${CREDENTIAL_KMS_REGION:-}
+      # Local-only prod-image escape hatches. Use AWS KMS in production.
+      - CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP=${CREDENTIAL_ALLOW_INSECURE_LOCAL_KEY_WRAP:-true}
+      - CREDENTIAL_ALLOW_LOCALHOST_OAUTH_REDIRECTS=${CREDENTIAL_ALLOW_LOCALHOST_OAUTH_REDIRECTS:-true}
       - CREDENTIAL_SERVICE_AUDIENCE=${CREDENTIAL_SERVICE_AUDIENCE:-caipe-credential-service}
-      - CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS=${CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS:-false}
+      - CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS=${CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS:-true}
       - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID:-}
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-}
@@ -461,20 +476,31 @@ services:
       # group, or set ALLOW_DEV_ADMIN_WHEN_SSO_DISABLED=true ONLY for local dev.
       - ENABLE_AUTONOMOUS_AGENTS=${ENABLE_AUTONOMOUS_AGENTS:-false}
       - AUTONOMOUS_AGENTS_URL=${AUTONOMOUS_AGENTS_URL:-http://autonomous-agents:8002}
+      # External Apps are available in Compose through the deployment-owned
+      # catalog mounted below. The catalog is empty by default and can be
+      # populated without rebuilding the UI image.
+      - AGENTIC_APPS_INSTALL_ENABLED=${AGENTIC_APPS_INSTALL_ENABLED:-true}
+      - AGENTIC_APPS_CONFIG_PATH=/app/config/agentic-apps.yaml
+      - AGENTIC_APP_TOKEN_SECRET=${AGENTIC_APP_TOKEN_SECRET:-local-agentic-app-token-secret-change-me}
       # Audit log storage is owned by the lightweight Python audit-service.
       - AUDIT_LOG_BACKEND=${AUDIT_LOG_BACKEND:-service}
       - AUDIT_SERVICE_URL=${AUDIT_SERVICE_URL:-http://audit-service:8010}
       - APP_CONFIG_PATH=/app/config/app-config.yaml
     volumes:
+      - harness_token:/run/harness-engine:ro
+      - ./deploy/harness-engine/run-with-token.sh:/opt/harness/run-with-token.sh:ro
       - ${CAIPE_APP_CONFIG_FILE:-${APP_CONFIG_FILE:-./config/app-config.yaml}}:/app/config/app-config.yaml:ro
+      - ${AGENTIC_APPS_CONFIG_FILE:-./config/agentic-apps.yaml}:/app/config/agentic-apps.yaml:ro
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
-    command: /app/entrypoint.sh
+    command: ["/bin/sh", "/opt/harness/run-with-token.sh", "/app/entrypoint.sh"]
     depends_on:
+      harness-token-init:
+        condition: service_completed_successfully
       audit-service:
         condition: service_healthy
         required: false
@@ -491,7 +517,7 @@ services:
     build:
       context: .
       dockerfile: build/Dockerfile.audit-service
-    image: ghcr.io/cnoe-io/caipe-audit-service:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-audit-service:${IMAGE_TAG:-1.3.6}
     container_name: audit-service
     ports:
       - "127.0.0.1:${AUDIT_SERVICE_PORT:-8010}:8010"
@@ -542,7 +568,7 @@ services:
   #                                      RAG Services                                                #
   ####################################################################################################
   rag-server:
-    image: ghcr.io/cnoe-io/caipe-rag-server:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-rag-server:${IMAGE_TAG:-1.3.6}
     container_name: rag-server
     # Network alias keeps the legacy `rag_server` hostname working for any
     # client that still has it hardcoded. AGW's hickory-dns resolver rejects
@@ -568,7 +594,16 @@ services:
       - ONTOLOGY_AGENT_RESTAPI_ADDR=http://agent_ontology:8098
       - ENABLE_GRAPH_RAG=${ENABLE_GRAPH_RAG:-true}
       - CLEANUP_INTERVAL=86400
+      - EMBEDDINGS_PROVIDER=${EMBEDDINGS_PROVIDER:-openai}
       - EMBEDDINGS_MODEL=${EMBEDDINGS_MODEL:-text-embedding-3-large}
+      # Keep credentials supplied through the invoking environment so a
+      # first-install .env never needs to contain a secret placeholder.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-${OPENAI_ENDPOINT:-https://api.openai.com/v1}}
+      - OPENAI_ENDPOINT=${OPENAI_ENDPOINT:-https://api.openai.com/v1}
+      - OPENAI_MODEL_NAME=${OPENAI_MODEL_NAME:-gpt-4o}
+      - LITELLM_API_BASE=${LITELLM_API_BASE:-${OPENAI_ENDPOINT:-https://api.openai.com/v1}}
+      - LITELLM_API_KEY=${LITELLM_API_KEY:-${OPENAI_API_KEY:-}}
       - OPENFGA_HTTP=${OPENFGA_HTTP:-http://openfga:8080}
       - OPENFGA_STORE_NAME=${OPENFGA_STORE_NAME:-caipe-openfga}
       - CAIPE_UNSAFE_RBAC_BYPASS=${CAIPE_UNSAFE_RBAC_BYPASS:-false}
@@ -593,8 +628,65 @@ services:
   #
   # Ports:
   #   - 8100: Dynamic Agents API (proxied via UI at /api/dynamic-agents)
+  # Portable execution backends, available with the standard agent profile.
+  # Provider profiles stay empty until an operator configures credentials/targets.
+  # Persist a private per-install credential before either consumer starts.
+  harness-token-init:
+    image: ghcr.io/caipe-io/caipe-harness-engine:${HARNESS_ENGINE_IMAGE_TAG:-1.3.7-rc.7}
+    command: ["python", "/opt/harness/init-token.py"]
+    environment:
+      HARNESS_ENGINE_INTERNAL_TOKEN: ${HARNESS_ENGINE_INTERNAL_TOKEN:-}
+    network_mode: none
+    read_only: true
+    mem_limit: 64m
+    pids_limit: 32
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - harness_token:/workspace
+      - ./deploy/harness-engine/init-token.py:/opt/harness/init-token.py:ro
+    profiles: [dynamic-agents, harness-engine, caipe-ui, caipe-ui-prod]
+
+  harness-engine:
+    image: ghcr.io/caipe-io/caipe-harness-engine:${HARNESS_ENGINE_IMAGE_TAG:-1.3.7-rc.7}
+    build:
+      context: .
+      dockerfile: ai_platform_engineering/harness_engine/build/Dockerfile
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 128
+    command: ["/bin/sh", "/opt/harness/run-with-token.sh", "python", "-m", "harness_engine.main"]
+    volumes:
+      - harness_workspace:/workspace
+      - harness_token:/run/harness-engine:ro
+      - ./deploy/harness-engine/run-with-token.sh:/opt/harness/run-with-token.sh:ro
+    depends_on:
+      harness-token-init:
+        condition: service_completed_successfully
+    env_file: [.env]
+    environment:
+      HARNESS_ENGINE_INTERNAL_TOKEN: ${HARNESS_ENGINE_INTERNAL_TOKEN:-}
+      HARNESS_ENGINE_STORAGE_BACKEND: mongodb
+      HARNESS_ENGINE_MONGODB_URI: ${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/harness_engine?authSource=admin}
+      HARNESS_ENGINE_MONGODB_DATABASE: harness_engine
+      HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON: ${HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON:-{}}
+      HARNESS_ENGINE_AGENTCORE_RUNTIMES_JSON: ${HARNESS_ENGINE_AGENTCORE_RUNTIMES_JSON:-{}}
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles: [dynamic-agents, harness-engine]
+
   dynamic-agents:
-    image: ghcr.io/cnoe-io/caipe-dynamic-agents:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-dynamic-agents:${IMAGE_TAG:-1.3.6}
     container_name: dynamic-agents
     ports: ["8100:8001"]
     volumes:
@@ -607,6 +699,10 @@ services:
       - AWS_BEDROCK_STREAMING=${AWS_BEDROCK_STREAMING:-false}
       - AWS_BEDROCK_USE_CONVERSE_API=${AWS_BEDROCK_USE_CONVERSE_API:-true}
       - AWS_BEDROCK_BASE_MODEL_ID=${AWS_BEDROCK_BASE_MODEL_ID:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-${OPENAI_ENDPOINT:-https://api.openai.com/v1}}
+      - OPENAI_ENDPOINT=${OPENAI_ENDPOINT:-https://api.openai.com/v1}
+      - OPENAI_MODEL_NAME=${OPENAI_MODEL_NAME:-gpt-4o}
       # MongoDB (same as CAIPE UI)
       - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
       - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
@@ -645,6 +741,43 @@ services:
       - dynamic-agents
 
   ####################################################################################################
+  #                                     Scheduler Service                                           #
+  ####################################################################################################
+  # The Compose backend runs schedule dispatch in-process and does not require
+  # a Kubernetes API. Kubernetes installs use the chart's CronJob backend.
+  caipe-scheduler:
+    image: ghcr.io/caipe-io/caipe-scheduler:${SCHEDULER_IMAGE_TAG:-1.1.1}
+    container_name: caipe-scheduler
+    env_file: [.env]
+    environment:
+      - SCHEDULER_BACKEND=${SCHEDULER_BACKEND:-local}
+      - SCHEDULER_SERVICE_TOKEN=${SCHEDULER_SERVICE_TOKEN:-caipe-scheduler-local-token}
+      - SCHEDULER_JWT_JWKS_URL=${SCHEDULER_JWT_JWKS_URL:-http://keycloak:7080/realms/caipe/protocol/openid-connect/certs}
+      - SCHEDULER_JWT_ISSUER=${SCHEDULER_JWT_ISSUER:-${OIDC_ISSUER:-http://localhost:7080/realms/caipe}}
+      - SCHEDULER_JWT_AUDIENCES=${SCHEDULER_JWT_AUDIENCES:-caipe-platform}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://${MONGODB_ROOT_USERNAME:-admin}:${MONGODB_ROOT_PASSWORD:-changeme}@caipe-mongodb:27017/${MONGODB_DATABASE:-caipe}?authSource=admin}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-caipe}
+      - CAIPE_API_URL=${SCHEDULER_CAIPE_API_URL:-http://caipe-ui:3000}
+      - CAIPE_CHAT_PATH=/api/v1/chat/invoke
+      - SCHEDULER_INTERNAL_URL=http://caipe-scheduler:8080
+    depends_on:
+      caipe-mongodb:
+        condition: service_healthy
+        required: false
+      keycloak:
+        condition: service_started
+        required: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    profiles:
+      - dynamic-agents
+
+  ####################################################################################################
   #                                    Autonomous Agents Service                                     #
   ####################################################################################################
   # Autonomous Agents - Standalone scheduler that fires tasks (cron / interval / webhook)
@@ -660,7 +793,7 @@ services:
   # Ports:
   #   - 8002: Autonomous Agents API (proxied via UI at /api/autonomous, admin-only)
   autonomous-agents:
-    image: ghcr.io/cnoe-io/caipe-autonomous-agents:${IMAGE_TAG:-0.2.36}
+    image: ghcr.io/caipe-io/caipe-autonomous-agents:${IMAGE_TAG:-1.3.6}
     container_name: autonomous-agents
     # Bind to loopback only -- the FastAPI service has no auth layer of
     # its own; auth and admin gating live in the UI's /api/autonomous
@@ -722,7 +855,7 @@ services:
       - autonomous-agents
 
   agent_ontology:
-    image: ghcr.io/cnoe-io/caipe-rag-agent-ontology:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-rag-agent-ontology:${IMAGE_TAG:-1.3.6}
     container_name: agent_ontology
     ports: ["8098:8098"]
     environment:
@@ -741,7 +874,7 @@ services:
 
 
   web_ingestor:
-    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-rag-ingestors:${IMAGE_TAG:-1.3.6}
     container_name: web-ingestor
     environment:
       - INGESTOR_TYPE=webloader
@@ -759,7 +892,7 @@ services:
       - web_ingestor
 
   jira_ingestor:
-    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-rag-ingestors:${IMAGE_TAG:-1.3.6}
     container_name: jira-ingestor
     environment:
       - INGESTOR_TYPE=jira
@@ -778,7 +911,7 @@ services:
       - jira-ingestor
 
   confluence_ingestor:
-    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-rag-ingestors:${IMAGE_TAG:-1.3.6}
     container_name: confluence-ingestor
     environment:
       - INGESTOR_TYPE=confluence
@@ -799,7 +932,7 @@ services:
       - confluence-ingestor
 
   slack_ingestor:
-    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-rag-ingestors:${IMAGE_TAG:-1.3.6}
     container_name: slack-ingestor
     environment:
       - INGESTOR_TYPE=slack
@@ -821,7 +954,7 @@ services:
       - slack-ingestor
 
   webex_ingestor:
-    image: ghcr.io/cnoe-io/caipe-rag-ingestors:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-rag-ingestors:${IMAGE_TAG:-1.3.6}
     container_name: webex-ingestor
     environment:
       - INGESTOR_TYPE=webex
@@ -937,7 +1070,7 @@ services:
       - graph_rag
 
   milvus-minio:
-    image: quay.io/minio/minio:RELEASE.2024-05-28T17-19-04Z
+    image: milvusdb/minio:RELEASE.2024-12-18T13-15-44Z
     container_name: milvus-minio
     environment:
       - MINIO_ACCESS_KEY=minioadmin
@@ -1011,7 +1144,7 @@ services:
         condition: service_healthy
       langfuse-clickhouse:
         condition: service_healthy
-    ports: ["3000:3000"]
+    ports: ["${LANGFUSE_PORT:-3001}:3000"]
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@langfuse-postgres:5432/postgres
       - SALT=mysalt
@@ -1038,7 +1171,7 @@ services:
       - LANGFUSE_S3_MEDIA_UPLOAD_PREFIX=media/
       - REDIS_HOST=langfuse-redis
       - REDIS_AUTH=myredissecret
-      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_URL=http://localhost:${LANGFUSE_PORT:-3001}
       - NEXTAUTH_SECRET=mysecret
     profiles:
       - tracing
@@ -1066,8 +1199,10 @@ services:
       - tracing
 
   langfuse-minio:
-    image: quay.io/minio/minio
+    image: cgr.dev/chainguard/minio
     container_name: langfuse-minio
+    # Keep root: existing langfuse_minio_data volumes are root-owned.
+    user: "0:0"
     restart: always
     entrypoint: sh
     command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
@@ -1125,11 +1260,12 @@ services:
   #                                 Slack Bot Integration                                            #
   ####################################################################################################
   slack-bot:
-    image: ghcr.io/cnoe-io/caipe-slack-bot:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-slack-bot:${IMAGE_TAG:-1.3.6}
     container_name: slack-bot
     env_file: [.env]
     ports: ["8030:3000"]
     environment:
+      - SLACK_HARNESS_GATEWAY_ENABLED=${SLACK_HARNESS_GATEWAY_ENABLED:-false}
       - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
       - MONGODB_URI=${MONGODB_URI:-}
       - CAIPE_UI_BASE_URL=${CAIPE_UI_BASE_URL:-http://localhost:3000}
@@ -1162,11 +1298,12 @@ services:
   #                                 Webex Bot Integration                                            #
   ####################################################################################################
   webex-bot:
-    image: ghcr.io/cnoe-io/caipe-webex-bot:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/caipe-webex-bot:${IMAGE_TAG:-1.3.6}
     container_name: webex-bot
     env_file: [.env]
     ports: ["8032:3002"]
     environment:
+      - WEBEX_HARNESS_GATEWAY_ENABLED=${WEBEX_HARNESS_GATEWAY_ENABLED:-false}
       - CAIPE_API_URL=${CAIPE_API_URL:-http://caipe-ui:3000}
       - MONGODB_URI=${MONGODB_URI:-}
       - CAIPE_UI_BASE_URL=${CAIPE_UI_BASE_URL:-http://localhost:3000}
@@ -1581,7 +1718,7 @@ services:
     build:
       context: ./deploy/agentgateway
       dockerfile: Dockerfile.config-bridge
-    image: ghcr.io/cnoe-io/agentgateway-config-bridge:${IMAGE_TAG:-0.5.66}
+    image: ghcr.io/caipe-io/agentgateway-config-bridge:${IMAGE_TAG:-1.3.6}
     container_name: agentgateway-config-bridge
     restart: unless-stopped
     read_only: true
@@ -1676,6 +1813,8 @@ services:
 
 
 volumes:
+  harness_workspace:
+  harness_token:
   mongodb_data:
     driver: local
   mongodb_config:

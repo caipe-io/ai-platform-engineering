@@ -64,6 +64,8 @@ export interface Config {
   gradientTo: string;
   /** Logo style: "default" (original colors) or "white" (inverted) */
   logoStyle: 'default' | 'white';
+  /** Themed inline SVG logo: true for any built-in logo, false never, null (unset) only for the grid logo */
+  logoThemed: boolean | null;
   /** Spinner/loading indicator color (CSS color value) */
   spinnerColor: string | null;
   /** Whether to show "Powered by OSS caipe.io" footer */
@@ -112,6 +114,8 @@ export interface Config {
    * Set DYNAMIC_AGENTS_ENABLED=true to enable.
    */
   dynamicAgentsEnabled: boolean;
+  /** Whether first-install admins are automatically offered the guided setup wizard. */
+  setupWizardEnabled: boolean;
   /**
    * Whether the admin Feedback tab and feedback API are enabled.
    * Enabled by default. Set FEEDBACK_ENABLED=false to disable.
@@ -167,6 +171,8 @@ export interface Config {
   schedulerEnabled: boolean;
   /** Whether the Schedules navigation tab is limited to administrators */
   schedulerAdminOnly: boolean;
+  /** Whether verbose browser-console debug logging is enabled (off unless UI_DEBUG_LOGGING is enabled; server-side runtime env) */
+  uiDebugLogging: boolean;
   /** Whether Jira ticket creation from feedback/report is enabled */
   jiraTicketEnabled: boolean;
   /** Jira project key for ticket creation (e.g., "OPENSD") */
@@ -233,7 +239,7 @@ const DEFAULT_GRADIENT_THEME = 'default';
 const VALID_FONT_SIZES = ['small', 'medium', 'large', 'x-large'];
 const VALID_FONT_FAMILIES = ['inter', 'source-sans', 'ibm-plex', 'system'];
 const VALID_THEMES = ['light', 'legacy-light', 'dark', 'system', 'midnight', 'nord', 'tokyo', 'cyberpunk', 'tron', 'matrix'];
-const VALID_GRADIENT_THEMES = ['default', 'minimal', 'professional', 'ocean', 'sunset', 'cyberpunk', 'tron', 'matrix'];
+const VALID_GRADIENT_THEMES = ['default', 'neon', 'minimal', 'professional', 'ocean', 'sunset', 'cyberpunk', 'tron', 'matrix'];
 
 /** Default config used as client fallback before the layout script executes. */
 const DEFAULT_CONFIG: Config = {
@@ -253,6 +259,7 @@ const DEFAULT_CONFIG: Config = {
   gradientFrom: DEFAULT_GRADIENT_FROM,
   gradientTo: DEFAULT_GRADIENT_TO,
   logoStyle: 'default',
+  logoThemed: null,
   spinnerColor: null,
   showPoweredBy: true,
   supportEmail: DEFAULT_SUPPORT_EMAIL,
@@ -267,6 +274,7 @@ const DEFAULT_CONFIG: Config = {
   workflowsEnabled: false,
   projectsEnabled: false,
   dynamicAgentsEnabled: false,
+  setupWizardEnabled: true,
   feedbackEnabled: true,
   allowBuiltinSkillMutation: false,
   auditLogsEnabled: false,
@@ -282,6 +290,7 @@ const DEFAULT_CONFIG: Config = {
   scheduleEditorAgentId: null,
   schedulerEnabled: false,
   schedulerAdminOnly: false,
+  uiDebugLogging: false,
   agentProtocol: 'agui',
   reportProblemEnabled: true,
   provideFeedbackEnabled: false,
@@ -379,6 +388,7 @@ export function getServerConfig(): Config {
   const workflowsEnabled = env('WORKFLOWS_ENABLED') === 'true';
   const projectsEnabled = env('PROJECTS_ENABLED') === 'true';
   const dynamicAgentsEnabled = env('DYNAMIC_AGENTS_ENABLED') === 'true';
+  const setupWizardEnabled = env('SETUP_WIZARD_ENABLED') !== 'false';
   const feedbackEnabled = env('FEEDBACK_ENABLED') !== 'false';
   // Default `false` (locked). Must mirror the server-side check in
   // `lib/builtin-skill-policy.ts` so the UI never offers an action
@@ -437,6 +447,8 @@ export function getServerConfig(): Config {
 
   const logoStyleEnv = env('LOGO_STYLE');
   const logoStyle: 'default' | 'white' = logoStyleEnv === 'white' ? 'white' : 'default';
+  const logoThemedEnv = env('LOGO_THEMED');
+  const logoThemed = logoThemedEnv === 'true' ? true : logoThemedEnv === 'false' ? false : null;
 
   return {
     ragUrl,
@@ -455,6 +467,7 @@ export function getServerConfig(): Config {
     gradientFrom: env('GRADIENT_FROM') || DEFAULT_GRADIENT_FROM,
     gradientTo: env('GRADIENT_TO') || DEFAULT_GRADIENT_TO,
     logoStyle,
+    logoThemed,
     spinnerColor: env('SPINNER_COLOR') || null,
     showPoweredBy,
     supportEmail: env('SUPPORT_EMAIL') || DEFAULT_SUPPORT_EMAIL,
@@ -469,6 +482,7 @@ export function getServerConfig(): Config {
     workflowsEnabled,
     projectsEnabled,
     dynamicAgentsEnabled,
+    setupWizardEnabled,
     feedbackEnabled,
     allowBuiltinSkillMutation,
     auditLogsEnabled,
@@ -484,6 +498,7 @@ export function getServerConfig(): Config {
     scheduleEditorAgentId: env('SCHEDULE_EDITOR_AGENT_ID') || null,
     schedulerEnabled: env('SCHEDULER_ENABLED') === 'true',
     schedulerAdminOnly: env('SCHEDULER_ADMIN_ONLY') === 'true',
+    uiDebugLogging: enabledEnv('UI_DEBUG_LOGGING'),
     agentProtocol,
     reportProblemEnabled,
     provideFeedbackEnabled,

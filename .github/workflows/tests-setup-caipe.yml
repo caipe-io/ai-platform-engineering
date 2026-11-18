@@ -59,6 +59,9 @@ jobs:
       - name: Run fresh-install defaults regression tests
         run: /bin/bash tests/integration/test_setup_caipe_fresh_install_defaults.sh
 
+      - name: Run LLM streaming upgrade regression tests
+        run: /bin/bash tests/integration/test_setup_caipe_llm_streaming.sh
+
       - name: Run public URL and NodePort regression tests
         run: /bin/bash tests/integration/test_setup_caipe_public_urls.sh
 

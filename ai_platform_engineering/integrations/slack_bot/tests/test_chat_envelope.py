@@ -15,6 +15,14 @@ from ai_platform_engineering.integrations.slack_bot.utils.chat_envelope import (
 
 
 class TestAugmentSlackClientContext:
+    def test_delivery_id_identifies_the_message_instead_of_the_thread(self) -> None:
+        contexts = [augment_slack_client_context(
+            {}, channel_id="example-channel", workspace_id="example-workspace",
+            thread_ts="100.1", surface_kind="channel", message_ts=message_ts,
+        ) for message_ts in ("100.2", "100.2", "100.3")]
+        assert contexts[0]["delivery_id"] == contexts[1]["delivery_id"]
+        assert contexts[0]["delivery_id"] != contexts[2]["delivery_id"]
+
     def test_adds_channel_workspace_thread_and_surface_for_channel_message(self):
         base = {"source": "slack", "channel_type": "channel"}
         result = augment_slack_client_context(

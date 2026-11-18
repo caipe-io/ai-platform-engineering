@@ -1,16 +1,16 @@
 # Agent Creation UI Architecture
 
-> **Delivery scope:** [Phase 1](delivery-phases.md) exposes supported profiles/options and prevents unsupported controls from implying functionality. Phase 2 adds the full capability/schema/panel architecture with `DeepAgentsAdapter`; Phase 4 enables cross-harness delegation controls only after runtime support is qualified.
+> **Delivery scope:** [Phase 1](delivery-phases.md) exposes supported profiles/options and prevents unsupported controls from implying functionality. Deep Agents integration adds the capability/schema/panel architecture with `DeepAgentsAdapter`; Phase 4 enables cross-harness delegation controls only after runtime support is qualified.
 
-> **Pending interface sketches:** [Deep Agents Adapter and Pluggable Agent Builder](deep-agents-integration-pending.md) details capability-driven panels, schema validation, and migration pseudocode. These interfaces are proposed work, not current functionality.
+> **Integration design:** [Deep Agents Adapter and Pluggable Agent Builder](deep-agents-integration-pending.md) details capability-driven panels, schema validation, and migration pseudocode. The [Engine README](https://github.com/caipe-io/ai-platform-engineering/blob/main/ai_platform_engineering/harness_engine/README.md#opt-in-deep-agents-integration) documents supported APIs and operational behavior.
 
-> **Implemented vertical slice (2026-08-18):** The existing editor now fetches
+> **Implemented behavior:** The existing editor fetches
 > descriptors from the independent Harness Engine, renders sanitized operator
-> profiles and primitive JSON-Schema options, performs server-side draft
-> validation, and saves a separate immutable blueprint. Dynamic Agents remains
-> the default with its existing runtime behavior. Compatibility diffs,
-> typed complex panels, memory policy controls, and pre-Dynamic-Agent atomic save
-> coordination remain follow-up work.
+> profiles, bounded JSON-Schema options and host-owned feature panels, and performs
+> server-side draft validation. The BFF prepares an immutable execution version
+> before publishing its pointer in agent metadata. Dynamic Agents remains the
+> default unless Engine integration is enabled. Memory policy controls and
+> cross-harness delegation require separate runtime qualification.
 
 ## Goal
 
@@ -32,7 +32,7 @@ Evolve the existing `DynamicAgentEditor` into a Harness Engine agent builder. Th
 - Switching harnesses retains profile/options drafts for each harness while the editor is open.
 - Navigation includes supported steps only, retaining the existing step IDs. A deep link to a hidden step opens Basic Info.
 - An unavailable harness/profile or a failed saved-configuration load blocks engine-backed saves. The default Deep Agents path remains available without Engine.
-- These are Phase 1 controls around the existing descriptor contract. Full per-feature schemas, trusted panel registration, and `DeepAgentsAdapter` remain Phase 2.
+- These are Phase 1 controls around the existing descriptor contract. The Deep Agents integration extends these controls with per-feature schemas, trusted panel registration and `DeepAgentsAdapter`.
 
 ## Baseline before Phase 1 UI changes
 

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import defaultdict
+from collections.abc import Callable
 from typing import Protocol
 
 from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from harness_engine.models import (
     TERMINAL_RUN_STATUSES,
@@ -16,12 +18,27 @@ from harness_engine.models import (
     AgentVersion,
     ProviderResource,
     RegisteredAgentCoreProfile,
+    RegisteredClaudeProfile,
     RunEvent,
     RunRecord,
     RunStatus,
     SessionBinding,
     utc_now,
 )
+
+
+def _retry_replay_write[T](write: Callable[[], T]) -> T:
+    """Retry aborted DocumentDB writes without advancing the durable event head."""
+    for attempt in range(8):
+        try:
+            return write()
+        except OperationFailure as exc:
+            # A producer and replay readers can materialize the same pending
+            # event concurrently. Code 112 means this write was aborted.
+            if exc.code != 112 or attempt == 7:
+                raise
+            time.sleep(min(0.02 * 2**attempt, 0.25))
+    raise AssertionError("Replay write retry exhausted")
 
 
 class RevisionConflictError(Exception):
@@ -47,19 +64,31 @@ def validate_replay(run: RunRecord, after: int, events: list[RunEvent]) -> None:
 
 
 class RunRepository(Protocol):
-    async def initialize(self) -> None: ...
+    async def initialize(self) -> None:
+        raise NotImplementedError
 
-    async def close(self) -> None: ...
+    async def close(self) -> None:
+        raise NotImplementedError
 
-    async def list_agentcore_profiles(self) -> list[RegisteredAgentCoreProfile]: ...
+    async def list_claude_profiles(self) -> list[RegisteredClaudeProfile]:
+        raise NotImplementedError
 
-    async def create_agentcore_profile(self, profile: RegisteredAgentCoreProfile) -> None: ...
+    async def create_claude_profile(self, profile: RegisteredClaudeProfile) -> None:
+        raise NotImplementedError
 
-    async def get_agent(self, agent_id: str) -> AgentRecord | None: ...
+    async def list_agentcore_profiles(self) -> list[RegisteredAgentCoreProfile]:
+        raise NotImplementedError
+
+    async def create_agentcore_profile(self, profile: RegisteredAgentCoreProfile) -> None:
+        raise NotImplementedError
+
+    async def get_agent(self, agent_id: str) -> AgentRecord | None:
+        raise NotImplementedError
 
     async def get_agent_version(
         self, agent_id: str, version: int | None = None
-    ) -> AgentVersion | None: ...
+    ) -> AgentVersion | None:
+        raise NotImplementedError
 
     async def save_agent(
         self,
@@ -67,55 +96,85 @@ class RunRepository(Protocol):
         config_fingerprint: str,
         catalog_revision: str,
         expected_revision: int | None,
-    ) -> tuple[AgentRecord, AgentVersion]: ...
+    ) -> tuple[AgentRecord, AgentVersion]:
+        raise NotImplementedError
 
-    async def delete_agent(self, agent_id: str) -> bool: ...
+    async def delete_agent(self, agent_id: str) -> bool:
+        raise NotImplementedError
 
-    async def get_provider_resource(self, agent_id: str) -> ProviderResource | None: ...
+    async def get_provider_resource(self, agent_id: str) -> ProviderResource | None:
+        raise NotImplementedError
 
-    async def save_provider_resource(self, resource: ProviderResource) -> ProviderResource: ...
+    async def save_provider_resource(self, resource: ProviderResource) -> ProviderResource:
+        raise NotImplementedError
 
-    async def delete_provider_resource(self, agent_id: str) -> bool: ...
+    async def delete_provider_resource(self, agent_id: str) -> bool:
+        raise NotImplementedError
 
-    async def get_session(self, binding_id: str) -> SessionBinding | None: ...
+    async def get_session(self, binding_id: str) -> SessionBinding | None:
+        raise NotImplementedError
 
     async def get_latest_session(
         self, owner_subject: str, agent_id: str, conversation_id: str
-    ) -> SessionBinding | None: ...
+    ) -> SessionBinding | None:
+        raise NotImplementedError
 
-    async def create_session(self, binding: SessionBinding) -> SessionBinding: ...
+    async def create_session(self, binding: SessionBinding) -> SessionBinding:
+        raise NotImplementedError
 
     async def update_session_provider_id(
         self, binding_id: str, provider_session_id: str
-    ) -> SessionBinding: ...
+    ) -> SessionBinding:
+        raise NotImplementedError
 
-    async def close_session(self, binding_id: str) -> SessionBinding: ...
+    async def close_session(self, binding_id: str) -> SessionBinding:
+        raise NotImplementedError
 
-    async def admit_run(self, run: RunRecord) -> tuple[RunRecord, bool]: ...
+    async def set_session_interrupt(self, binding_id: str, run_id: str, interrupt: dict[str, object] | None) -> None:
+        raise NotImplementedError
 
-    async def claim_dispatch(self, binding_id: str, run_id: str) -> bool: ...
+    async def admit_run(self, run: RunRecord) -> tuple[RunRecord, bool]:
+        raise NotImplementedError
 
-    async def release_run(self, binding_id: str, run_id: str) -> None: ...
+    async def claim_dispatch(self, binding_id: str, run_id: str) -> bool:
+        raise NotImplementedError
 
-    async def create_run(self, run: RunRecord) -> RunRecord: ...
+    async def release_run(self, binding_id: str, run_id: str) -> None:
+        raise NotImplementedError
 
-    async def get_run(self, run_id: str) -> RunRecord | None: ...
+    async def create_run(self, run: RunRecord) -> RunRecord:
+        raise NotImplementedError
 
-    async def request_cancellation(self, run_id: str) -> RunRecord | None: ...
+    async def find_run_request(self, owner: str, agent_id: str, conversation_id: str, request_id: str) -> RunRecord | None:
+        raise NotImplementedError
+
+    async def get_run(self, run_id: str) -> RunRecord | None:
+        raise NotImplementedError
+
+    async def get_latest_conversation_run(self, agent_id: str, conversation_id: str) -> RunRecord | None:
+        raise NotImplementedError
+
+    async def request_cancellation(self, run_id: str) -> RunRecord | None:
+        raise NotImplementedError
 
     async def get_active_run(
         self, owner_subject: str, agent_id: str, conversation_id: str
-    ) -> RunRecord | None: ...
+    ) -> RunRecord | None:
+        raise NotImplementedError
 
-    async def update_run_provider_id(self, run_id: str, provider_session_id: str) -> None: ...
+    async def update_run_provider_id(self, run_id: str, provider_session_id: str) -> None:
+        raise NotImplementedError
 
     async def append_event(
         self, run_id: str, event_type: str, data: dict[str, object], status: RunStatus | None = None
-    ) -> RunEvent: ...
+    ) -> RunEvent:
+        raise NotImplementedError
 
-    async def list_events(self, run_id: str, after: int) -> list[RunEvent]: ...
+    async def list_events(self, run_id: str, after: int) -> list[RunEvent]:
+        raise NotImplementedError
 
-    async def wait_for_events(self, run_id: str, after: int, timeout: float) -> list[RunEvent]: ...
+    async def wait_for_events(self, run_id: str, after: int, timeout: float) -> list[RunEvent]:
+        raise NotImplementedError
 
 
 class InMemoryRunRepository:
@@ -127,6 +186,7 @@ class InMemoryRunRepository:
         self._sessions: dict[str, SessionBinding] = {}
         self._provider_resources: dict[str, ProviderResource] = {}
         self._agentcore_profiles: dict[str, RegisteredAgentCoreProfile] = {}
+        self._claude_profiles: dict[str, RegisteredClaudeProfile] = {}
         self._runs: dict[str, RunRecord] = {}
         self._events: dict[str, list[RunEvent]] = defaultdict(list)
         self._conditions: dict[str, asyncio.Condition] = defaultdict(asyncio.Condition)
@@ -137,6 +197,15 @@ class InMemoryRunRepository:
 
     async def close(self) -> None:
         return None
+
+    async def list_claude_profiles(self) -> list[RegisteredClaudeProfile]:
+        return [profile.model_copy(deep=True) for profile in self._claude_profiles.values()]
+
+    async def create_claude_profile(self, profile: RegisteredClaudeProfile) -> None:
+        async with self._lock:
+            if profile.profile_id in self._claude_profiles:
+                raise RevisionConflictError(profile.profile_id)
+            self._claude_profiles[profile.profile_id] = profile.model_copy(deep=True)
 
     async def list_agentcore_profiles(self) -> list[RegisteredAgentCoreProfile]:
         return [profile.model_copy(deep=True) for profile in self._agentcore_profiles.values()]
@@ -276,6 +345,13 @@ class InMemoryRunRepository:
             self._sessions[binding_id] = stored
             return stored.model_copy(deep=True)
 
+    async def set_session_interrupt(self, binding_id: str, run_id: str, interrupt: dict[str, object] | None) -> None:
+        async with self._lock:
+            binding = self._sessions[binding_id]
+            if binding.status != "active" or not binding.active_run or binding.active_run.run_id != run_id:
+                raise RevisionConflictError(binding_id)
+            self._sessions[binding_id] = binding.model_copy(update={"pending_interrupt": interrupt, "resume_run_id": None})
+
     async def admit_run(self, run: RunRecord) -> tuple[RunRecord, bool]:
         async with self._lock:
             if run.client_request_id:
@@ -289,7 +365,21 @@ class InMemoryRunRepository:
             binding = self._sessions[run.binding_id]
             if binding.status != "active" or binding.active_run is not None:
                 raise RunAdmissionError("Session is closed or already has an active run")
-            self._sessions[run.binding_id] = binding.model_copy(update={"active_run": run, "dispatch_started": False})
+            if binding.native_state_key and any(
+                other.binding_id != binding.binding_id and other.native_state_key == binding.native_state_key and other.active_run is not None
+                for other in self._sessions.values()
+            ):
+                raise RunAdmissionError("Native thread already has an active producer")
+            pending = binding.pending_interrupt
+            if run.resumes_run_id:
+                if not pending or pending.get("run_id") != run.resumes_run_id or pending.get("interrupt_id") != run.interrupt_id:
+                    raise RunAdmissionError("Resume does not match the pending interrupt")
+            elif pending and run.command not in {"rewind", "reconcile"}:
+                raise RunAdmissionError("Session is paused; resume its pending interrupt or clear it")
+            self._sessions[run.binding_id] = binding.model_copy(update={
+                "active_run": run, "last_run_id": run.run_id, "dispatch_started": False,
+                "resume_run_id": run.run_id if run.resumes_run_id else None,
+            })
             self._runs[run.run_id] = run
             return run.model_copy(deep=True), True
 
@@ -308,7 +398,12 @@ class InMemoryRunRepository:
         async with self._lock:
             binding = self._sessions.get(binding_id)
             if binding and binding.active_run and binding.active_run.run_id == run_id:
-                self._sessions[binding_id] = binding.model_copy(update={"active_run": None, "dispatch_started": False})
+                run = self._runs.get(run_id)
+                ambiguous_resume = binding.status == "active" and binding.resume_run_id == run_id and binding.dispatch_started and run and run.status != RunStatus.PAUSED
+                self._sessions[binding_id] = binding.model_copy(update={
+                    "active_run": None, "dispatch_started": False, "resume_run_id": None,
+                    "status": "degraded" if ambiguous_resume else binding.status,
+                })
 
     async def create_run(self, run: RunRecord) -> RunRecord:
         async with self._lock:
@@ -317,9 +412,19 @@ class InMemoryRunRepository:
             self._runs[run.run_id] = run
             return run.model_copy(deep=True)
 
+    async def find_run_request(self, owner: str, agent_id: str, conversation_id: str, request_id: str) -> RunRecord | None:
+        return next((run.model_copy(deep=True) for run in self._runs.values() if
+                     (run.owner_subject, run.agent_id, run.conversation_id, run.client_request_id) == (owner, agent_id, conversation_id, request_id)), None)
+
     async def get_run(self, run_id: str) -> RunRecord | None:
         run = self._runs.get(run_id)
         return run.model_copy(deep=True) if run else None
+
+    async def get_latest_conversation_run(self, agent_id: str, conversation_id: str) -> RunRecord | None:
+        matches = [run for run in self._runs.values()
+                   if run.agent_id == agent_id and run.conversation_id == conversation_id]
+        latest = max(matches, key=lambda run: run.created_at) if matches else None
+        return latest.model_copy(deep=True) if latest else None
 
     async def request_cancellation(self, run_id: str) -> RunRecord | None:
         async with self._lock:
@@ -338,7 +443,7 @@ class InMemoryRunRepository:
             if run.owner_subject == owner_subject
             and run.agent_id == agent_id
             and run.conversation_id == conversation_id
-            and run.status not in {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}
+            and run.status not in TERMINAL_RUN_STATUSES
         ]
         latest = max(matches, key=lambda run: run.created_at) if matches else None
         return latest.model_copy(deep=True) if latest else None
@@ -402,7 +507,12 @@ class MongoRunRepository:
             )
             self._db.harness_provider_resources.create_index("agent_id", unique=True)
             self._db.harness_agentcore_profiles.create_index("profile_id", unique=True)
+            self._db.harness_claude_profiles.create_index("profile_id", unique=True)
             self._db.harness_sessions.create_index("binding_id", unique=True)
+            self._db.harness_sessions.create_index(
+                "native_state_key", unique=True, name="exclusive_native_producer",
+                partialFilterExpression={"native_state_key": {"$type": "string"}, "active_run.run_id": {"$type": "string"}},
+            )
             self._db.harness_sessions.create_index(
                 [
                     ("owner_subject", ASCENDING),
@@ -413,6 +523,8 @@ class MongoRunRepository:
                 unique=True,
             )
             self._db.harness_runs.create_index("run_id", unique=True)
+            self._db.harness_runs.create_index([("agent_id", ASCENDING), ("conversation_id", ASCENDING), ("created_at", DESCENDING)])
+            self._db.harness_sessions.create_index([("agent_id", ASCENDING), ("conversation_id", ASCENDING), ("active_run.created_at", DESCENDING)])
             self._db.harness_runs.create_index(
                 [("owner_subject", ASCENDING), ("agent_id", ASCENDING), ("conversation_id", ASCENDING), ("client_request_id", ASCENDING)],
                 unique=True,
@@ -426,6 +538,16 @@ class MongoRunRepository:
 
     async def close(self) -> None:
         await asyncio.to_thread(self._client.close)
+
+    async def list_claude_profiles(self) -> list[RegisteredClaudeProfile]:
+        docs = await asyncio.to_thread(lambda: list(self._db.harness_claude_profiles.find({}, {"_id": 0})))
+        return [RegisteredClaudeProfile.model_validate(doc) for doc in docs]
+
+    async def create_claude_profile(self, profile: RegisteredClaudeProfile) -> None:
+        try:
+            await asyncio.to_thread(self._db.harness_claude_profiles.insert_one, profile.model_dump(mode="python"))
+        except DuplicateKeyError as exc:
+            raise RevisionConflictError(profile.profile_id) from exc
 
     async def list_agentcore_profiles(self) -> list[RegisteredAgentCoreProfile]:
         docs = await asyncio.to_thread(lambda: list(self._db.harness_agentcore_profiles.find({}, {"_id": 0})))
@@ -597,6 +719,15 @@ class MongoRunRepository:
             raise KeyError(binding_id)
         return current
 
+    async def set_session_interrupt(self, binding_id: str, run_id: str, interrupt: dict[str, object] | None) -> None:
+        result = await asyncio.to_thread(
+            self._db.harness_sessions.update_one,
+            {"binding_id": binding_id, "status": "active", "active_run.run_id": run_id},
+            {"$set": {"pending_interrupt": interrupt, "resume_run_id": None, "updated_at": utc_now()}},
+        )
+        if result.matched_count != 1:
+            raise RevisionConflictError(binding_id)
+
     async def admit_run(self, run: RunRecord) -> tuple[RunRecord, bool]:
         def admit() -> tuple[RunRecord, bool]:
             key = {
@@ -624,11 +755,19 @@ class MongoRunRepository:
                 return existing, False
             # The reservation and its recovery snapshot share the binding's
             # document, so clear and competing replicas use the same fence.
-            claimed = self._db.harness_sessions.find_one_and_update(
-                {"binding_id": run.binding_id, "status": "active", "active_run": None},
-                {"$set": {"active_run": run.model_dump(mode="python"), "dispatch_started": False, "updated_at": utc_now()}},
-                return_document=ReturnDocument.AFTER,
+            command_guard = (
+                {"pending_interrupt.run_id": run.resumes_run_id, "pending_interrupt.interrupt_id": run.interrupt_id}
+                if run.resumes_run_id else {} if run.command in {"rewind", "reconcile"} else {"pending_interrupt": None}
             )
+            try:
+                claimed = self._db.harness_sessions.find_one_and_update(
+                    {"binding_id": run.binding_id, "status": "active", "active_run": None, **command_guard},
+                    {"$set": {"active_run": run.model_dump(mode="python"), "last_run_id": run.run_id, "dispatch_started": False,
+                              "resume_run_id": run.run_id if run.resumes_run_id else None, "updated_at": utc_now()}},
+                    return_document=ReturnDocument.AFTER,
+                )
+            except DuplicateKeyError as exc:
+                raise RunAdmissionError("Native thread already has an active producer") from exc
             if not claimed:
                 existing = existing_request()
                 if existing:
@@ -660,10 +799,17 @@ class MongoRunRepository:
         return result.modified_count == 1
 
     async def release_run(self, binding_id: str, run_id: str) -> None:
+        # A failed dispatched approval may already have executed a tool. Fence it
+        # rather than replaying that approval on an uncertain native checkpoint.
+        await asyncio.to_thread(
+            self._db.harness_sessions.update_one,
+            {"binding_id": binding_id, "status": "active", "active_run.run_id": run_id, "resume_run_id": run_id, "dispatch_started": True},
+            {"$set": {"status": "degraded"}},
+        )
         await asyncio.to_thread(
             self._db.harness_sessions.update_one,
             {"binding_id": binding_id, "active_run.run_id": run_id},
-            {"$set": {"active_run": None, "dispatch_started": False, "updated_at": utc_now()}},
+            {"$set": {"active_run": None, "dispatch_started": False, "resume_run_id": None, "updated_at": utc_now()}},
         )
 
     async def create_run(self, run: RunRecord) -> RunRecord:
@@ -672,6 +818,17 @@ class MongoRunRepository:
         except DuplicateKeyError as exc:
             raise RevisionConflictError(run.run_id) from exc
         return run
+
+    async def find_run_request(self, owner: str, agent_id: str, conversation_id: str, request_id: str) -> RunRecord | None:
+        query = {"owner_subject": owner, "agent_id": agent_id, "conversation_id": conversation_id, "client_request_id": request_id}
+        doc = await asyncio.to_thread(self._db.harness_runs.find_one, query, {"_id": 0, "pending_event": 0})
+        if doc is None:
+            binding = await asyncio.to_thread(self._db.harness_sessions.find_one, {
+                "owner_subject": owner, "agent_id": agent_id, "conversation_id": conversation_id,
+                "active_run.client_request_id": request_id,
+            })
+            doc = binding.get("active_run") if binding else None
+        return RunRecord.model_validate(doc) if doc else None
 
     async def get_run(self, run_id: str) -> RunRecord | None:
         def read() -> RunRecord | None:
@@ -683,6 +840,20 @@ class MongoRunRepository:
                     self._db.harness_runs.update_one({"run_id": run_id}, {"$setOnInsert": doc}, upsert=True)
             return RunRecord.model_validate(doc) if doc else None
         return await asyncio.to_thread(read)
+
+    async def get_latest_conversation_run(self, agent_id: str, conversation_id: str) -> RunRecord | None:
+        def read() -> RunRecord | None:
+            query = {"agent_id": agent_id, "conversation_id": conversation_id}
+            doc = self._db.harness_runs.find_one(query, {"_id": 0, "pending_event": 0}, sort=[("created_at", DESCENDING)])
+            reserved = self._db.harness_sessions.find_one(
+                {**query, "active_run.run_id": {"$exists": True}},
+                {"active_run": 1}, sort=[("active_run.created_at", DESCENDING)],
+            )
+            candidates = [RunRecord.model_validate(value) for value in (doc, (reserved or {}).get("active_run")) if value]
+            return max(candidates, key=lambda run: run.created_at) if candidates else None
+
+        latest = await asyncio.to_thread(read)
+        return await self.get_run(latest.run_id) if latest else None
 
     async def request_cancellation(self, run_id: str) -> RunRecord | None:
         # Materialize a reservation snapshot before updating the durable request.
@@ -724,14 +895,14 @@ class MongoRunRepository:
             return
         key = {"run_id": pending["run_id"], "sequence": pending["sequence"]}
         try:
-            self._db.harness_events.update_one(key, {"$setOnInsert": pending}, upsert=True)
+            _retry_replay_write(lambda: self._db.harness_events.update_one(key, {"$setOnInsert": pending}, upsert=True))
         except DuplicateKeyError:
             if not self._db.harness_events.find_one(key):
                 raise
-        self._db.harness_runs.update_one(
+        _retry_replay_write(lambda: self._db.harness_runs.update_one(
             {"run_id": pending["run_id"], "pending_event.sequence": pending["sequence"]},
             {"$unset": {"pending_event": ""}},
-        )
+        ))
 
     async def append_event(
         self, run_id: str, event_type: str, data: dict[str, object], status: RunStatus | None = None
@@ -758,10 +929,10 @@ class MongoRunRepository:
                 }
                 if status is not None:
                     values["status"] = status.value
-                committed = self._db.harness_runs.find_one_and_update(
+                committed = _retry_replay_write(lambda: self._db.harness_runs.find_one_and_update(
                     {"run_id": run_id, "last_sequence": run["last_sequence"], "pending_event": {"$exists": False}},
                     {"$set": values}, return_document=ReturnDocument.AFTER,
-                )
+                ))
                 if committed:
                     self._materialize_pending_event(committed)
                     return event

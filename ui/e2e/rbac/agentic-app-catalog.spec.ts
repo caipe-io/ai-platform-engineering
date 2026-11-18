@@ -96,3 +96,46 @@ for (const scenario of [
     await expect(page.getByRole("link", { name: "Example workspace", exact: true })).toBeVisible();
   });
 }
+
+for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
+  test(`embedded anchors and offscreen focus cannot move the host chrome: ${viewport.width}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await installMockedRbacApp(page, {
+      session: { email: "test-user@example.com", name: "Test User" },
+      handlers: [async ({ path, route }) => {
+        if (path === "/api/agentic-apps/example") {
+          await fulfillJson(route, { item: apps[0] });
+          return true;
+        }
+        return false;
+      }],
+    });
+    await page.route("**/apps/example", async route => {
+      if (!route.request().frame().parentFrame()) return route.fallback();
+      await route.fulfill({ contentType: "text/html", body: `<!doctype html><html><body>
+        <h1>Example app content</h1>
+        <a href="#details">Jump to section</a>
+        <button onclick="document.getElementById('remote-input').focus()">Focus offscreen field</button>
+        <div style="height:2400px;width:2400px"></div>
+        <section id="details"><h2>Section details</h2><label>Remote input<input id="remote-input"></label></section>
+      </body></html>` });
+    });
+    await page.goto("/apps/example");
+    const child = page.frameLocator('iframe[title="Example workspace"]');
+    await expect(child.getByRole("heading", { name: "Example app content" })).toBeVisible();
+    const header = page.locator(".app-shell-canvas > div > header");
+    const original = await header.boundingBox();
+    expect(original).not.toBeNull();
+    await child.getByRole("link", { name: "Jump to section" }).click();
+    await expect(child.getByRole("heading", { name: "Section details" })).toBeVisible();
+    expect((await header.boundingBox())!.y).toBe(original!.y);
+    await child.getByRole("button", { name: "Focus offscreen field" }).click();
+    await expect(child.getByRole("textbox", { name: "Remote input" })).toBeFocused();
+    expect((await header.boundingBox())!.y).toBe(original!.y);
+    expect(await page.evaluate(() => ({ x: window.scrollX, y: window.scrollY }))).toEqual({ x: 0, y: 0 });
+    await page.getByRole("button", { name: /^User menu/ }).click();
+    await expect(header.getByRole("button", { name: "Sign Out", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(header).toBeVisible();
+  });
+}

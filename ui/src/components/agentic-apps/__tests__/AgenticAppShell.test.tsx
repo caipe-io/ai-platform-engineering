@@ -9,6 +9,8 @@ jest.mock("next-auth/react", () => ({
 let mockSearch = "";
 
 const mockResolveUsableChatAgent = jest.fn();
+let mockHostVersion: { version: string; gitCommit: string } | null = null;
+jest.mock("@/hooks/use-version", () => ({ useVersion: () => ({ versionInfo: mockHostVersion }) }));
 
 const mockRouter = { push: jest.fn() };
 
@@ -49,6 +51,12 @@ jest.mock("../AgenticAppAssistantOverlay", () => ({
   ),
 }));
 
+jest.mock("@/lib/config", () => ({ getConfig: () => true }));
+jest.mock("@/components/ticket/ReportProblemDialog", () => ({
+  ReportProblemDialog: ({ initialComponentId, initialFeature }: { initialComponentId?: string; initialFeature?: string }) =>
+    <div data-testid="shared-feedback" data-component={initialComponentId} data-feature={initialFeature} />,
+}));
+
 function app(overrides: Record<string, unknown> = {}) {
   return {
     appId: "example-app",
@@ -85,6 +93,7 @@ describe("AgenticAppShell", () => {
   });
   beforeEach(() => {
     jest.clearAllMocks();
+    mockHostVersion = null;
     mockSearch = "";
     window.history.replaceState(null, "", "/apps/example-app");
     global.fetch = jest.fn().mockResolvedValue({
@@ -163,6 +172,66 @@ describe("AgenticAppShell", () => {
     for (const [message] of replies) expect(message.capabilities).toMatchObject({
       assistant: true, queryNavigation: true, composerExtensions: expect.arrayContaining(["configuration.v1"]),
     });
+    post.mockRestore();
+  });
+
+  it("publishes the running host build after lookup without reloading the app", async () => {
+    const view = render(<AgenticAppShell appId="example-app" path={[]} />);
+    const iframe = await screen.findByTitle("Example App") as HTMLIFrameElement;
+    const post = jest.spyOn(iframe.contentWindow!, "postMessage");
+    const connect = () => act(() => window.dispatchEvent(new MessageEvent("message", {
+      source: iframe.contentWindow, origin: window.location.origin,
+      data: { type: "caipe.agenticApp.bridge.connect.v1", appId: "example-app", version: "1.0" },
+    })));
+    connect();
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({
+      capabilities: expect.objectContaining({ hostBuild: { version: null, gitCommit: null } }),
+    }), window.location.origin);
+    mockHostVersion = { version: "2.4.1", gitCommit: "a".repeat(40) };
+    post.mockClear();
+    view.rerender(<AgenticAppShell appId="example-app" path={[]} />);
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({
+      capabilities: expect.objectContaining({ hostBuild: mockHostVersion }),
+    }), window.location.origin);
+    post.mockClear();
+    connect();
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({
+      capabilities: expect.objectContaining({ hostBuild: mockHostVersion }),
+    }), window.location.origin);
+    expect(screen.getByTitle("Example App")).toBe(iframe);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    post.mockRestore();
+  });
+
+  it("keeps conversation keys out of every frame message and retains them across path navigation", async () => {
+    mockSearch = "assistant_chat=chat-1&legacy_chat=chat-1&tab=overview";
+    window.history.replaceState(null, "", "/apps/example-app?" + mockSearch + "#summary");
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => ({ item: app({
+      assistantEnabled: false, assistantOptions: { legacyConversationQueryParams: ["legacy_chat"] },
+    }) }) });
+    const view = render(<AgenticAppShell appId="example-app" path={[]} />);
+    const iframe = await screen.findByTitle("Example App") as HTMLIFrameElement;
+    expect(iframe.getAttribute("src")).not.toMatch(/assistant_chat|legacy_chat/);
+    const post = jest.spyOn(iframe.contentWindow!, "postMessage");
+    const send = (data: object) => act(() => window.dispatchEvent(new MessageEvent("message", {
+      origin: window.location.origin, source: iframe.contentWindow,
+      data: { version: "1.0", appId: "example-app", ...data },
+    })));
+    fireEvent.load(iframe);
+    send({ type: "caipe.agenticApp.bridge.connect.v1" });
+    const initialMessages = post.mock.calls.filter(([message]) => message.type === "caipe.agenticApp.navigation.v1");
+    expect(initialMessages.length).toBeGreaterThanOrEqual(3);
+    for (const [message] of initialMessages) expect(message.href).toBe("/apps/example-app?tab=overview#summary");
+    send({ type: "caipe.agenticApp.navigate.v1", href: "/apps/example-app/details?tab=report&assistant_chat=other&legacy_chat=other" });
+    expect(window.location.pathname).toBe("/apps/example-app/details");
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get("assistant_chat")).toBe("chat-1");
+    expect(params.get("legacy_chat")).toBe("chat-1");
+    mockSearch = window.location.search;
+    view.rerender(<AgenticAppShell appId="example-app" path={["details"]} />);
+    for (const [message] of post.mock.calls.filter(([message]) => message.type === "caipe.agenticApp.navigation.v1")) {
+      expect(message.href).not.toMatch(/assistant_chat|legacy_chat/);
+    }
     post.mockRestore();
   });
 
@@ -402,4 +471,31 @@ describe("AgenticAppShell", () => {
     expect(warning).not.toHaveBeenCalled();
     warning.mockRestore();
   });
+});
+
+
+it("opens shared feedback for the verified calling app without requiring an assistant", async () => {
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ item: app({ assistantEnabled: false, feedbackEnabled: true }) }) });
+  render(<AgenticAppShell appId="example-app" path={[]} />);
+  const frame = await screen.findByTitle("Example App") as HTMLIFrameElement;
+  const message = { type: "caipe.agenticApp.feedback.open.v1", version: "1.0", appId: "example-app", feature: "Publishing", componentId: "spoofed", appContext: { projectSlug: "example" } };
+  const send = (origin: string, source: MessageEventSource | null, data = message) => act(() => window.dispatchEvent(new MessageEvent("message", { origin, source, data })));
+  send("https://other.example.test", frame.contentWindow);
+  send(window.location.origin, window);
+  send(window.location.origin, frame.contentWindow, { ...message, appId: "other" });
+  send(window.location.origin, frame.contentWindow, { ...message, version: "2.0" });
+  send(window.location.origin, frame.contentWindow, { ...message, feature: "x".repeat(41) });
+  expect(screen.queryByTestId("shared-feedback")).not.toBeInTheDocument();
+  send(window.location.origin, frame.contentWindow);
+  expect(screen.getByTestId("shared-feedback")).toHaveAttribute("data-component", "example-app");
+  expect(screen.getByTestId("shared-feedback")).toHaveAttribute("data-feature", "Publishing");
+});
+
+it("does not open shared feedback for an app without a registered handler", async () => {
+  global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ item: app({ assistantEnabled: false, feedbackEnabled: false }) }) });
+  render(<AgenticAppShell appId="example-app" path={[]} />);
+  const frame = await screen.findByTitle("Example App") as HTMLIFrameElement;
+  act(() => window.dispatchEvent(new MessageEvent("message", { origin: window.location.origin, source: frame.contentWindow,
+    data: { type: "caipe.agenticApp.feedback.open.v1", version: "1.0", appId: "example-app" } })));
+  expect(screen.queryByTestId("shared-feedback")).not.toBeInTheDocument();
 });

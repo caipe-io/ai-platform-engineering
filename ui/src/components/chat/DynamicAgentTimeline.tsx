@@ -28,6 +28,7 @@ AlertTriangle,
 CheckCircle,
 ChevronDown,
 Loader2,
+Square,
 Wrench,
 XCircle,
 } from "lucide-react";
@@ -456,21 +457,21 @@ function SegmentRenderer({
         return "muted";
       case "tool":
         return segment.data.status === "running" ? "amber" : 
-               segment.data.status === "failed" ? "red" : "emerald";
+               segment.data.status === "failed" ? "red" : segment.data.status === "cancelled" ? "muted" : "emerald";
       case "tool-group": {
         // Show amber if any tool is running, red if any failed, otherwise emerald
         const hasRunning = segment.tools.some(t => t.status === "running");
         const hasFailed = segment.tools.some(t => t.status === "failed");
-        return hasRunning ? "amber" : hasFailed ? "red" : "emerald";
+        return hasRunning ? "amber" : hasFailed ? "red" : segment.tools.some(t => t.status === "cancelled") ? "muted" : "emerald";
       }
       case "subagent":
-        return segment.info.status === "running" ? "sky" : "emerald";
+        return segment.info.status === "running" ? "sky" : segment.info.status === "cancelled" ? "muted" : "emerald";
       case "warning":
         return "amber";
       case "error":
         return "red";
       case "status":
-        return segment.status === "done" ? "emerald" : "amber";
+        return segment.status === "done" ? "emerald" : segment.status === "cancelled" ? "muted" : "amber";
       case "done":
         return "emerald";
       default:
@@ -549,6 +550,7 @@ function ToolSegmentView({ segment, isNested = false }: { segment: ToolSegment; 
   const thought = extractToolThought(tool.args);
   const isRunning = tool.status === "running";
   const isFailed = tool.status === "failed";
+  const isCancelled = tool.status === "cancelled";
   const errorDisplay = isFailed && tool.error ? formatToolError(tool.error) : null;
   const hasParams = tool.args && Object.keys(tool.args).length > 0;
   const hasDetails = hasParams || (!isFailed && tool.result);
@@ -561,8 +563,9 @@ function ToolSegmentView({ segment, isNested = false }: { segment: ToolSegment; 
         "rounded-md",
         isNested ? "text-[10px] px-2 py-1" : "text-xs px-3 py-1.5",
         isRunning && "bg-amber-500/10 border border-amber-500/25",
-        !isRunning && !isFailed && "bg-emerald-500/8 border border-emerald-500/20",
-        isFailed && "bg-red-500/10 border border-red-500/25"
+        !isRunning && !isFailed && !isCancelled && "bg-emerald-500/8 border border-emerald-500/20",
+        isFailed && "bg-red-500/10 border border-red-500/25",
+        isCancelled && "bg-muted/30 border border-border/50"
       )}
     >
       {/* Header row with tool name, thought, and status — clickable to toggle details */}
@@ -572,6 +575,8 @@ function ToolSegmentView({ segment, isNested = false }: { segment: ToolSegment; 
       >
         {isRunning ? (
           <Loader2 className={cn("animate-spin text-amber-500 shrink-0", isNested ? "h-2.5 w-2.5" : "h-3 w-3")} />
+        ) : isCancelled ? (
+          <Square className={cn("text-muted-foreground shrink-0", isNested ? "h-2.5 w-2.5" : "h-3 w-3")} />
         ) : isFailed ? (
           <XCircle className={cn("text-red-500 shrink-0", isNested ? "h-2.5 w-2.5" : "h-3 w-3")} />
         ) : (
@@ -598,11 +603,12 @@ function ToolSegmentView({ segment, isNested = false }: { segment: ToolSegment; 
             "ml-auto shrink-0",
             isNested ? "text-[9px]" : "text-[10px]",
             isRunning && "text-amber-500",
-            !isRunning && !isFailed && "text-emerald-500/70",
-            isFailed && "text-red-500"
+            !isRunning && !isFailed && !isCancelled && "text-emerald-500/70",
+            isFailed && "text-red-500",
+            isCancelled && "text-muted-foreground"
           )}
         >
-          {isRunning ? "running" : isFailed ? "failed" : "done"}
+          {isRunning ? "running" : isCancelled ? "stopped" : isFailed ? "failed" : "done"}
         </span>
       </div>
       {/* Error message for failed tools */}
@@ -771,6 +777,7 @@ function ToolItemView({ tool, isNested = false }: { tool: ToolInfo; isNested?: b
   const thought = extractToolThought(tool.args);
   const isRunning = tool.status === "running";
   const isFailed = tool.status === "failed";
+  const isCancelled = tool.status === "cancelled";
   const errorDisplay = isFailed && tool.error ? formatToolError(tool.error) : null;
   const hasParams = tool.args && Object.keys(tool.args).length > 0;
   const hasDetails = hasParams || (!isFailed && tool.result);
@@ -783,8 +790,9 @@ function ToolItemView({ tool, isNested = false }: { tool: ToolInfo; isNested?: b
         "rounded-md",
         isNested ? "px-2 py-1 text-[10px]" : "px-2 py-1.5 text-xs",
         isRunning && "bg-amber-500/10 border border-amber-500/25",
-        !isRunning && !isFailed && "bg-emerald-500/8 border border-emerald-500/20",
-        isFailed && "bg-red-500/10 border border-red-500/25"
+        !isRunning && !isFailed && !isCancelled && "bg-emerald-500/8 border border-emerald-500/20",
+        isFailed && "bg-red-500/10 border border-red-500/25",
+        isCancelled && "bg-muted/30 border border-border/50"
       )}
     >
       {/* Header row with tool name, thought, and status — clickable to toggle details */}
@@ -794,6 +802,8 @@ function ToolItemView({ tool, isNested = false }: { tool: ToolInfo; isNested?: b
       >
         {isRunning ? (
           <Loader2 className={cn("animate-spin text-amber-500 shrink-0", isNested ? "h-2.5 w-2.5" : "h-3 w-3")} />
+        ) : isCancelled ? (
+          <Square className={cn("text-muted-foreground shrink-0", isNested ? "h-2.5 w-2.5" : "h-3 w-3")} />
         ) : isFailed ? (
           <XCircle className={cn("text-red-500 shrink-0", isNested ? "h-2.5 w-2.5" : "h-3 w-3")} />
         ) : (
@@ -820,11 +830,12 @@ function ToolItemView({ tool, isNested = false }: { tool: ToolInfo; isNested?: b
             "ml-auto shrink-0",
             isNested ? "text-[8px]" : "text-[10px]",
             isRunning && "text-amber-500",
-            !isRunning && !isFailed && "text-emerald-500/70",
-            isFailed && "text-red-500"
+            !isRunning && !isFailed && !isCancelled && "text-emerald-500/70",
+            isFailed && "text-red-500",
+            isCancelled && "text-muted-foreground"
           )}
         >
-          {isRunning ? "running" : isFailed ? "failed" : "done"}
+          {isRunning ? "running" : isCancelled ? "stopped" : isFailed ? "failed" : "done"}
         </span>
       </div>
       {/* Error message for failed tools */}
@@ -960,6 +971,8 @@ function SubagentSegmentView({
             <Loader2 className="h-3 w-3 text-sky-400 animate-spin" />
             <span className="text-[10px] text-sky-400">running</span>
           </div>
+        ) : info.status === "cancelled" ? (
+          <span className="text-[10px] text-muted-foreground">stopped</span>
         ) : (
           <CheckCircle className="h-3 w-3 text-emerald-500" />
         )
@@ -1050,14 +1063,15 @@ function StatusSegmentView({ segment, isNested = false }: { segment: StatusSegme
   const isWaiting = status === "waiting_for_input";
   
   // Status labels
-  const statusLabel = isDone ? "Done" : isInterrupted ? "Interrupted" : "Waiting for user response";
+  const statusLabel = isDone ? "Done" : status === "cancelled" ? "Stopped" : isInterrupted ? "Interrupted" : status === "unknown" ? "Completion unconfirmed" : "Waiting for user response";
   
   return (
     <div className={cn(
       "flex items-center gap-1.5",
       isNested ? "text-[10px]" : "text-xs",
       isDone && "text-emerald-500",
-      (isInterrupted || isWaiting) && "text-amber-500"
+      (isInterrupted || isWaiting || status === "unknown") && "text-amber-500",
+      status === "cancelled" && "text-muted-foreground"
     )}>
       {isDone ? (
         <CheckCircle className={cn("shrink-0", isNested ? "h-2.5 w-2.5" : "h-3 w-3")} />

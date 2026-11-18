@@ -47,6 +47,13 @@ Pushing the branch triggers `auto-tag.yml` which creates `x.y.z-rc.1`.
 | All CI green | GitHub Actions on the RC tag |
 | Helm chart installs cleanly | `helm-chart-test.yml` run against the RC image |
 | Smoke test on Kind | `make kind-up && make smoke-test VERSION=x.y.z-rc.1` |
+| Feature regression and backward compatibility | Execute the applicable [regression matrix](../development/caipe-regression-suite.md) on the candidate; retain per-runtime, workflow, skill, bot, authorization and cleanup evidence |
+
+Use `$caipe-regression-suite` for "run E2E regression" or "check release readiness".
+Review exact CI jobs and skipped checks separately from live results. A smoke
+pass or healthy deployment does not establish full release acceptance. Record
+unexecuted/blocked cases and the matrix's GO / CONDITIONAL / NO-GO verdict before
+finalization; keep a compatible baseline/promotion-revert plan.
 
 If fixes are needed, merge them into the release branch — `auto-tag.yml` creates `x.y.z-rc.2`, `rc.3`, etc.
 

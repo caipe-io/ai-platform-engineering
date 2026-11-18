@@ -23,6 +23,10 @@ const sidebars: SidebarsConfig = {
           type: 'doc',
           id: 'getting-started/quick-start',
         },
+        {
+          type: 'doc',
+          id: 'getting-started/first-agent',
+        },
       ],
     },
     {
@@ -200,6 +204,21 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'doc',
+          id: 'development/caipe-regression-suite',
+          label: 'Regression & Release Readiness',
+        },
+        {
+          type: 'doc',
+          id: 'development/caipe-regression-screen-coverage',
+          label: 'Screen & API Coverage',
+        },
+        {
+          type: 'doc',
+          id: 'development/regression-report-artifacts',
+          label: 'Regression Report Artifacts',
+        },
+        {
+          type: 'doc',
           id: 'development/prebuild-flow',
           label: 'Prebuild Flow',
         },
@@ -239,6 +258,7 @@ const sidebars: SidebarsConfig = {
       items: [
         { type: 'doc', id: 'architecture/index', label: 'Solution Architecture' },
         { type: 'doc', id: 'architecture/gateway', label: 'AgentGateway' },
+        { type: 'doc', id: 'architecture/claude-acp', label: 'Claude ACP' },
         { type: 'doc', id: 'architecture/scheduler', label: 'Scheduler' },
         { type: 'doc', id: 'architecture/autonomous-agents', label: 'Autonomous Agents' },
         {
@@ -303,6 +323,7 @@ const sidebars: SidebarsConfig = {
           items: [
             { type: 'doc', id: 'integrations/slack-bot', label: 'Slack Bot' },
             { type: 'doc', id: 'integrations/webex-bot', label: 'Webex Bot' },
+            { type: 'doc', id: 'integrations/bot-harness-gateway', label: 'Bot Harness Gateway' },
             { type: 'doc', id: 'integrations/webex-meetings-mcp', label: 'Webex Meetings MCP' },
             { type: 'doc', id: 'api/webex-integration', label: 'Webex Bot RBAC API' },
             { type: 'doc', id: 'integrations/cli', label: 'CAIPE CLI' },
@@ -316,6 +337,7 @@ const sidebars: SidebarsConfig = {
             { type: 'doc', id: 'security/auth-flow', label: 'Authentication Flow' },
             { type: 'doc', id: 'security/browser-sessions', label: 'Browser Sessions' },
             { type: 'doc', id: 'security/agent-context-hmac', label: 'Agent Context HMAC' },
+            { type: 'doc', id: 'security/claude-acp-threat-model', label: 'Claude ACP Threat Model' },
             {
               type: 'category',
               label: 'RBAC',

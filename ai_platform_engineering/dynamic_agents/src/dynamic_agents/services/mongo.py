@@ -95,6 +95,12 @@ class MongoDBService:
         self._client: MongoClient | None = None
         self._db: Database | None = None
 
+    def get_llm_model(self, model_id: str) -> dict | None:
+        """Read registry metadata only; secret material lives behind the credential API."""
+        if self._db is None:
+            raise RuntimeError("Model registry is unavailable")
+        return self._db["llm_models"].find_one({"_id": model_id})
+
     def connect(self) -> bool:
         """Connect to MongoDB. Returns True if successful."""
         try:
@@ -174,6 +180,12 @@ class MongoDBService:
         if doc:
             return DynamicAgentConfig(**_strip_nulls(doc))
         return None
+
+    def get_agent_execution(self, agent_id: str) -> dict | None:
+        """Read routing metadata without requiring a provider's model/config schema."""
+        return self._get_agents_collection().find_one(
+            {"_id": agent_id}, {"enabled": 1, "execution_harness_id": 1},
+        )
 
     def resolve_rag_datasource_ids(
         self,
@@ -255,6 +267,9 @@ class MongoDBService:
         server_ids: set[str] = set(agent.allowed_tools.keys())
         if agent.subagents:
             for ref in agent.subagents:
+                execution = self.get_agent_execution(ref.agent_id)
+                if execution and execution.get("execution_harness_id") not in (None, "dynamic_agents"):
+                    continue  # Harness children resolve their own MCP bindings.
                 subagent_config = self.get_agent(ref.agent_id)
                 if subagent_config:
                     server_ids.update(subagent_config.allowed_tools.keys())

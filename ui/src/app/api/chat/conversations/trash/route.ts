@@ -41,8 +41,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     // Auto-purge: permanently delete conversations that have been in the
     // archive for more than 7 days. This runs on every trash listing
     // request as a lightweight cleanup mechanism.
-    const purgeThreshold = new Date();
-    purgeThreshold.setDate(purgeThreshold.getDate() - ARCHIVE_RETENTION_DAYS);
+    // Match the UI's retention duration regardless of server timezone or DST.
+    const purgeThreshold = new Date(Date.now() - ARCHIVE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
     const expired = await conversations.find({
       owner_id: user.email,
@@ -50,8 +50,14 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     }).toArray();
 
     if (expired.length > 0) {
-      await deleteConversationsPermanently(expired);
-      console.log(`[Trash] Auto-purged ${expired.length} conversations older than ${ARCHIVE_RETENTION_DAYS} days for ${user.email}`);
+      try {
+        await deleteConversationsPermanently(expired);
+        console.log(`[Trash] Auto-purged ${expired.length} conversations older than ${ARCHIVE_RETENTION_DAYS} days for ${user.email}`);
+      } catch (error) {
+        // Cleanup retains owning records for retry; a failed purge must not
+        // prevent users from listing or restoring their remaining trash.
+        console.error('[Trash] Automatic conversation purge failed; will retry on a later listing', error);
+      }
     }
 
     // Query for soft-deleted conversation candidates, then filter by ReBAC.

@@ -35,6 +35,7 @@ const RAW_ID_MAX_LEN = 512;
 //   /  — path traversal
 // so a caller can never smuggle OpenFGA structure through an id field.
 const ID_PATTERN = /^[A-Za-z0-9._%+\-@]+$/;
+const TOOL_ID_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
 const RESERVED_ADVISORY_CONTEXT_KEYS = new Set(["workflow_run_id"]);
 
 const SUBJECT_TYPES: ReadonlySet<string> = new Set<SubjectType>(["user", "service_account"]);
@@ -156,6 +157,14 @@ function isValidRawObjectId(value: unknown): value is string {
 
 export function isValidResourceId(type: ResourceType, value: unknown): value is string {
   if (type === "llm_model") return isValidRawObjectId(value);
+  // Gateway tool IDs use one server/tool separator; other IDs keep the
+  // generic rules, and tool grants cannot introduce wildcards or FGA syntax.
+  if (type === "tool" && typeof value === "string" && value.includes("/")) {
+    const segments = value.split("/");
+    return value.length <= ID_MAX_LEN && segments.length === 2 && segments.every(
+      (segment) => segment !== "." && segment !== ".." && TOOL_ID_SEGMENT_PATTERN.test(segment),
+    );
+  }
   return isValidId(value);
 }
 
@@ -294,14 +303,17 @@ export interface GrantAuditRequest {
   intent: GrantIntent;
 }
 
-/** Per-resource meta-authz: the caller must hold `manage` on the resource to grant/revoke. */
+/** Require resource management before changing grants; conversations express it as `delete`. */
 export async function requireManage(
   caller: Caller,
   resource: Resource,
   ctx: DecisionContext,
   audit?: GrantAuditRequest,
 ): Promise<void> {
-  const check = await authorize({ subject: caller, resource, action: "manage" }, ctx);
+  // Conversation managers and owners have can_delete, with no can_manage relation.
+  // can_share alone must not permit granting manager/delete capabilities.
+  const action = resource.type === "conversation" ? "delete" : "manage";
+  const check = await authorize({ subject: caller, resource, action }, ctx);
   if (check.decision === "ALLOW") return;
   if (check.reason === "AUTHZ_UNAVAILABLE" || check.retriable) {
     if (audit) {

@@ -3,6 +3,7 @@
 import logging
 from contextlib import AsyncExitStack, aclosing
 from typing import Any, AsyncGenerator, Literal
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -17,6 +18,7 @@ from dynamic_agents.config import get_settings
 from dynamic_agents.log_config import conversation_id_var
 from dynamic_agents.models import ChatRequest, ClientContext, DynamicAgentConfig, InputFile, UserContext
 from dynamic_agents.services.app_context_prompt import app_context_scope
+from dynamic_agents.services.execution_lease import NativeThreadBusyError, reserve_native_thread
 from dynamic_agents.services.llm_clients import LLMConfigError
 from dynamic_agents.services.model_capabilities import supports_reasoning_effort
 from dynamic_agents.services.mongo import MongoDBService, get_mongo_service
@@ -26,6 +28,7 @@ from dynamic_agents.services.runtime_cache import (
     get_runtime_cache,
 )
 from dynamic_agents.services.stream_encoders import StreamEncoder, get_encoder
+from dynamic_agents.services.structured_response import StructuredResponseError
 from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryError
 
 logger = logging.getLogger(__name__)
@@ -44,6 +47,7 @@ async def _enforce_chat_authz(*, agent_id: str, user_sub: str | None, autonomous
 
 # Fields that CANNOT be overridden via config_override
 _REJECTED_OVERRIDE_FIELDS: set[str] = {
+    "skill_pins",
     "app_context_prompt",
     "ui",
     "name",
@@ -98,7 +102,16 @@ def apply_config_override(agent: DynamicAgentConfig, config_override: dict[str, 
     # Convert agent to dict, deep merge, reconstruct
     agent_dict = agent.model_dump(by_alias=True)
     merged = _deep_merge(agent_dict, config_override)
-    return DynamicAgentConfig.model_validate(merged)
+    overridden = DynamicAgentConfig.model_validate(merged)
+    original_policy = [
+        entry for entry in agent.features.middleware if entry.type == "structured_response"
+    ] if agent.features else []
+    overridden_policy = [
+        entry for entry in overridden.features.middleware if entry.type == "structured_response"
+    ] if overridden.features else []
+    if original_policy != overridden_policy:
+        raise HTTPException(status_code=400, detail="config_override cannot change structured_response middleware")
+    return overridden
 
 
 def _validate_allowed_tools_subset(
@@ -112,7 +125,7 @@ def _validate_allowed_tools_subset(
     - Cannot enable a server that is disabled (False) in base
     - Cannot add tools not in base's tool list (when base has a specific list)
     - Setting False (disable) is always allowed
-    - Setting True (all) is allowed if base allows the server
+    - True and [] mean all tools and require an unrestricted base configuration
 
     Raises:
         HTTPException(400): If override violates subset constraint.
@@ -145,12 +158,13 @@ def _validate_allowed_tools_subset(
         if override_val is False:
             continue
 
-        # "All tools" is fine if base allows the server at all
-        if override_val is True:
+        if override_val is True or override_val == []:
+            if base_val is not True and base_val != []:
+                raise HTTPException(status_code=400, detail="config_override cannot widen a tool list to all tools")
             continue
 
         # Override is a specific list — validate each tool
-        if isinstance(override_val, list) and isinstance(base_val, list):
+        if isinstance(override_val, list) and isinstance(base_val, list) and base_val:
             extra = set(override_val) - set(base_val)
             if extra:
                 raise HTTPException(
@@ -166,6 +180,7 @@ def _validate_allowed_tools_subset(
 # assisted-by Codex Codex-sonnet-4-6
 router = APIRouter(prefix="/chat", tags=["chat"])
 GENERIC_AGENT_ERROR = "Agent execution failed. Check server logs for details."
+CONVERSATION_BUSY_ERROR = "This conversation is active or owned by another runtime. Wait for it to finish or reconcile its session."
 
 
 class RestartRuntimeRequest(BaseModel):
@@ -269,7 +284,7 @@ async def _collect_invoke_response(
             },
         )
 
-    return {
+    result = {
         "success": True,
         "content": encoder.get_accumulated_content(),
         "thinking": encoder.get_thinking_content() or None,
@@ -277,6 +292,12 @@ async def _collect_invoke_response(
         "conversation_id": request.conversation_id,
         "trace_id": request.trace_id,
     }
+
+    structured_output = encoder.get_structured_output()
+    if structured_output is not None:
+        result["structured_output"] = structured_output
+        result["structured_output_schema_id"] = encoder.get_structured_output_schema_id()
+    return result
 
 
 async def _generate_sse_events(
@@ -317,20 +338,21 @@ async def _generate_sse_events(
         )
 
         # Stream response with trace_id for Langfuse tracing
-        with app_context_scope(agent_config.app_context_prompt, client_context.model_dump() if client_context else None):
-            async with aclosing(
-                runtime.stream(
-                    message,
-                    session_id,
-                    user.email,
-                    trace_id,
-                    encoder,
-                    files=files,
-                    turn_id=turn_id,
-                )
-            ) as frames:
-                async for frame in frames:
-                    yield frame
+        async with reserve_native_thread(mongo._db if mongo else None, agent_config, session_id, uuid4().hex):
+            with app_context_scope(agent_config.app_context_prompt, client_context.model_dump() if client_context else None):
+                async with aclosing(
+                    runtime.stream(
+                        message,
+                        session_id,
+                        user.email,
+                        trace_id,
+                        encoder,
+                        files=files,
+                        turn_id=turn_id,
+                    )
+                ) as frames:
+                    async for frame in frames:
+                        yield frame
 
     except RuntimeCapacityError as e:
         logger.warning(f"Agent runtime at capacity: {e}")
@@ -343,9 +365,9 @@ async def _generate_sse_events(
         # so the client surface (Slack/Webex/UI) can tell the operator what
         # to fix. Anything else falls through to the generic message.
         cause = e.cause
-        if isinstance(cause, LLMConfigError):
+        if isinstance(cause, (LLMConfigError, StructuredResponseError)):
             logger.warning(
-                f"Agent '{agent_config.name}' has no usable LLM config: {cause}"
+                f"Agent '{agent_config.name}' has invalid invocation configuration: {cause}"
             )
             for frame in encoder.on_run_error(str(cause)):
                 yield frame
@@ -355,9 +377,13 @@ async def _generate_sse_events(
             )
             for frame in encoder.on_run_error(GENERIC_AGENT_ERROR):
                 yield frame
-    except ToolCallRecoveryError as exc:
-        logger.warning("Model output recovery exhausted for agent %s", agent_config.id)
+    except (ToolCallRecoveryError, StructuredResponseError) as exc:
+        logger.warning("Agent output request failed for agent %s", agent_config.id)
         for frame in encoder.on_run_error(str(exc)):
+            yield frame
+    except NativeThreadBusyError:
+        logger.info("Native conversation is busy: %s", session_id)
+        for frame in encoder.on_run_error(CONVERSATION_BUSY_ERROR, code="conversation_busy"):
             yield frame
     except Exception:
         logger.exception(f"Error streaming from agent '{agent_config.name}'")
@@ -479,21 +505,32 @@ async def _generate_resume_sse_events(
             mcp_servers,
             session_id,
             user=user,
+            client_context=client_context,
         )
 
         # Resume streaming with form data
-        with app_context_scope(agent_config.app_context_prompt, client_context.model_dump() if client_context else None):
-            async with aclosing(runtime.resume(session_id, user.email, resume_data, trace_id, encoder)) as frames:
-                async for frame in frames:
-                    yield frame
+        async with reserve_native_thread(mongo._db if mongo else None, agent_config, session_id, uuid4().hex):
+            with app_context_scope(agent_config.app_context_prompt, client_context.model_dump() if client_context else None):
+                async with aclosing(runtime.resume(session_id, user.email, resume_data, trace_id, encoder)) as frames:
+                    async for frame in frames:
+                        yield frame
 
     except RuntimeCapacityError as e:
         logger.warning(f"Agent runtime at capacity: {e}")
         for frame in encoder.on_run_error("This agent is at capacity right now. Please try again in a moment."):
             yield frame
-    except ToolCallRecoveryError as exc:
-        logger.warning("Model output recovery exhausted for agent %s", agent_config.id)
+    except RuntimeInitError as exc:
+        message = str(exc.cause) if isinstance(exc.cause, (LLMConfigError, StructuredResponseError)) else GENERIC_AGENT_ERROR
+        logger.warning("Agent resume initialization failed: %s", type(exc.cause).__name__)
+        for frame in encoder.on_run_error(message):
+            yield frame
+    except (ToolCallRecoveryError, StructuredResponseError) as exc:
+        logger.warning("Agent output request failed for agent %s", agent_config.id)
         for frame in encoder.on_run_error(str(exc)):
+            yield frame
+    except NativeThreadBusyError:
+        logger.info("Native conversation is busy: %s", session_id)
+        for frame in encoder.on_run_error(CONVERSATION_BUSY_ERROR, code="conversation_busy"):
             yield frame
     except Exception:
         logger.exception(f"Error resuming stream for agent '{agent_config.name}'")
@@ -626,15 +663,12 @@ async def chat_invoke(
                 user=user,
                 client_context=request.client_context,
             ) as runtime:
-                return await _collect_invoke_response(
-                    runtime=runtime,
-                    request=request,
-                    user=user,
-                    agent=agent,
-                )
+                async with reserve_native_thread(mongo._db, agent, request.conversation_id, uuid4().hex):
+                    return await _collect_invoke_response(runtime=runtime, request=request, user=user, agent=agent)
 
         async with AsyncExitStack() as stack:
             if persist_history:
+                await stack.enter_async_context(reserve_native_thread(mongo._db, agent, request.conversation_id, uuid4().hex))
                 runtime = await cache.get_or_create(
                     agent,
                     mcp_servers,
@@ -660,6 +694,21 @@ async def chat_invoke(
                 agent=agent,
             )
 
+    except NativeThreadBusyError:
+        return JSONResponse(status_code=409, content={"success": False, "error": "Conversation is active or owned by another runtime"})
+    except RuntimeInitError as exc:
+        schema_error = isinstance(exc.cause, StructuredResponseError)
+        logger.warning("Agent invocation initialization failed: %s", type(exc.cause).__name__)
+        return JSONResponse(
+            status_code=422 if schema_error else 500,
+            content={
+                "success": False,
+                "error": str(exc.cause) if schema_error else GENERIC_AGENT_ERROR,
+                "agent_id": agent.id,
+                "conversation_id": request.conversation_id,
+                "trace_id": request.trace_id,
+            },
+        )
     except RuntimeCapacityError as e:
         logger.warning(f"Agent runtime at capacity for invoke: {e}")
         return JSONResponse(
@@ -672,8 +721,8 @@ async def chat_invoke(
                 "trace_id": request.trace_id,
             },
         )
-    except ToolCallRecoveryError as exc:
-        logger.warning("Model output recovery exhausted for agent %s", agent.id)
+    except (ToolCallRecoveryError, StructuredResponseError) as exc:
+        logger.warning("Agent output request failed for agent %s", agent.id)
         return JSONResponse(
             status_code=422,
             content={

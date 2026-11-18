@@ -37,6 +37,7 @@ For chart changes, you can test temporary versions before merging:
 - [ ] AI assistance used to produce this change is disclosed in the description
 - [ ] Review suggestions were applied locally, not with the "Commit suggestion" button (it adds a co-author who has not signed off, which fails DCO)
 - [ ] Functionality is documented
+- [ ] Affected [regression matrix](https://github.com/caipe-io/ai-platform-engineering/blob/main/docs/docs/development/caipe-regression-suite.md) case IDs and execution evidence are listed in validation, or the reason no case changes are needed is stated
 - [ ] New selection controls follow the [selection-control decision table](https://github.com/caipe-io/ai-platform-engineering/blob/main/docs/docs/ui/selection-controls.md), or the custom interaction is justified
 - [ ] All code style checks pass
 - [ ] New code contribution is covered by automated tests

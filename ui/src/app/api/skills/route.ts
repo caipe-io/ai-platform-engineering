@@ -9,6 +9,7 @@ type AgentSkillCatalogDoc,
 } from "@/lib/catalog-skill-projection";
 import { checkOpenFgaTuple,type OpenFgaCheckResult,type OpenFgaTupleKey } from "@/lib/rbac/openfga";
 import { organizationObjectId } from "@/lib/rbac/organization";
+import { mergeCatalogSkills } from "@/lib/catalog-skill-identity";
 import { NextRequest,NextResponse } from "next/server";
 
 /**
@@ -512,26 +513,7 @@ async function aggregateLocally(
     // Hub loading is best-effort
   }
 
-  // Apply precedence: default wins over agent_skills (by name)
-  const merged = new Map<string, CatalogSkill>();
-  const priority: Record<string, number> = {
-    default: 0,
-    agent_skills: 1,
-    hub: 2,
-  };
-  for (const skill of skills) {
-    const existing = merged.get(skill.name);
-    if (!existing || priority[skill.source] < priority[existing.source]) {
-      merged.set(skill.name, skill);
-    }
-  }
-
-  const sortedSkills = Array.from(merged.values()).sort((a, b) => {
-    const pa = priority[a.source] ?? 99;
-    const pb = priority[b.source] ?? 99;
-    if (pa !== pb) return pa - pb;
-    return a.name.localeCompare(b.name);
-  });
+  const sortedSkills = mergeCatalogSkills(skills);
 
   return {
     skills: sortedSkills,

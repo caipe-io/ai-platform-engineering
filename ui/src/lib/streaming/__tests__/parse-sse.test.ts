@@ -61,4 +61,21 @@ describe("parseSSEStream", () => {
       "Response body is not readable",
     );
   });
+
+  it("ignores heartbeat-only frames while preserving explicit empty data", async () => {
+    const response = responseFromChunks([
+      ": keep-",
+      "alive\n\nevent: ping\n\n",
+      "id: 1\nretry: 1000\n\n",
+      "event: empty\ndata:\n\n",
+      ": heartbeat\nevent: content\ndata: hello\n\n",
+      'event: done\ndata: {}\n\n',
+    ]);
+
+    await expect(collect(response)).resolves.toEqual([
+      { event: "empty", data: "" },
+      { event: "content", data: "hello" },
+      { event: "done", data: "{}" },
+    ]);
+  });
 });

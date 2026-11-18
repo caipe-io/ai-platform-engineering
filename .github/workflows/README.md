@@ -137,3 +137,8 @@ jobs:
 **Last Updated:** October 30, 2025  
 **Maintainer:** Platform Engineering Team
 
+
+## Size-label workflow policy
+
+See the [scoped policy and administrator rollout](../actions-policies/README.md).
+The policy JSON requires administrator application; merging it does not change repository settings.

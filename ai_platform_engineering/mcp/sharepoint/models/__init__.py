@@ -4,7 +4,15 @@
 """Models for the SharePoint MCP server."""
 
 from .config import SharePointConfig
-from .inputs import DriveItemInput, ListDriveItemsInput, ListItemsInput, PageInput, ReadFileInput, SearchDriveItemsInput
+from .inputs import (
+    DriveItemInput,
+    ListDriveItemsInput,
+    ListItemsInput,
+    PageInput,
+    ReadFileInput,
+    SearchDriveItemNamesInput,
+    SearchDriveItemsInput,
+)
 
 __all__ = [
     "DriveItemInput",
@@ -12,6 +20,7 @@ __all__ = [
     "ListItemsInput",
     "PageInput",
     "ReadFileInput",
+    "SearchDriveItemNamesInput",
     "SearchDriveItemsInput",
     "SharePointConfig",
 ]

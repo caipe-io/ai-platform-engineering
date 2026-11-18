@@ -141,10 +141,11 @@ async function installEditorMocks(page: Page): Promise<void> {
   });
 }
 
-/** Open the New Agent editor from the dynamic-agents page. */
+/** Open the Create CAIPE Agent editor from the dynamic-agents page. */
 async function openNewAgentEditor(page: Page): Promise<void> {
   await page.goto("/dynamic-agents?tab=agents", { waitUntil: "domcontentloaded" });
-  await page.getByRole("button", { name: /new agent/i }).click();
+  await page.getByRole("group", { name: "Agent catalog actions", exact: true }).getByRole("button", { name: "Add agent", exact: true }).click();
+  await page.getByRole("dialog", { name: "Add agent", exact: true }).getByRole("button", { name: /^Create CAIPE agent/ }).click();
   // Wait for the editor heading to confirm it's mounted
   await expect(page.getByText(/step 1/i)).toBeVisible({ timeout: 10_000 });
 }
@@ -246,7 +247,7 @@ test.describe("AI Review failure UX — blocking review (PR #1866)", () => {
     });
 
     // Attempt Save from the Tools step
-    const saveButton = page.getByRole("button", { name: /save changes|create agent/i });
+    const saveButton = page.getByRole("button", { name: /save changes|create caipe agent/i });
     await saveButton.click();
 
     // 1. Editor must have navigated back to the Instructions step

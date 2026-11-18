@@ -495,6 +495,7 @@ def handle_dm_message(
       workspace_id=team_id,
       thread_ts=thread_ts,
       surface_kind="dm",
+      message_ts=event.get("ts"),
     )
 
     # Download any Slack attachments into base64 multimodal blocks so the model

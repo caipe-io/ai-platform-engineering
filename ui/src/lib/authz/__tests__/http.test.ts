@@ -22,6 +22,7 @@ import {
   decisionContext,
   enforceSubjectBinding,
   isValidId,
+  isValidResourceId,
   parseAction,
   parseGrantee,
   parseGrantIntent,
@@ -123,6 +124,25 @@ describe("parsers", () => {
     expect(() => parseAction("frobnicate")).toThrow(HttpAuthzError);
     expect(parseResourceType("task")).toBe("task");
     expect(() => parseResourceType("nope")).toThrow(HttpAuthzError);
+  });
+});
+
+describe("canonical MCP tool resource IDs", () => {
+  it("accepts exact server/tool IDs while preserving flat tool IDs", () => {
+    expect(parseResource({ type: "tool", id: "mcp-example/read_item" })).toEqual({
+      type: "tool", id: "mcp-example/read_item",
+    });
+    expect(isValidResourceId("tool", "example-tool")).toBe(true);
+    expect(isValidResourceId("agent", "mcp-example/read_item")).toBe(false);
+  });
+
+  it.each([
+    "/read_item", "mcp-example/", "mcp-example/*", "*/read_item",
+    "mcp-example/read/item", "../read_item", "mcp-example/..",
+    "mcp-example/read#caller", "mcp-example/tool:read", "mcp-example/read%2Fitem",
+    "mcp-example/read item", `mcp-example/${"a".repeat(256)}`,
+  ])("rejects malformed or broadened tool ID %s", (id) => {
+    expect(() => parseResource({ type: "tool", id })).toThrow(HttpAuthzError);
   });
 });
 
@@ -247,6 +267,32 @@ describe("requireManage (grant meta-authz)", () => {
     await expect(requireManage(caller, { type: "agent", id: "pe" }, {})).resolves.toBeUndefined();
     expect(mockAuthorize).toHaveBeenCalledWith(expect.objectContaining({ action: "manage", resource: { type: "agent", id: "pe" } }), expect.anything());
     expect(mockEmitGrantAudit).not.toHaveBeenCalled();
+  });
+
+  it("uses the model's delete capability for a conversation manager", async () => {
+    mockAuthorize.mockImplementation(async ({ action }) => action === "delete"
+      ? { decision: "ALLOW", reason: "OK" }
+      : { decision: "DENY", reason: "AUTHZ_UNAVAILABLE", retriable: true });
+    await expect(requireManage(caller, { type: "conversation", id: "example-chat" }, ctx)).resolves.toBeUndefined();
+    expect(mockAuthorize).toHaveBeenCalledTimes(1);
+    expect(mockAuthorize).toHaveBeenCalledWith(
+      { subject: caller, resource: { type: "conversation", id: "example-chat" }, action: "delete" }, ctx,
+    );
+  });
+
+  it.each(["read", "write", "share"])("does not treat conversation %s access as management", async (capability) => {
+    mockAuthorize.mockImplementation(async ({ action }) => action === capability
+      ? { decision: "ALLOW", reason: "OK" }
+      : { decision: "DENY", reason: "NO_CAPABILITY" });
+    await expect(requireManage(caller, { type: "conversation", id: "example-chat" }, ctx)).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("fails closed when conversation management cannot be checked", async () => {
+    mockAuthorize.mockResolvedValue({ decision: "DENY", reason: "AUTHZ_UNAVAILABLE", retriable: true });
+    await expect(requireManage(caller, { type: "conversation", id: "example-chat" }, ctx)).rejects.toMatchObject({
+      status: 503, code: "AUTHZ_UNAVAILABLE",
+    });
+    expect(mockAuthorize).toHaveBeenCalledTimes(1);
   });
 
   it("passes when an organization admin lacks direct resource manage", async () => {

@@ -19,7 +19,8 @@ if str(_APP_DIR) not in sys.path:
 import bootstrap  # noqa: E402
 
 
-def test_build_runtime_constructs_dependencies_without_health_call(monkeypatch) -> None:
+@pytest.mark.parametrize("gateway_enabled", ["false", "true"])
+def test_build_runtime_constructs_dependencies_without_health_call(monkeypatch, gateway_enabled: str) -> None:
   bolt_app = MagicMock()
   sse_client = MagicMock()
   session_manager = MagicMock()
@@ -43,6 +44,7 @@ def test_build_runtime_constructs_dependencies_without_health_call(monkeypatch) 
       "SLACK_COMMAND_RATE_LIMIT": "7",
       "SLACK_COMMAND_RATE_WINDOW": "45",
       "SLACK_LINKING_PROMPT_COOLDOWN": "120",
+      "SLACK_HARNESS_GATEWAY_ENABLED": gateway_enabled,
     }
   )
 
@@ -53,6 +55,7 @@ def test_build_runtime_constructs_dependencies_without_health_call(monkeypatch) 
   assert runtime.command_rate_limit == 7
   assert runtime.command_rate_window == 45.0
   assert runtime.linking_prompt_cooldown == 120.0
+  assert bootstrap.SSEClient.call_args.kwargs["harness_gateway_enabled"] is (gateway_enabled == "true")
   health_call.assert_not_called()
 
 
