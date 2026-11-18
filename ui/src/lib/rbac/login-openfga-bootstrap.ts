@@ -367,22 +367,45 @@ const BEARER_BASELINE_DEDUP_TTL_MS = 10 * 60_000;
 const MAX_BEARER_BASELINE_CACHE_ENTRIES = 1000;
 const bearerBaselineCache = new Map<
   string,
-  { promise: Promise<SyncedBaselineBootstrapResult>; expiresAt: number }
+  { promise: Promise<LoginOpenFgaBootstrapResult>; expiresAt: number }
 >();
 
+async function writeBearerUserBaseline(
+  subject: string,
+  email: string | undefined
+): Promise<LoginOpenFgaBootstrapResult> {
+  try {
+    const writes = effectiveBaselineBootstrapTuples({
+      subject,
+      isAdmin: false,
+      bundle: await getBaselineFgaProfileBundle(),
+      teamOverrides: await teamOverridesForLogin(email),
+    });
+    if (writes.length === 0) return { status: "skipped", tuple_write_count: 0 };
+    const result = await writeOpenFgaTuples({ writes, deletes: [] });
+    return { status: "completed", tuple_write_count: result.writes };
+  } catch (error) {
+    const warning = error instanceof Error ? error.message : String(error);
+    console.warn(`[LoginOpenFGA] Failed to bootstrap bearer-user baseline for ${subject}: ${warning}`);
+    return { status: "failed", tuple_write_count: 0, warning };
+  }
+}
+
 /**
- * Grant the org-member baseline to a bearer-token user, such as a Slack or
- * Webex user acting through an OBO token who never signed in to the web UI.
+ * Grant the member baseline to a bearer-token user, such as a Slack or Webex
+ * user acting through an OBO token who never signed in to the web UI. Team
+ * member-profile overrides apply as they do at login; admin grants never do.
  * Deduplicated per subject; a failed attempt is retried on the next request.
  */
 export function ensureBearerUserBaselineAccess(
-  subject: string
-): Promise<SyncedBaselineBootstrapResult> {
+  subject: string,
+  email?: string
+): Promise<LoginOpenFgaBootstrapResult> {
   const key = subject.trim();
   const cached = bearerBaselineCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.promise;
 
-  const promise = reconcileSyncedUsersBaselineAccess([key]).then((result) => {
+  const promise = writeBearerUserBaseline(key, email).then((result) => {
     if (result.status === "failed") bearerBaselineCache.delete(key);
     return result;
   });

@@ -677,7 +677,7 @@ export async function getAuthFromBearerOrSession(
       // Bot users may never sign in to the web UI, where login writes this baseline.
       if (!bearerSession.isServiceAccount && identity.sub && hasRequiredGroup(identity.groups)) {
         const { ensureBearerUserBaselineAccess } = await import('@/lib/rbac/login-openfga-bootstrap');
-        await ensureBearerUserBaselineAccess(identity.sub);
+        await ensureBearerUserBaselineAccess(identity.sub, identity.email);
       }
     }
     return {

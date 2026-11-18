@@ -744,5 +744,55 @@ describe("login OpenFGA bootstrap", () => {
       expect(retried.status).toBe("completed");
       expect(mockWriteOpenFgaTuples).toHaveBeenCalledTimes(2);
     });
+
+    it("applies a team member-profile override instead of the global baseline", async () => {
+      mockGetCollection.mockImplementation(async (name: string) => {
+        if (name === "openfga_baseline_profiles") {
+          return {
+            findOne: jest.fn().mockImplementation(async (query: { _id: string }) =>
+              query._id === "profiles_v2"
+                ? {
+                    _id: "profiles_v2",
+                    global_member_profile_id: "org-member",
+                    global_admin_profile_id: "org-admin",
+                    profiles: [
+                      { id: "org-member", name: "Organization member", role: "member", grants: ["organization-member"] },
+                      { id: "org-admin", name: "Organization admin", role: "admin", grants: ["organization-admin"] },
+                      { id: "support-member", name: "Support member", role: "member", grants: ["admin-surface:feedback:read"] },
+                    ],
+                  }
+                : null,
+            ),
+          };
+        }
+        if (name === "teams") {
+          return {
+            find: jest.fn().mockReturnValue({
+              toArray: jest.fn().mockResolvedValue([
+                { _id: "team-1", slug: "support", name: "Support", baseline_profile_overrides: { member_profile_id: "support-member" } },
+              ]),
+            }),
+          };
+        }
+        return { findOne: jest.fn().mockResolvedValue(null) };
+      });
+      mockGetRbacCollection.mockImplementation(async (key: string) => {
+        if (key === "teamMembershipSources") {
+          return stubTeamMembershipSources([
+            { team_id: "team-1", team_slug: "support", user_email: "user@example.com", relationship: "member", source_type: "manual", status: "active" },
+          ]);
+        }
+        throw new Error(`unexpected rbac collection ${key}`);
+      });
+      const { ensureBearerUserBaselineAccess } = await import("../login-openfga-bootstrap");
+
+      const result = await ensureBearerUserBaselineAccess("sub-bot-user", "user@example.com");
+
+      expect(result.status).toBe("completed");
+      expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+        writes: [{ user: "user:sub-bot-user", relation: "reader", object: "admin_surface:feedback" }],
+        deletes: [],
+      });
+    });
   });
 });
