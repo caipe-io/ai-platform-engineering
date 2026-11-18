@@ -150,6 +150,7 @@ export function ReportProblemDialog({
   const [screenshotDataUrl, setScreenshotDataUrl] = useState<string | null>(null);
   const canOfferServiceDesk = Boolean(options?.serviceDesk) && !feedbackContext && !onBeforeSubmit;
   const isServiceDesk = requestMode === "service-desk" && canOfferServiceDesk;
+  const unavailable = options?.feedbackEnabled === false && !canOfferServiceDesk;
   const sdOptions = options?.serviceDesk;
   const sdSeverityValue = sdSeverity || (sdOptions?.severities.includes("Medium") ? "Medium" : sdOptions?.severities[0] ?? "");
   const sdTypeValue = sdType || (sdOptions?.types.includes("Ticket") ? "Ticket" : sdOptions?.types[0] ?? "");
@@ -207,7 +208,6 @@ export function ReportProblemDialog({
     void fetchFeedbackOptions(contextUrl, conversationId, controller.signal, componentId).then(data => {
       if (controller.signal.aborted) return;
       setOptions(data);
-      if (data.feedbackEnabled === false && data.serviceDesk) setRequestMode("service-desk");
       setFeature(componentId === initialComponentId && initialFeature && data.features.includes(initialFeature)
         ? initialFeature : data.features.includes("Other") ? "Other" : data.features[0]);
     }).catch(error => {
@@ -515,7 +515,7 @@ export function ReportProblemDialog({
                     value={item.appId === null ? "platform" : `app:${item.appId}`}>{item.label}</option>)}
                 </Select>
               </div>
-              {!isServiceDesk && <div className="flex min-w-0 flex-1 items-center gap-2">
+              {!isServiceDesk && !unavailable && <div className="flex min-w-0 flex-1 items-center gap-2">
                 <label htmlFor={`${fieldId}-feature`} className="shrink-0 text-xs font-medium text-muted-foreground">Feature</label>
                 <Select id={`${fieldId}-feature`} value={feature} disabled={!options} className="min-w-0 flex-1" onChange={event => setFeature(event.target.value)}>
                   {!options && <option value="Other">{optionsError ? "Categories unavailable" : "Loading categories…"}</option>}
@@ -524,6 +524,15 @@ export function ReportProblemDialog({
               </div>}
             </div>
 
+            {unavailable && (
+              <>
+                <div role="alert" className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm sm:col-span-2">
+                  Request help is unavailable for this component.
+                </div>
+                <Button className="w-full sm:col-span-2" onClick={() => onOpenChange(false)}>Close</Button>
+              </>
+            )}
+            {!unavailable && (<>
             {(isServiceDesk ? options?.serviceDesk : options?.destination) && (
               <p className="flex items-center gap-2 text-xs text-muted-foreground sm:col-span-2">
                 <GitBranch aria-hidden="true" className="h-4 w-4 shrink-0" />
@@ -776,6 +785,7 @@ export function ReportProblemDialog({
               {isServiceDesk ? "Submit Request" : "Submit Report"}
             </Button>
             </div>
+            </>)}
           </div>
         )}
 

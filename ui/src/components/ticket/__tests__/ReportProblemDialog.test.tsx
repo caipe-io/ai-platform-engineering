@@ -530,13 +530,37 @@ describe("Request help", () => {
     }
   });
 
-  it("offers only Request help when ordinary feedback is unavailable", async () => {
+  it.each([
+    ["the chat feedback flow", { onBeforeSubmit: jest.fn() }, { serviceDesk }],
+    ["a component without Request help", {}, {}],
+  ])("says Request help is unavailable and hides the form in %s when feedback is off", async (_name, props, extra) => {
+    const onOpenChange = jest.fn();
+    mockFetchFeedbackOptions.mockResolvedValue({ appId: null, label: "Platform", features: ["Other"], feedbackEnabled: false, ...extra });
+    render(<ReportProblemDialog open onOpenChange={onOpenChange} {...props} />);
+    expect(await screen.findByText("Request help is unavailable for this component.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Submit/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Short title *")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Component *")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("does not show the unavailable notice while Request help can be chosen", async () => {
     mockFetchFeedbackOptions.mockResolvedValue({ appId: null, label: "Platform", features: ["Other"], serviceDesk, feedbackEnabled: false });
     render(<ReportProblemDialog open onOpenChange={jest.fn()} />);
-    expect(await screen.findByLabelText("Description *")).toBeInTheDocument();
+    await screen.findByRole("button", { name: "Request help" });
+    expect(screen.queryByText("Request help is unavailable for this component.")).not.toBeInTheDocument();
+  });
+
+  it("does not select Request help when ordinary feedback is unavailable", async () => {
+    mockFetchFeedbackOptions.mockResolvedValue({ appId: null, label: "Platform", features: ["Other"], serviceDesk, feedbackEnabled: false });
+    render(<ReportProblemDialog open onOpenChange={jest.fn()} />);
+    expect(await screen.findByRole("button", { name: "Request help" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "Bug" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Enhancement" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Request help" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByLabelText("Description *")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Request help" }));
+    expect(screen.getByLabelText("Description *")).toBeInTheDocument();
   });
 
   it.each(["feedback", "service-desk"])("retains the submitted %s payload for copy and retry after component changes", async mode => {
