@@ -1906,6 +1906,8 @@ class AgentRuntime:
         if "metadata" not in config:
             config["metadata"] = {}
         config["metadata"]["user_id"] = user_id
+        # The Langfuse callback handler only reads langfuse_-prefixed keys as trace attributes.
+        config["metadata"]["langfuse_user_id"] = user_id
         config["metadata"]["agent_config_id"] = self.config.id
         config["metadata"]["agent_name"] = self.config.name
 
