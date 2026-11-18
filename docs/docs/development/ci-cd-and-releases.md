@@ -77,9 +77,13 @@ To build an RC on demand, use the prerelease workflow:
 gh workflow run release-prerelease.yml -f release_branch=release/1.4.0
 ```
 
-RC/hotfix builds publish image and chart artifacts without creating GitHub Release
-entries or updating `CHANGELOG.md`. GitHub Release entries are reserved for stable
-versions; draft entries are also visible to maintainers in the Releases tab.
+RC builds publish image and chart artifacts, then `release-finalize.yml` creates a
+GitHub **Pre-release** after every required tag-push build succeeds at the tag's
+exact commit. RC notes show changes since the previous reachable RC in the same
+series (or the preceding reachable stable tag for the first RC), a full comparison
+against that stable tag, and exact Helm/image installation commands. RCs require
+no release blog and never update `CHANGELOG.md` or the `latest` image alias.
+Hotfix test tags, canary, and dev builds remain artifacts only.
 Retain RC Git tags after a stable release so their original commits remain
 available from the Tags tab.
 
@@ -89,7 +93,7 @@ Final releases use plain `x.y.z` tags and are always cut manually:
 
 1. Open a PR from `release/x.y.z` to `main`. `pr-version-bump.yml` detects the release merge and commits the final version files and changelog onto that PR branch.
 2. Merge the release PR to `main`. `auto-tag.yml` detects the merge and dispatches `release-manual.yml`.
-3. `release-manual.yml` validates the version — it must be a plain `x.y.z` strictly greater than the latest stable tag — then creates the final tag, pushes it, and creates a draft GitHub Release. RC inputs are rejected.
+3. `release-manual.yml` validates the stable version — a plain `x.y.z` strictly greater than the latest stable tag — then creates the final tag, pushes it, and creates a draft GitHub Release. The same workflow accepts increasing RC/hotfix inputs for candidate builds; RC publication follows the separate pre-release policy above.
 4. The tag triggers Docker and Helm CI for every component; each notifies `release-finalize.yml` on completion.
 5. `release-finalize.yml` publishes the draft once all required workflows pass, then dispatches post-release security scanning and sanity tests. It retains existing RC Git tags.
 
@@ -104,9 +108,11 @@ If a required workflow fails, the release stays a draft with a failure note for 
 - Update incrementally so published history survives even if historical tags were
   removed. `prepare-release` passes `--incremental --merge-prerelease` when
   generating the next stable entry.
-- To remove old RC entries from GitHub's Releases tab, delete the RC **Release
-  records**, including drafts. This does not require deleting registry images or
-  git tags.
+- RC change sets live in GitHub pre-release notes; they do not create stable
+  changelog sections. The stable release rolls up all changes since the preceding
+  stable release regardless of RC publication. Stable GitHub Release notes also
+  explicitly start at the preceding stable tag, so published RCs cannot shorten
+  the generated change set.
 
 ## Useful Workflow Reference
 
@@ -114,9 +120,10 @@ If a required workflow fails, the release stays a draft with a failure note for 
 | --- | --- |
 | `.github/workflows/pr-version-bump.yml` | PR labels, branch freshness checks, release/*→main version preparation |
 | `.github/workflows/auto-tag.yml` | Detects release-branch merges to main; creates `-rc.N`/`-hotfix.N` tags on release branch pushes |
-| `.github/workflows/release-manual.yml` | Validates and creates the final `x.y.z` tag and draft GitHub Release |
+| `.github/workflows/release-manual.yml` | Validates stable/RC/hotfix promotion from main; only stable promotions create a draft GitHub Release |
 | `.github/workflows/release-prerelease.yml` | Manually cuts an `-rc.N`/`-hotfix.N` tag on demand |
-| `.github/workflows/release-finalize.yml` | Publishes draft release after required CI workflows pass |
+| `.github/workflows/release-finalize.yml` | Publishes stable drafts or RC pre-releases after required CI workflows pass |
+| `.github/actions/publish-rc-release/action.yml` | Generates explicit RC delta/full comparison notes and exact install commands; publishes with `prerelease=true`, `latest=false` |
 | `.github/workflows/ci-*.yml` | Publishes `canary` on main pushes, and every tag on tag pushes |
 | `.github/workflows/ci-helm.yml` | Publishes the Helm chart the same way |
 | `.github/workflows/prebuild-*.yml` | Publishes temporary prebuild images and charts for PR testing |

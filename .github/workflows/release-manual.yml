@@ -22,6 +22,7 @@ jobs:
       RELEASE_VERSION: ${{ github.event.inputs.version }}
     outputs:
       current_version: ${{ steps.validate.outputs.current_version }}
+      previous_stable: ${{ steps.validate.outputs.previous_stable }}
       is_final_release: ${{ steps.channel.outputs.is_final_release }}
     steps:
       - name: 🔒 Harden runner
@@ -87,6 +88,14 @@ jobs:
           RAW_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
           echo "📋 Current version: $RAW_VERSION"
           echo "current_version=$RAW_VERSION" >> "$GITHUB_OUTPUT"
+          PREVIOUS_STABLE=""
+          while IFS= read -r tag; do
+            if [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              PREVIOUS_STABLE="$tag"
+              break
+            fi
+          done < <(git tag --sort=-version:refname)
+          echo "previous_stable=$PREVIOUS_STABLE" >> "$GITHUB_OUTPUT"
 
       - name: 🐍 Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -103,6 +112,8 @@ jobs:
           allow_prerelease: 'true'
 
       - name:  Commit, tag, and push
+        env:
+          CURRENT_VERSION: ${{ steps.validate.outputs.current_version }}
         run: |
           set -euo pipefail
 
@@ -120,7 +131,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "ℹ️ No file changes needed — files already at $NEW_VERSION"
           else
-            CURRENT_VERSION="${{ steps.validate.outputs.current_version }}"
             if [[ -n "$CURRENT_VERSION" ]]; then
               git commit -m "bump: version $CURRENT_VERSION → $NEW_VERSION"
             else
@@ -138,7 +148,8 @@ jobs:
 
           if [[ "$NEW_VERSION" == *-rc.* || "$NEW_VERSION" == *-hotfix.* ]]; then
             echo "Build-only tag $NEW_VERSION pushed; candidate CI publishes versioned images and charts." >> "$GITHUB_STEP_SUMMARY"
-            echo "No GitHub Release, stable changelog, or latest alias is created for this promotion." >> "$GITHUB_STEP_SUMMARY"
+            echo "RC tags receive a GitHub pre-release after required builds pass; hotfix tags remain artifacts only." >> "$GITHUB_STEP_SUMMARY"
+            echo "Candidate promotion does not update the stable changelog or latest alias." >> "$GITHUB_STEP_SUMMARY"
           fi
           echo "✅ Committed and pushed release $NEW_VERSION"
           echo ""
@@ -167,6 +178,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           RELEASE_INITIATOR: ${{ github.actor }}
+          PREVIOUS_STABLE: ${{ needs.commit-release.outputs.previous_stable }}
         run: |
           set -euo pipefail
 
@@ -183,10 +195,16 @@ jobs:
             "<!-- release-initiator:$RELEASE_INITIATOR -->" \
             "📖 Release notes: [${SERIES_MAJOR_MINOR}.0 release notes]($SERIES_URL)")
 
+          # Published RCs must not shorten the stable release's change set.
+          NOTES_ARGS=()
+          if [[ -n "$PREVIOUS_STABLE" ]]; then
+            NOTES_ARGS+=(--notes-start-tag "$PREVIOUS_STABLE")
+          fi
           gh release create "$NEW_VERSION" \
             --repo "${{ github.repository }}" \
             --title "Release $NEW_VERSION" \
             --generate-notes \
+            "${NOTES_ARGS[@]}" \
             --notes "$NOTES" \
             --draft
 
@@ -195,11 +213,12 @@ jobs:
           echo "🔗 https://github.com/${{ github.repository }}/releases/tag/$NEW_VERSION"
 
       - name: 📊 Summary
+        env:
+          CURRENT_VERSION: ${{ needs.commit-release.outputs.current_version }}
         run: |
           set -euo pipefail
 
           NEW_VERSION="$RELEASE_VERSION"
-          CURRENT_VERSION="${{ needs.commit-release.outputs.current_version }}"
 
           echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

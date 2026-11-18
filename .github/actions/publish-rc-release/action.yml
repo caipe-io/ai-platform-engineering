@@ -1,0 +1,84 @@
+name: Publish RC Release
+description: Publish RC notes and installation commands after the required artifact builds pass
+inputs:
+  tag:
+    description: Existing x.y.z-rc.N tag to publish
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Publish candidate change set
+      shell: bash
+      env:
+        RC_TAG: ${{ inputs.tag }}
+        GH_REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        if ! [[ "$RC_TAG" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-rc\.([1-9][0-9]*)$ ]]; then
+          echo "Expected an RC tag, got $RC_TAG" >&2
+          exit 1
+        fi
+        BASE="${BASH_REMATCH[1]}"
+        NUMBER="${BASH_REMATCH[2]}"
+        git rev-parse --verify "refs/tags/$RC_TAG^{commit}" >/dev/null
+
+        # Only use baselines reachable from this candidate, including release branches.
+        STABLE=""
+        PREVIOUS=""
+        while IFS= read -r tag; do
+          if [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$tag" != "$BASE" ]] &&
+             [[ "$(printf '%s\n' "$tag" "$BASE" | sort -V | head -n1)" == "$tag" ]]; then
+            STABLE="$tag"
+            break
+          fi
+        done < <(git tag --merged "$RC_TAG" --sort=-version:refname)
+        if [[ -z "$STABLE" ]]; then
+          echo "No preceding stable tag is reachable from $RC_TAG" >&2
+          exit 1
+        fi
+        BASE_RE="${BASE//./\\.}"
+        while IFS= read -r tag; do
+          if [[ "$tag" =~ ^${BASE_RE}-rc\.([1-9][0-9]*)$ ]] &&
+             (( 10#${BASH_REMATCH[1]} < 10#$NUMBER )); then
+            PREVIOUS="$tag"
+            break
+          fi
+        done < <(git tag --merged "$RC_TAG" --sort=-version:refname)
+        PREVIOUS="${PREVIOUS:-$STABLE}"
+
+        # Listing must succeed: an API failure must not be mistaken for a missing release.
+        EXISTING=$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
+          --jq ".[] | select(.tag_name == \"$RC_TAG\") | .draft")
+        if [[ "$EXISTING" == false ]]; then
+          echo "RC $RC_TAG is already published; preserving its notes."
+          exit 0
+        fi
+
+        NOTES_FILE=$(mktemp)
+        trap 'rm -f "$NOTES_FILE"' EXIT
+        OWNER="${GH_REPO%%/*}"
+        OWNER="${OWNER,,}"
+        COMPARE="https://github.com/$GH_REPO/compare"
+        {
+          printf '# Release candidate %s\n\nFor testing before the stable release.\n\n' "$RC_TAG"
+          printf '## Changes since %s\n\n' "$PREVIOUS"
+          gh api --method POST "repos/$GH_REPO/releases/generate-notes" \
+            -f tag_name="$RC_TAG" -f previous_tag_name="$PREVIOUS" --jq '.body'
+          printf '\n## Full changes since stable %s\n\n' "$STABLE"
+          printf '[%s → %s](%s/%s...%s)\n\n' "$STABLE" "$RC_TAG" "$COMPARE" "$STABLE" "$RC_TAG"
+          printf '## Install this candidate\n\n```bash\n'
+          printf 'helm upgrade --install ai-platform oci://ghcr.io/%s/charts/ai-platform-engineering --version %s\n' "$OWNER" "$RC_TAG"
+          printf 'docker pull ghcr.io/%s/caipe-ui:%s\n' "$OWNER" "$RC_TAG"
+          printf 'docker pull ghcr.io/%s/caipe-dynamic-agents:%s\n' "$OWNER" "$RC_TAG"
+          printf '```\n\nRetain your deployment values and credentials when upgrading.\n'
+          printf '\n## Known issues\n\nReview [open release blockers](https://github.com/%s/issues?q=is%%3Aissue+is%%3Aopen+label%%3Arelease-blocker) and report candidate regressions with this version.\n' "$GH_REPO"
+        } > "$NOTES_FILE"
+        if [[ "$EXISTING" == true ]]; then
+          gh release edit "$RC_TAG" --repo "$GH_REPO" --verify-tag \
+            --title "Release $RC_TAG" --notes-file "$NOTES_FILE" \
+            --prerelease --latest=false --draft=false
+        else
+          gh release create "$RC_TAG" --repo "$GH_REPO" --verify-tag \
+            --title "Release $RC_TAG" --notes-file "$NOTES_FILE" \
+            --prerelease --latest=false
+        fi

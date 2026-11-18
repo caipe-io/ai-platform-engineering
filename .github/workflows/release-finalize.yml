@@ -23,6 +23,11 @@ permissions:
   contents: read
   actions: read
 
+# Build completions for one tag must not race to create its release entry.
+concurrency:
+  group: release-finalize-${{ github.event.client_payload.tag || github.event.workflow_run.head_branch || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   check-and-publish:
     name: Check CI Status and Publish
@@ -71,7 +76,7 @@ jobs:
             TAG="$UPSTREAM_BRANCH"
             WORKFLOW="$UPSTREAM_WORKFLOW"
             CONCLUSION="$UPSTREAM_CONCLUSION"
-            if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then exit 0; fi
+            if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]]; then exit 0; fi
             tag_sha=$(gh api "repos/${GH_REPOSITORY}/commits/${TAG}" --jq '.sha')
             if [[ "$tag_sha" != "$UPSTREAM_SHA" ]]; then exit 0; fi
           fi
@@ -85,10 +90,14 @@ jobs:
             exit 0
           fi
 
-          if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || (( ${#TAG} > 128 )); then
-            echo "❌ Tag must match x.y.z and be at most 128 characters"
+          if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]] || (( ${#TAG} > 128 )); then
+            echo "❌ Tag must match x.y.z or x.y.z-rc.N and be at most 128 characters"
             exit 1
           fi
+
+          IS_RC=false
+          if [[ "$TAG" == *-rc.* ]]; then IS_RC=true; fi
+          tag_sha=$(gh api "repos/${GH_REPOSITORY}/commits/${TAG}" --jq '.sha')
 
           if ! [[ "$CONCLUSION" =~ ^(success|failure|cancelled|skipped|timed_out|action_required|neutral)$ ]]; then
             echo "❌ Unexpected workflow conclusion: $CONCLUSION"
@@ -102,6 +111,8 @@ jobs:
 
           {
             echo "tag=$TAG"
+            echo "is_rc=$IS_RC"
+            echo "tag_sha=$tag_sha"
             echo "workflow=$WORKFLOW"
             echo "conclusion=$CONCLUSION"
           } >> "$GITHUB_OUTPUT"
@@ -112,11 +123,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.payload.outputs.tag }}
+          EXPECTED_SHA: ${{ steps.payload.outputs.tag_sha }}
+          IS_RC: ${{ steps.payload.outputs.is_rc }}
         run: |
           echo "🔍 Checking CI statuses for tag: $TAG"
           echo ""
 
-          # Required CI workflows that must pass for release.
+          set -euo pipefail
+          # Required CI workflows that must pass for stable and RC publication.
           # Skill Scanner is gated alongside the other component images so a
           # broken `ghcr.io/<owner>/skill-scanner:<appVersion>` actually blocks
           # the release — the skill-scanner subchart in
@@ -153,8 +167,9 @@ jobs:
               --repo="${{ github.repository }}" \
               --workflow="$WF_NAME" \
               --branch="$TAG" \
+              --event=push \
               --limit=1 \
-              --json status,conclusion,databaseId \
+              --json status,conclusion,databaseId,headSha \
               2>/dev/null || echo "[]")
 
             RUN_COUNT=$(echo "$RUN_DATA" | jq 'length')
@@ -168,12 +183,20 @@ jobs:
             STATUS=$(echo "$RUN_DATA" | jq -r '.[0].status // "unknown"')
             CONCLUSION=$(echo "$RUN_DATA" | jq -r '.[0].conclusion // "null"')
             RUN_ID=$(echo "$RUN_DATA" | jq -r '.[0].databaseId')
+            RUN_SHA=$(echo "$RUN_DATA" | jq -r '.[0].headSha')
+
+            if [[ "$RUN_SHA" != "$EXPECTED_SHA" ]]; then
+              echo "❌ workflow commit does not match the release tag"
+              ALL_PASSED=false
+              ANY_FAILED=true
+              continue
+            fi
 
             if [[ "$STATUS" == "completed" ]]; then
               if [[ "$CONCLUSION" == "success" ]]; then
                 echo "✅ passed"
-              elif [[ "$CONCLUSION" == "skipped" ]]; then
-                echo "⏭️ skipped (OK)"
+              elif [[ "$CONCLUSION" == "skipped" && "$IS_RC" != true ]]; then
+                echo "⏭️ skipped (OK for stable releases)"
               else
                 echo "❌ failed ($CONCLUSION)"
                 ALL_PASSED=false
@@ -212,9 +235,25 @@ jobs:
             echo "⏳ Waiting for CI workflows to start"
           fi
 
+      - name: Checkout trusted RC publisher
+        if: steps.check-cis.outputs.all_passed == 'true' && steps.payload.outputs.is_rc == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Publish RC pre-release
+        if: steps.check-cis.outputs.all_passed == 'true' && steps.payload.outputs.is_rc == 'true'
+        uses: ./.github/actions/publish-rc-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          tag: ${{ steps.payload.outputs.tag }}
+
       - name: 🚀 Publish release
         id: publish-release
-        if: steps.check-cis.outputs.all_passed == 'true'
+        if: steps.check-cis.outputs.all_passed == 'true' && steps.payload.outputs.is_rc == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.payload.outputs.tag }}
@@ -238,7 +277,7 @@ jobs:
           echo "🔗 $(echo "$RELEASE_INFO" | jq -r '.url')"
 
       - name: ❌ Mark release as failed
-        if: steps.check-cis.outputs.any_failed == 'true'
+        if: steps.check-cis.outputs.any_failed == 'true' && steps.payload.outputs.is_rc == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.payload.outputs.tag }}
@@ -318,23 +357,24 @@ jobs:
           ALL_PASSED: ${{ steps.check-cis.outputs.all_passed }}
           ANY_FAILED: ${{ steps.check-cis.outputs.any_failed }}
           ANY_RUNNING: ${{ steps.check-cis.outputs.any_running }}
+          TRIGGER_WORKFLOW: ${{ steps.payload.outputs.workflow }}
         run: |
           echo "## Release Finalize Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Tag | \`$TAG\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Triggered by | \`${{ steps.payload.outputs.workflow }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered by | \`$TRIGGER_WORKFLOW\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [[ "$ALL_PASSED" == "true" ]]; then
             echo "### ✅ Release Published" >> $GITHUB_STEP_SUMMARY
             echo "All CI builds passed. Release has been published." >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "🧹 Old RC tags (for versions < \`$TAG\`) have been cleaned up." >> $GITHUB_STEP_SUMMARY
+            echo "Existing RC Git tags are retained." >> $GITHUB_STEP_SUMMARY
           elif [[ "$ANY_FAILED" == "true" ]]; then
             echo "### ❌ Release Failed" >> $GITHUB_STEP_SUMMARY
-            echo "One or more CI builds failed. Release remains as draft." >> $GITHUB_STEP_SUMMARY
+            echo "One or more CI builds failed. Publication is blocked; any existing draft remains unpublished." >> $GITHUB_STEP_SUMMARY
           elif [[ "$ANY_RUNNING" == "true" ]]; then
             echo "### ⏳ Waiting for CI" >> $GITHUB_STEP_SUMMARY
             echo "Some CI builds are still running. Will check again when they complete." >> $GITHUB_STEP_SUMMARY

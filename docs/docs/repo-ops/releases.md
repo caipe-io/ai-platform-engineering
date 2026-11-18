@@ -21,8 +21,9 @@ accepts explicit stable, RC, or hotfix versions from main. For stable tags,
 `release-finalize.yml` publishes the draft GitHub Release automatically after
 the required builds pass.
 
-RC and hotfix test images and charts remain prerelease artifacts. They do not create entries in
-GitHub Releases or `CHANGELOG.md`, and they never update the `latest` image alias.
+RC tags receive a published GitHub **Pre-release** after every required artifact
+build succeeds for that tag's commit. Hotfix test tags remain artifacts only.
+Neither channel updates `CHANGELOG.md` or the `latest` image alias.
 RC Git tags are retained after stable releases and remain available in GitHub's
 Tags tab.
 
@@ -57,6 +58,19 @@ finalization; keep a compatible baseline/promotion-revert plan.
 
 If fixes are needed, merge them into the release branch — `auto-tag.yml` creates `x.y.z-rc.2`, `rc.3`, etc.
 
+Each RC pre-release includes:
+
+- Generated changes since the previous reachable RC in the same version series;
+  the first RC uses the preceding reachable stable tag.
+- A full comparison against that stable tag.
+- Exact Helm and image installation commands and a link to open release blockers.
+
+For example, `1.4.0-rc.7` compares against `1.4.0-rc.6`, with a second link for
+all changes since `1.3.6`. An RC does not require a release blog post. Both manual
+main promotions and release-branch tags use the same publication gate. Missing,
+running, failed, skipped, or mismatched-commit required builds block RC publication.
+Concurrent completion events are serialized; repeat events preserve published notes.
+
 ---
 
 ## Step 3 — Finalize the release
@@ -75,7 +89,7 @@ Manual promotion supports these channels:
 
 | Input | Result |
 | --- | --- |
-| `x.y.z-rc.N` | Versioned candidate images/chart; no GitHub Release, stable changelog, or `latest` update |
+| `x.y.z-rc.N` | Versioned candidate images/chart; GitHub pre-release with RC changes and install commands after required builds pass; no stable changelog or `latest` update |
 | `x.y.z-hotfix.N` | Versioned hotfix test images/chart; no GitHub Release, stable changelog, or `latest` update |
 | `x.y.z` | Stable tag, draft GitHub Release, stable changelog, and eligibility for `latest` |
 

@@ -360,3 +360,196 @@ def test_mcp_matrix_uses_explicit_manual_version(
   )
   assert json.loads(outputs["agents_to_build"]) == expected
   assert outputs["should_build"] == "true"
+
+
+@pytest.fixture
+def release_cli(tmp_path: Path) -> Path:
+  cli = tmp_path / "bin" / "gh"
+  cli.parent.mkdir()
+  cli.write_text(f"#!{sys.executable}\n" + '''
+import json
+import os
+from pathlib import Path
+import sys
+
+args = sys.argv[1:]
+entry = {"args": args}
+if "--notes-file" in args:
+    entry["notes"] = Path(args[args.index("--notes-file") + 1]).read_text()
+with open(os.environ["CALLS"], "a") as calls:
+    calls.write(json.dumps(entry) + "\\n")
+if any("generate-notes" in arg for arg in args):
+    if os.environ.get("FAIL_NOTES") == "true":
+        sys.exit(1)
+    print("* fix: repair example behavior (#12)")
+elif args[0] == "api":
+    if os.environ.get("FAIL_LIST") == "true":
+        sys.exit(1)
+    print(os.environ.get("EXISTING", ""))
+else:
+    print("https://github.com/example/project/releases/tag/1.1.0-rc.7")
+''')
+  cli.chmod(0o700)
+  return cli.parent
+
+
+@pytest.mark.parametrize(
+  ("tag", "previous", "expected"),
+  [("1.1.0-rc.1", [], "1.0.0"),
+   ("1.1.0-rc.7", ["1.1.0-rc.1", "1.1.0-rc.6"], "1.1.0-rc.6"),
+   ("1.1.0-rc.11", ["1.1.0-rc.2", "1.1.0-rc.9", "1.1.0-rc.10"], "1.1.0-rc.10")],
+)
+def test_rc_notes_use_explicit_baselines_and_exact_install_versions(
+  repository: Path, release_cli: Path, tag: str, previous: list[str], expected: str,
+) -> None:
+  # Other series and future tags must never become the incremental baseline.
+  for ref in [*previous, "1.0.1-rc.20", "2.0.0", "1.1.0-rc.99", tag]:
+    subprocess.run(["git", "tag", ref], cwd=repository, check=True)
+  calls = repository / "calls"
+  subprocess.run(
+    ["bash", "-c", action_script("publish-rc-release", "Publish candidate")],
+    cwd=repository,
+    env={**os.environ, "PATH": f"{release_cli}:{os.environ['PATH']}",
+         "RC_TAG": tag, "GH_REPO": "example/project", "CALLS": str(calls)},
+    check=True, capture_output=True, text=True,
+  )
+  entries = [json.loads(line) for line in calls.read_text().splitlines()]
+  generate = next(entry["args"] for entry in entries if any("generate-notes" in arg for arg in entry["args"]))
+  assert f"previous_tag_name={expected}" in generate
+  assert f"tag_name={tag}" in generate
+  publish = entries[-1]
+  assert publish["args"][:3] == ["release", "create", tag]
+  assert {"--verify-tag", "--prerelease", "--latest=false"} <= set(publish["args"])
+  assert f"## Changes since {expected}" in publish["notes"]
+  assert "* fix: repair example behavior (#12)" in publish["notes"]
+  assert f"compare/1.0.0...{tag}" in publish["notes"]
+  assert f"oci://ghcr.io/example/charts/ai-platform-engineering --version {tag}" in publish["notes"]
+  assert f"docker pull ghcr.io/example/caipe-ui:{tag}" in publish["notes"]
+  assert f"docker pull ghcr.io/example/caipe-dynamic-agents:{tag}" in publish["notes"]
+
+
+@pytest.mark.parametrize(
+  ("overrides", "success", "publication"),
+  [({"EXISTING": "false"}, True, None),
+   ({"EXISTING": "true"}, True, "edit"),
+   ({"FAIL_NOTES": "true"}, False, None),
+   ({"FAIL_LIST": "true"}, False, None),
+   ({"RC_TAG": "1.1.0-dev.1"}, False, None),
+   ({"RC_TAG": "1.1.0-hotfix.1"}, False, None)],
+)
+def test_rc_publication_preserves_published_notes_and_stops_on_api_errors(
+  repository: Path, release_cli: Path, overrides: dict[str, str], success: bool, publication: str | None,
+) -> None:
+  subprocess.run(["git", "tag", "1.1.0-rc.7"], cwd=repository, check=True)
+  calls = repository / "calls"
+  result = subprocess.run(
+    ["bash", "-c", action_script("publish-rc-release", "Publish candidate")],
+    cwd=repository,
+    env={**os.environ, "PATH": f"{release_cli}:{os.environ['PATH']}",
+         "RC_TAG": "1.1.0-rc.7", "GH_REPO": "example/project", "CALLS": str(calls), **overrides},
+    capture_output=True, text=True,
+  )
+  assert (result.returncode == 0) is success, result.stdout + result.stderr
+  entries = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+  writes = [entry for entry in entries if entry["args"][0] == "release"]
+  assert [entry["args"][1] for entry in writes] == ([publication] if publication else [])
+  if overrides.get("EXISTING") == "false":
+    assert not any("generate-notes" in arg for entry in entries for arg in entry["args"])
+  if publication:
+    assert {"--prerelease", "--latest=false", "--draft=false"} <= set(writes[0]["args"])
+
+
+def test_rc_baselines_exclude_unrelated_branch_tags(repository: Path, release_cli: Path) -> None:
+  subprocess.run(["git", "checkout", "-qb", "secondary"], cwd=repository, check=True)
+  subprocess.run(["git", "commit", "--allow-empty", "-qm", "fix: unrelated change"], cwd=repository, check=True)
+  for tag in ("1.0.1", "1.1.0-rc.6"):
+    subprocess.run(["git", "tag", tag], cwd=repository, check=True)
+  subprocess.run(["git", "checkout", "--detach", "1.0.0"], cwd=repository, check=True, capture_output=True)
+  subprocess.run(["git", "tag", "1.1.0-rc.7"], cwd=repository, check=True)
+  calls = repository / "calls"
+  subprocess.run(
+    ["bash", "-c", action_script("publish-rc-release", "Publish candidate")],
+    cwd=repository,
+    env={**os.environ, "PATH": f"{release_cli}:{os.environ['PATH']}",
+         "RC_TAG": "1.1.0-rc.7", "GH_REPO": "example/project", "CALLS": str(calls)},
+    check=True, capture_output=True,
+  )
+  assert "previous_tag_name=1.0.0" in calls.read_text()
+  assert "compare/1.0.0...1.1.0-rc.7" in calls.read_text()
+
+
+@pytest.mark.parametrize("status,conclusion,sha", [
+  ("completed", "success", "a" * 40),
+  ("completed", "failure", "a" * 40),
+  ("in_progress", "", "a" * 40),
+  ("completed", "skipped", "a" * 40),
+  ("completed", "success", "b" * 40),
+  ("missing", "", ""),
+])
+def test_rc_requires_successful_builds_for_its_exact_commit(
+  tmp_path: Path, status: str, conclusion: str, sha: str,
+) -> None:
+  workflow = yaml.safe_load((ROOT / ".github/workflows/release-finalize.yml").read_text())
+  job = workflow["jobs"]["check-and-publish"]
+  steps = job["steps"]
+  gate = next(step for step in steps if step.get("id") == "check-cis")
+  script = gate["run"].replace("${{ github.repository }}", "example/project").replace("${{ github.server_url }}", "https://github.com")
+  cli = tmp_path / "gh"
+  cli.write_text(f"#!{sys.executable}\n" + '''
+import json
+import os
+import sys
+assert "--event=push" in sys.argv
+run = {"status": os.environ["MOCK_RUN_STATUS"], "conclusion": os.environ["MOCK_RUN_CONCLUSION"],
+       "databaseId": 123, "headSha": os.environ["MOCK_RUN_SHA"]}
+if next(arg for arg in sys.argv if arg.startswith("--workflow=")) != "--workflow=[CI][Helm] Publish Tagged Helm Charts":
+    run = {"status": "completed", "conclusion": "success", "databaseId": 124, "headSha": "a" * 40}
+print(json.dumps([] if run["status"] == "missing" else [run]))
+''')
+  cli.chmod(0o700)
+  output = tmp_path / "output"
+  result = subprocess.run(
+    ["bash", "-c", script],
+    env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "TAG": "1.1.0-rc.7",
+         "EXPECTED_SHA": "a" * 40, "IS_RC": "true", "MOCK_RUN_STATUS": status,
+         "MOCK_RUN_CONCLUSION": conclusion, "MOCK_RUN_SHA": sha, "GITHUB_OUTPUT": str(output)},
+    capture_output=True, text=True,
+  )
+  assert result.returncode == 0, result.stdout + result.stderr
+  passed = status == "completed" and conclusion == "success" and sha == "a" * 40
+  assert f"all_passed={str(passed).lower()}\n" in output.read_text()
+  publisher = next(step for step in steps if step.get("uses") == "./.github/actions/publish-rc-release")
+  assert publisher["if"] == "steps.check-cis.outputs.all_passed == 'true' && steps.payload.outputs.is_rc == 'true'"
+  stable = next(step for step in steps if step.get("id") == "publish-release")
+  assert "is_rc == 'false'" in stable["if"]
+  assert "cancel-in-progress: false" in (ROOT / ".github/workflows/release-finalize.yml").read_text()
+
+
+def test_stable_release_notes_ignore_published_rc_boundaries(repository: Path, release_cli: Path) -> None:
+  for tag in ("1.0.1", "1.1.0-rc.1", "1.1.0-rc.7"):
+    subprocess.run(["git", "tag", tag], cwd=repository, check=True)
+  (repository / "pyproject.toml").write_text('version = "1.1.0-rc.7"\n')
+  workflow = yaml.safe_load((ROOT / ".github/workflows/release-manual.yml").read_text())
+  read_step = next(step for step in workflow["jobs"]["commit-release"]["steps"] if step.get("id") == "validate")
+  output = repository / "output"
+  subprocess.run(
+    ["bash", "-c", read_step["run"]], cwd=repository,
+    env={**os.environ, "GITHUB_OUTPUT": str(output)}, check=True, capture_output=True,
+  )
+  values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+  assert values["previous_stable"] == "1.0.1"
+  assert workflow["jobs"]["commit-release"]["outputs"]["previous_stable"] == "${{ steps.validate.outputs.previous_stable }}"
+  publish = next(step for step in workflow["jobs"]["publish-release"]["steps"] if "Create GitHub Release" in step.get("name", ""))
+  assert publish["env"]["PREVIOUS_STABLE"] == "${{ needs.commit-release.outputs.previous_stable }}"
+  calls = repository / "calls"
+  subprocess.run(
+    ["bash", "-c", publish["run"].replace("${{ github.repository }}", "example/project")],
+    cwd=repository,
+    env={**os.environ, "PATH": f"{release_cli}:{os.environ['PATH']}", "CALLS": str(calls),
+         "RELEASE_VERSION": "1.1.0", "PREVIOUS_STABLE": values["previous_stable"], "RELEASE_INITIATOR": "test-user"},
+    check=True, capture_output=True,
+  )
+  args = json.loads(calls.read_text())["args"]
+  assert args[args.index("--notes-start-tag") + 1] == "1.0.1"
+  assert "--generate-notes" in args
+  assert "--prerelease" not in args
