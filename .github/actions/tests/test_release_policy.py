@@ -133,8 +133,20 @@ def test_image_workflows_use_the_shared_channel_decision() -> None:
     if path.name == "ci-mcp-servers.yml":
       assert {job_name for job_name, _ in metadata_steps} == {"build-and-push", "merge-manifests"}
     for job_name, step in metadata_steps:
+      assert "latest=false" in step["with"].get("flavor", "").splitlines(), (path, job_name)
       tags = step["with"]["tags"].splitlines()
       assert ("type=raw,value=latest,enable=${{ needs." + resolver_name + ".outputs.is_final_release == 'true' }}") in tags, (path, job_name)
+
+
+def test_every_docker_metadata_step_disables_automatic_latest() -> None:
+  for path in (ROOT / ".github/workflows").glob("*.yml"):
+    for job_name, job in yaml.safe_load(path.read_text()).get("jobs", {}).items():
+      for step in job.get("steps", []):
+        if step.get("uses", "").startswith("docker/metadata-action@"):
+          flavor = step.get("with", {}).get("flavor", "").splitlines()
+          fields = [field.strip() for line in flavor for field in line.split(",")]
+          latest_fields = [field for field in fields if field.split("=", 1)[0].strip().lower() == "latest"]
+          assert latest_fields == ["latest=false"], (path, job_name)
 
 
 @pytest.mark.parametrize("head_tag", ["1.1.0-rc.2", "1.0.1-dev.2", "1.0.0-hotfix.2"])

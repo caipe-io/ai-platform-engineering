@@ -1,5 +1,4 @@
 name: "[Prebuild] Scheduler Docker Build and Push"
-description: "Build and push caipe-scheduler and caipe-cron-runner images for prebuild branches"
 
 on:
   pull_request:
@@ -152,6 +151,8 @@ jobs:
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
+          flavor: |
+            latest=false
           images: ghcr.io/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=${{ env.PREBUILD_TAG }}

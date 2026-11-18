@@ -248,6 +248,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           # For non-default variants, append variant name as suffix to all tags
           flavor: |
+            latest=false
             suffix=${{ matrix.variant != 'default' && format('-{0}', matrix.variant) || '' }}
           tags: |
             type=raw,value=latest,enable=${{ needs.determine-changes.outputs.is_final_release == 'true' }}
@@ -351,6 +352,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           # For non-default variants, append variant name as suffix to all tags
           flavor: |
+            latest=false
             suffix=${{ matrix.variant != 'default' && format('-{0}', matrix.variant) || '' }}
           tags: |
             type=raw,value=latest,enable=${{ needs.determine-changes.outputs.is_final_release == 'true' }}
