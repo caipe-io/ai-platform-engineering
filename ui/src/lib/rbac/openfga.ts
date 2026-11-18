@@ -1,3 +1,4 @@
+import { withAdminGrantOwnership } from "./admin-grant-ownership";
 import {
   getOpenFgaStoreId,
   isOpenFgaConfigured,
@@ -705,7 +706,10 @@ export function chunkOpenFgaDiff(
   return chunks;
 }
 
-export async function writeOpenFgaTuples(diff: TeamResourceTupleDiff): Promise<OpenFgaReconcileResult> {
+export async function writeOpenFgaTuples(
+  diff: TeamResourceTupleDiff,
+  source: "login" | "independent" = "independent",
+): Promise<OpenFgaReconcileResult> {
   assertWritableRelations(diff);
   if (!isOpenFgaConfigured()) {
     return { enabled: false, writes: 0, deletes: 0 };
@@ -716,12 +720,13 @@ export async function writeOpenFgaTuples(diff: TeamResourceTupleDiff): Promise<O
 
   if (!isOpenFgaConfigured()) throw new Error("OPENFGA_HTTP is not set");
   const storeId = await getOpenFgaStoreId();
-  const filteredDiff = await filterTupleDiff(storeId, diff);
-  if (filteredDiff.writes.length === 0 && filteredDiff.deletes.length === 0) {
-    return { enabled: true, writes: 0, deletes: 0 };
-  }
-
-  return applyDiffWithCompensation(storeId, filteredDiff);
+  return withAdminGrantOwnership(diff, source, (tuple) => tupleExistsInStore(storeId, tuple), async (ownedDiff) => {
+    const filteredDiff = await filterTupleDiff(storeId, ownedDiff);
+    if (filteredDiff.writes.length === 0 && filteredDiff.deletes.length === 0) {
+      return { enabled: true, writes: 0, deletes: 0 };
+    }
+    return applyDiffWithCompensation(storeId, filteredDiff);
+  });
 }
 
 /**
@@ -797,7 +802,12 @@ export async function deleteExactOpenFgaTuples(
   }
   if (!isOpenFgaConfigured()) throw new Error("OPENFGA_HTTP is not set");
   const storeId = await getOpenFgaStoreId();
-  return applyDiffWithCompensation(storeId, { writes: [], deletes: unique });
+  return withAdminGrantOwnership(
+    { writes: [], deletes: unique },
+    "purge",
+    (tuple) => tupleExistsInStore(storeId, tuple),
+    (diff) => applyDiffWithCompensation(storeId, diff),
+  );
 }
 
 /**

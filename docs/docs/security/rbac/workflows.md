@@ -92,11 +92,33 @@ This is the **once-per-session** flow. After it completes, the user holds a Keyc
   `login-bootstrap` sources are also recognized as login-managed.
 - A new login or the existing refreshed-claim group check reconciles current
   claims. Losing the admin group retires login-managed sources and removes
-  their super-admin membership and baseline admin tuples, including when the
+  their super-admin membership and owned baseline admin tuples, including when the
   user no longer passes the application admission group.
 - Independent active admin sources and `BOOTSTRAP_ADMIN_EMAILS` retain their
   access. A failed tuple cleanup is retried on a later reconciliation even
   when its provenance source was already marked removed.
+- Per-identity reconciliation and direct admin-grant changes use the shared
+  Mongo mutation lock across UI replicas. A newer demotion waits until an
+  in-flight promotion finishes; it cannot complete first and then be undone
+  by that promotion. Contention times out after ten seconds and is reported
+  as a failed reconciliation, rather than running without the lock.
+- Direct admin baseline tuples have separate login and independent ownership
+  in `admin_grant_ownership`. Manual grants through the tuple editor or shared
+  write adapter survive login demotion, even when added after promotion.
+- **Existing installations:** old direct grants have no reliable ownership
+  history. An existing unrecorded tuple is preserved and logged for operator
+  review; super-admin membership alone does not prove that login owns it.
+  Audit former admins' direct baseline tuples in the OpenFGA tuple editor.
+  Explicitly remove grants that were login-only. If that user is still an
+  eligible admin, the next login recreates the grant with recorded ownership.
+  Do not seed ownership from team membership alone.
+- Changes made directly to OpenFGA outside the shared application adapter do
+  not record ownership. Use the application tuple editor for manual grants.
+- Mutation locks do not expire automatically: an expired lease could allow a
+  stalled writer to restore privileges. If a UI process dies while holding a
+  lock, first stop that process and ensure its writes have drained, then remove
+  its `agent_mutation_locks` record (`_id: rbac-admin:<subject>`) and retry the
+  affected user's reconciliation. Never remove a live writer's lock.
 - Refreshed claims are rechecked on the existing four-hour interval. This is
   not an immediate identity-provider logout or a background sweep of inactive
   users. Current roles are also persisted during request identity bookkeeping;

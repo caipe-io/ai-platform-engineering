@@ -1,3 +1,4 @@
+import { withAdminGrantLock } from "./admin-grant-ownership";
 import { getCollection } from "@/lib/mongodb";
 import {
   baselineMemberTuples,
@@ -241,36 +242,38 @@ export async function reconcileLoginOpenFgaAccess(
   }
 
   try {
-    const effectiveAdmin = input.isAuthorized && input.isAdmin;
-    const isOidcAdmin = input.isOidcAdmin ?? input.isAdmin;
-    const superAdminReconciliation = await reconcileOidcSuperAdminMembership({
-      subject,
-      email: input.email,
-      shouldHaveOidcAdmin: input.isAuthorized && isOidcAdmin,
-      preserveBootstrapAdmin: input.isBootstrapAdmin === true,
-      oidcAdminGroup: input.oidcAdminGroup,
-      oidcProviderId: input.oidcProviderId,
-    });
-    const bundle = await getBaselineFgaProfileBundle();
-    const writes = input.isAuthorized
-      ? effectiveBaselineBootstrapTuples({
-          subject,
-          isAdmin: effectiveAdmin,
-          bundle,
-          teamOverrides: await teamOverridesForLogin(input.email),
-        })
-      : [];
-    if (input.isAuthorized) writes.push(...(await defaultAgentTuple()));
+    return await withAdminGrantLock(subject, async () => {
+      const effectiveAdmin = input.isAuthorized && input.isAdmin;
+      const isOidcAdmin = input.isOidcAdmin ?? input.isAdmin;
+      const superAdminReconciliation = await reconcileOidcSuperAdminMembership({
+        subject,
+        email: input.email,
+        shouldHaveOidcAdmin: input.isAuthorized && isOidcAdmin,
+        preserveBootstrapAdmin: input.isBootstrapAdmin === true,
+        oidcAdminGroup: input.oidcAdminGroup,
+        oidcProviderId: input.oidcProviderId,
+      });
+      const bundle = await getBaselineFgaProfileBundle();
+      const writes = input.isAuthorized
+        ? effectiveBaselineBootstrapTuples({
+            subject,
+            isAdmin: effectiveAdmin,
+            bundle,
+            teamOverrides: await teamOverridesForLogin(input.email),
+          })
+        : [];
+      if (input.isAuthorized) writes.push(...(await defaultAgentTuple()));
 
-    const deletes =
-      effectiveAdmin ||
-      input.isBootstrapAdmin === true ||
-      superAdminReconciliation.hasIndependentAdminSource ||
-      !superAdminReconciliation.hadLoginManagedAdminSource
-        ? []
-        : adminBaselineGrantDefinitions().map((definition) => definition.tuple(subject));
-    const result = await writeOpenFgaTuples({ writes, deletes });
-    return { status: "completed", tuple_write_count: result.writes };
+      const deletes =
+        effectiveAdmin ||
+        input.isBootstrapAdmin === true ||
+        superAdminReconciliation.hasIndependentAdminSource ||
+        !superAdminReconciliation.hadLoginManagedAdminSource
+          ? []
+          : adminBaselineGrantDefinitions().map((definition) => definition.tuple(subject));
+      const result = await writeOpenFgaTuples({ writes, deletes }, "login");
+      return { status: "completed", tuple_write_count: result.writes };
+    });
   } catch (error) {
     const warning = error instanceof Error ? error.message : String(error);
     console.warn(

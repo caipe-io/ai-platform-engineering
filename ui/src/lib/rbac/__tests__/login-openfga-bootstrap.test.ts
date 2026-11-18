@@ -6,8 +6,12 @@ const mockWriteOpenFgaTuples = jest.fn();
 const mockGetCollection = jest.fn();
 const mockGetRbacCollection = jest.fn();
 
+jest.mock("@/lib/rbac/admin-grant-ownership", () => ({
+  withAdminGrantLock: async (_subject: string, operation: () => Promise<unknown>) => operation(),
+}));
+
 jest.mock("@/lib/rbac/openfga", () => ({
-  writeOpenFgaTuples: (...args: unknown[]) => mockWriteOpenFgaTuples(...args),
+  writeOpenFgaTuples: (...args: unknown[]) => mockWriteOpenFgaTuples(args[0]),
 }));
 
 jest.mock("@/lib/mongodb", () => ({
@@ -460,7 +464,7 @@ describe("login OpenFGA bootstrap", () => {
     expect(mockSources.updateOne).not.toHaveBeenCalled();
   });
 
-  it("revokes legacy login-bootstrap membership and direct admin tuples after OIDC demotion", async () => {
+  it("revokes legacy login-bootstrap membership and requests ownership-filtered direct tuple cleanup", async () => {
     const mockSources = stubTeamMembershipSources([
       {
         team_id: "team-super-admins",
