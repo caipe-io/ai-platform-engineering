@@ -1,5 +1,6 @@
 import { withAdminGrantOwnership } from "./admin-grant-ownership";
 import {
+  OPENFGA_READ_TIMEOUT_MS,
   getOpenFgaStoreId,
   isOpenFgaConfigured,
   requestOpenFga,
@@ -382,6 +383,7 @@ async function tupleExistsInStore(
   const response = await requestOpenFga(`/stores/${storeId}/read`, {
     method: "POST",
     body: JSON.stringify({ tuple_key: filter, page_size: 1 }),
+    signal: AbortSignal.timeout(OPENFGA_READ_TIMEOUT_MS),
   });
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "");

@@ -538,6 +538,17 @@ describe("login OpenFGA bootstrap", () => {
         status: "active",
         created_by: "platform-owner@example.com",
       },
+      {
+        team_id: "team-super-admins",
+        team_slug: "super-admins",
+        user_email: "manual-admin@example.com",
+        user_subject: "sub-manual-admin",
+        relationship: "admin",
+        source_type: "manual",
+        managed: false,
+        status: "active",
+        created_by: "login-bootstrap",
+      },
     ]);
     mockGetRbacCollection.mockImplementation(async (key: string) => {
       if (key === "teamMembershipSources") return mockSources;
@@ -567,7 +578,19 @@ describe("login OpenFGA bootstrap", () => {
   });
 
   it("preserves bootstrap-admin access while retiring absent OIDC provenance", async () => {
-    const mockSources = stubTeamMembershipSources([]);
+    const mockSources = stubTeamMembershipSources([
+      {
+        team_id: "team-super-admins",
+        team_slug: "super-admins",
+        user_email: "bootstrap-admin@example.com",
+        user_subject: "sub-bootstrap-admin",
+        relationship: "admin",
+        source_type: "manual",
+        managed: false,
+        status: "active",
+        created_by: "login-bootstrap",
+      },
+    ]);
     mockGetRbacCollection.mockImplementation(async (key: string) => {
       if (key === "teamMembershipSources") return mockSources;
       throw new Error(`unexpected rbac collection ${key}`);

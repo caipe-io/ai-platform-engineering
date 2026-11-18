@@ -4,6 +4,7 @@ import type { OpenFgaTupleKey, TeamResourceTupleDiff } from "../openfga";
 
 const mockRequest = jest.fn();
 jest.mock("@/lib/authz/engines/openfga-client", () => ({
+  OPENFGA_READ_TIMEOUT_MS: 5_000,
   isOpenFgaConfigured: () => true,
   getOpenFgaStoreId: async () => "example",
   requestOpenFga: (...args: unknown[]) => mockRequest(...args),
@@ -11,9 +12,6 @@ jest.mock("@/lib/authz/engines/openfga-client", () => ({
 let mockPersistError: Error | undefined;
 const mockLocks = new Map<string, string>();
 const mockRows = new Map<string, { login: boolean; independent: boolean }>();
-jest.mock("@/lib/api-middleware", () => ({
-  ApiError: class extends Error { constructor(message: string, public statusCode: number) { super(message); } },
-}));
 jest.mock("@/lib/mongodb", () => ({
   getCollection: async (name: string) => name === "agent_mutation_locks" ? {
     insertOne: async ({ _id, token }: { _id: string; token: string }) => {
@@ -165,4 +163,15 @@ it("times out without stealing an existing writer's lock or running side effects
   } finally {
     clock.mockRestore();
   }
+});
+
+it("bounds a stalled tuple read and releases the identity lock when it aborts", async () => {
+  const { writeOpenFgaTuples } = await import("../openfga");
+  mockRequest.mockImplementationOnce(async (_path: string, options: { signal?: AbortSignal }) => {
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+    throw new DOMException("Read deadline exceeded", "TimeoutError");
+  });
+  await expect(writeOpenFgaTuples({ writes: [tuple], deletes: [] }, "login")).rejects.toThrow("Read deadline exceeded");
+  expect(mockLocks.size).toBe(0);
+  expect(mockRows.size).toBe(0);
 });
