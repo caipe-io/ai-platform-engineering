@@ -443,7 +443,7 @@ export function DynamicAgentsTab({
   }
 
   return (
-    <RemoteAgentRegistry onRegistryChange={() => void fetchAgents()} renderCatalog={remote => <>
+    <RemoteAgentRegistry onCreateAgent={startCreating} onRegistryChange={() => void fetchAgents()} renderCatalog={remote => <>
       <WorkspacePageActions>
         <div role="group" aria-label="Agent catalog actions" className="grid w-full min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
           <div className="relative col-span-2 min-w-0 sm:flex-[1_0_12rem] xl:flex-none">
@@ -461,10 +461,6 @@ export function DynamicAgentsTab({
             Refresh
           </Button>
           {remote.toolbar}
-          <Button data-tour="add-agent" size="sm" className="h-auto min-h-10 whitespace-normal px-2 py-2 text-xs leading-tight sm:h-9 sm:min-h-0 sm:whitespace-nowrap sm:px-3 sm:text-sm" onClick={startCreating}>
-            <Plus className="mr-2 hidden h-4 w-4 sm:block" />
-            Create CAIPE Agent
-          </Button>
         </div>
       </WorkspacePageActions>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -505,11 +501,11 @@ export function DynamicAgentsTab({
               <>
                 <h3 className="text-lg font-semibold mb-2">No agents yet</h3>
                 <p className="text-muted-foreground mb-4">
-                  Create an agent when you are ready to give your team a tailored assistant.
+                  Create a tailored assistant or connect an agent you already run.
                 </p>
-                <Button onClick={startCreating}>
+                <Button type="button" onClick={event => remote.openAddAgent(event.currentTarget)}>
                   <Plus className="h-4 w-4 mr-2" />
-                  Create CAIPE Agent
+                  Add agent
                 </Button>
               </>
             )}

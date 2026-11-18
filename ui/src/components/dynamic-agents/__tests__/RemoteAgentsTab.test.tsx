@@ -21,7 +21,7 @@ it("reviews a public discovery result and registers it without sending a JWT or 
   });
   global.fetch = fetcher as unknown as typeof fetch;
   render(<RemoteAgentsTab />);
-  fireEvent.click(await screen.findByRole("button", { name: "Discover agents", exact: true }));
+  fireEvent.click(await screen.findByRole("button", { name: "Connect existing agent", exact: true }));
   fireEvent.change(await screen.findByLabelText("Agent URLs or Agent Card URLs"), { target: { value: "https://example.test" } });
   fireEvent.click(screen.getByRole("button", { name: "Discover", exact: true }));
   fireEvent.click(await screen.findByRole("button", { name: "Review", exact: true }));
@@ -30,7 +30,7 @@ it("reviews a public discovery result and registers it without sending a JWT or 
   expect(screen.queryByRole("button", { name: "Add and select" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Discover Agent Card" }));
   await screen.findByText("Agent Card", { selector: "summary" });
-  fireEvent.click(screen.getByRole("button", { name: "Register agent" }));
+  fireEvent.click(screen.getByRole("button", { name: "Connect agent" }));
   await waitFor(() => expect(fetcher).toHaveBeenCalledWith("/api/remote-agents", expect.objectContaining({ method: "POST" })));
   const writes = fetcher.mock.calls.filter(([, init]) => init?.method === "POST");
   expect(JSON.parse(writes[0][1]!.body as string)).toEqual({ source: "urls", urls: ["https://example.test"] });
@@ -44,9 +44,9 @@ it("does not expose discovery or write controls to registry readers", async () =
   global.fetch = jest.fn(async url => String(url).includes("available-subagents") ? response({ agents: [] }) : response({ items: [{ _id: "example", name: "Example", timeout_seconds: 120 }], can_manage_registry: false })) as unknown as typeof fetch;
   render(<RemoteAgentsTab />);
   await screen.findByText("Example");
-  expect(screen.queryByRole("button", { name: "Discover agents", exact: true })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Connect Remote Agent", exact: true })).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Register agent" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Connect existing agent", exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Connect existing agent", exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Connect agent" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Edit Example" })).not.toBeInTheDocument();
 });
 

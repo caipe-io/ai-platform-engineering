@@ -9,9 +9,9 @@ let mockOnRegistryChange: (() => void) | undefined;
 
 jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { sub: "test-user" } }) }));
 jest.mock("../RemoteAgentRegistry", () => ({
-  RemoteAgentRegistry: ({ renderCatalog, onRegistryChange }: { renderCatalog: (controls: unknown) => React.ReactNode; onRegistryChange?: () => void }) => {
+  RemoteAgentRegistry: ({ renderCatalog, onRegistryChange, onCreateAgent }: { renderCatalog: (controls: unknown) => React.ReactNode; onRegistryChange?: () => void; onCreateAgent?: () => void }) => {
     mockOnRegistryChange = onRegistryChange;
-    return renderCatalog({ toolbar: null, refresh: jest.fn(), renderAgent: (item: { _id: string; name: string }) => <div key={item._id}>{item.name}</div> });
+    return renderCatalog({ toolbar: <button type="button" data-tour="add-agent" onClick={onCreateAgent}>Add agent</button>, openAddAgent: jest.fn(), refresh: jest.fn(), renderAgent: (item: { _id: string; name: string }) => <div key={item._id}>{item.name}</div> });
   },
 }));
 
@@ -533,11 +533,11 @@ describe("DynamicAgentsTab search + pagination", () => {
     expect(screen.getByRole("button", { name: "Chat with Ops Helper" })).toBeEnabled();
   });
 
-  it("uses routed creation state so browser Back closes the new-agent builder", async () => {
+  it("uses routed creation state after the registry chooses creation so browser Back closes the builder", async () => {
     const onCreateAgent = jest.fn();
     const { rerender } = render(<DynamicAgentsTab creating={false} onCreateAgent={onCreateAgent} />);
     await screen.findByText("Ops Helper");
-    const createButton = screen.getByRole("button", { name: "Create CAIPE Agent", exact: true });
+    const createButton = screen.getByRole("button", { name: "Add agent", exact: true });
     expect(createButton).toHaveAttribute("data-tour", "add-agent");
     fireEvent.click(createButton);
     expect(onCreateAgent).toHaveBeenCalledTimes(1);

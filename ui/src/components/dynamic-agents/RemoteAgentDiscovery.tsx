@@ -19,7 +19,7 @@ export interface DiscoveredAgent {
   error?: string;
 }
 
-export function RemoteAgentDiscovery({ onChoose, disabled }: { onChoose: (agent: DiscoveredAgent) => void; disabled?: boolean }) {
+export function RemoteAgentDiscovery({ onChoose, disabled, showHeader = true }: { onChoose: (agent: DiscoveredAgent) => void; disabled?: boolean; showHeader?: boolean }) {
   const [source, setSource] = React.useState("urls");
   const [urls, setUrls] = React.useState("");
   const [namespaces, setNamespaces] = React.useState<string[]>([]);
@@ -53,8 +53,10 @@ export function RemoteAgentDiscovery({ onChoose, disabled }: { onChoose: (agent:
     finally { setLoading(false); }
   };
   return <section aria-label="Discover remote agents" className="min-w-0 space-y-3 rounded-lg border bg-muted/20 p-3 [overflow-wrap:anywhere] sm:p-4">
-    <h2 className="font-medium">Discover agents</h2>
-    <p className="text-sm text-muted-foreground">Read public Agent Cards or find Kubernetes Services. Review a candidate before registering it.</p>
+    {showHeader && <>
+      <h2 className="font-medium">Discover agents</h2>
+      <p className="text-sm text-muted-foreground">Read public Agent Cards or find Kubernetes Services. Review a candidate before registering it.</p>
+    </>}
     <div className="max-w-sm space-y-1"><Label htmlFor="a2a-discovery-source">Discovery source</Label>
       <Select id="a2a-discovery-source" value={source} disabled={disabled || loading} onChange={(event) => { setSource(event.target.value); setItems([]); setError(null); setSearched(false); }}>
         <option value="urls">Public URLs</option><option value="kubernetes">Kubernetes Services</option>
