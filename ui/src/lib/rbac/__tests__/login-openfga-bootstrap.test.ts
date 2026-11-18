@@ -716,4 +716,33 @@ describe("login OpenFGA bootstrap", () => {
       expect(result.warning).toContain("openfga down");
     });
   });
+
+  describe("ensureBearerUserBaselineAccess (bot users without a web login)", () => {
+    it("writes the member baseline once per subject across repeated requests", async () => {
+      const { ensureBearerUserBaselineAccess } = await import("../login-openfga-bootstrap");
+
+      const first = await ensureBearerUserBaselineAccess("sub-bot-user");
+      await ensureBearerUserBaselineAccess("sub-bot-user");
+
+      expect(first.status).toBe("completed");
+      expect(mockWriteOpenFgaTuples).toHaveBeenCalledTimes(1);
+      expect(mockWriteOpenFgaTuples.mock.calls[0][0].writes).toEqual(
+        expect.arrayContaining([
+          { user: "user:sub-bot-user", relation: "caller", object: "mcp_gateway:list" },
+        ])
+      );
+    });
+
+    it("retries on the next request after a failed write", async () => {
+      mockWriteOpenFgaTuples.mockRejectedValueOnce(new Error("openfga down"));
+      const { ensureBearerUserBaselineAccess } = await import("../login-openfga-bootstrap");
+
+      const failed = await ensureBearerUserBaselineAccess("sub-bot-user");
+      const retried = await ensureBearerUserBaselineAccess("sub-bot-user");
+
+      expect(failed.status).toBe("failed");
+      expect(retried.status).toBe("completed");
+      expect(mockWriteOpenFgaTuples).toHaveBeenCalledTimes(2);
+    });
+  });
 });

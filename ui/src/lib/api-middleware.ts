@@ -4,7 +4,7 @@
 import type { Collection, Document } from 'mongodb';
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions, isBootstrapAdmin } from '@/lib/auth-config';
+import { authOptions, hasRequiredGroup, isBootstrapAdmin } from '@/lib/auth-config';
 import { getConfig } from '@/lib/config';
 import { reconcileConversationOwnerIdentity } from '@/lib/conversation-owner-identity';
 import { getCollection } from '@/lib/mongodb';
@@ -674,6 +674,11 @@ export async function getAuthFromBearerOrSession(
     };
     if (process.env.NODE_ENV !== 'test') {
       await persistKeycloakSubMapping(bearerSession, user);
+      // Bot users may never sign in to the web UI, where login writes this baseline.
+      if (!bearerSession.isServiceAccount && identity.sub && hasRequiredGroup(identity.groups)) {
+        const { ensureBearerUserBaselineAccess } = await import('@/lib/rbac/login-openfga-bootstrap');
+        await ensureBearerUserBaselineAccess(identity.sub);
+      }
     }
     return {
       user,

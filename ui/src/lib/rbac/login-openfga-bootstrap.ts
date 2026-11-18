@@ -362,3 +362,35 @@ export async function reconcileSyncedUsersBaselineAccess(
     };
   }
 }
+
+const BEARER_BASELINE_DEDUP_TTL_MS = 10 * 60_000;
+const MAX_BEARER_BASELINE_CACHE_ENTRIES = 1000;
+const bearerBaselineCache = new Map<
+  string,
+  { promise: Promise<SyncedBaselineBootstrapResult>; expiresAt: number }
+>();
+
+/**
+ * Grant the org-member baseline to a bearer-token user, such as a Slack or
+ * Webex user acting through an OBO token who never signed in to the web UI.
+ * Deduplicated per subject; a failed attempt is retried on the next request.
+ */
+export function ensureBearerUserBaselineAccess(
+  subject: string
+): Promise<SyncedBaselineBootstrapResult> {
+  const key = subject.trim();
+  const cached = bearerBaselineCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+
+  const promise = reconcileSyncedUsersBaselineAccess([key]).then((result) => {
+    if (result.status === "failed") bearerBaselineCache.delete(key);
+    return result;
+  });
+  while (bearerBaselineCache.size >= MAX_BEARER_BASELINE_CACHE_ENTRIES) {
+    const oldestKey = bearerBaselineCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    bearerBaselineCache.delete(oldestKey);
+  }
+  bearerBaselineCache.set(key, { promise, expiresAt: Date.now() + BEARER_BASELINE_DEDUP_TTL_MS });
+  return promise;
+}
