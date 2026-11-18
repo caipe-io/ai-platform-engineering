@@ -18,7 +18,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "charts/ai-platform-engineering/charts/keycloak/scripts/init-idp.sh"
-PROGRAM = SCRIPT.read_text().split("<<'PY_PROFILE_NAMES'\n", 1)[1].split("\nPY_PROFILE_NAMES", 1)[0]
+SCRIPT_TEXT = SCRIPT.read_text()
+BLOCK_START = SCRIPT_TEXT.index('PROFILE_KC_URL="${KC_URL}"')
+BLOCK_END = SCRIPT_TEXT.index("\nPY_PROFILE_NAMES", BLOCK_START) + len("\nPY_PROFILE_NAMES")
+RECONCILER_SHELL = SCRIPT_TEXT[BLOCK_START:BLOCK_END] + "\n"
 
 
 @pytest.fixture
@@ -41,7 +44,9 @@ def admin_api() -> Iterator[dict[str, Any]]:
             self.wfile.write(json.dumps(body).encode())
 
         def do_GET(self) -> None:
-            assert self.headers["Authorization"] == "Bearer example-token"
+            if self.headers.get("Authorization") != "Bearer example-token":
+                self.send_json(401, {"error": "unauthorized"})
+                return
             path = urlsplit(self.path)
             if path.path.endswith("/clients"):
                 assert parse_qs(path.query) == {"clientId": ["example-ui"]}
@@ -83,10 +88,11 @@ def admin_api() -> Iterator[dict[str, Any]]:
 
 def run_reconciler(state: dict[str, Any]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, "-c", PROGRAM],
-        env={**os.environ, "PROFILE_KC_URL": state["url"], "PROFILE_REALM": "example",
-             "PROFILE_IDP_ALIAS": "example-provider", "PROFILE_UI_CLIENT_ID": "example-ui",
-             "PROFILE_AUTH": "Bearer example-token"},
+        ["/bin/sh", "-c", RECONCILER_SHELL],
+        env={**os.environ, "KC_URL": state["url"], "REALM": "example",
+             "ALIAS": "example-provider", "KEYCLOAK_UI_CLIENT_ID": "example-ui",
+             "AUTH": "Authorization: Bearer example-token",
+             "PATH": str(Path(sys.executable).parent) + os.pathsep + os.environ.get("PATH", "")},
         text=True, capture_output=True, timeout=10,
     )
 

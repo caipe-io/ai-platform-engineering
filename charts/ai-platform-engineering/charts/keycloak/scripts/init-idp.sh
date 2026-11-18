@@ -1568,9 +1568,10 @@ fi
 
 # Forward fresh broker profile claims through session notes. IMPORT stays in
 # place for persistent user attributes; the BFF fills only missing name fields.
+# curl uses a complete header; urllib receives only the header value.
 echo "[init-idp] Reconciling broker profile session-note mappers ..."
 PROFILE_KC_URL="${KC_URL}" PROFILE_REALM="${REALM}" PROFILE_IDP_ALIAS="${ALIAS}" \
-PROFILE_AUTH="${AUTH}" PROFILE_UI_CLIENT_ID="${KEYCLOAK_UI_CLIENT_ID:-${OIDC_CLIENT_ID:-caipe-ui}}" \
+PROFILE_AUTH="${AUTH#Authorization: }" PROFILE_UI_CLIENT_ID="${KEYCLOAK_UI_CLIENT_ID:-${OIDC_CLIENT_ID:-caipe-ui}}" \
 python3 - <<'PY_PROFILE_NAMES'
 import json
 import os
