@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getAuthFromBearerOrSession } from "@/lib/api-middleware";
-import { grant, revoke } from "@/lib/authz";
+import { grant, revoke, PolicyWritePendingError } from "@/lib/authz";
 import {
   HttpAuthzError,
   decisionContext,
@@ -60,6 +60,9 @@ async function handle(request: NextRequest, op: "grant" | "revoke"): Promise<Nex
     );
   } catch (err) {
     if (err instanceof HttpAuthzError) return metaErrorResponse(err);
+    if (err instanceof PolicyWritePendingError) {
+      return metaErrorResponse(new HttpAuthzError(503, err.code, err.message));
+    }
     throw err;
   }
 }

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import { withAgentMutationLock } from "@/lib/agent-mutation-lock";
+import { PolicyWritePendingError } from "@/lib/authz/engine";
 import { getRbacCollection } from "./mongo-collections";
 import { adminBaselineGrantDefinitions } from "./baseline-access";
 import type { OpenFgaTupleKey, TeamResourceTupleDiff } from "./openfga";
@@ -30,6 +31,7 @@ interface AdminGrantOwnership {
   _id: string;
   login: boolean;
   independent: boolean;
+  independent_pending?: boolean;
 }
 
 export function isDirectAdminBaselineTuple(tuple: OpenFgaTupleKey): boolean {
@@ -42,7 +44,8 @@ export function isDirectAdminBaselineTuple(tuple: OpenFgaTupleKey): boolean {
 
 /**
  * Keep separate reasons for the same direct grant. Intent is durable before
- * OpenFGA writes, so a failed write/delete can be retried without losing ownership.
+ * OpenFGA writes. New independent grants remain pending until acknowledged;
+ * an uncertain grant blocks reconciliation instead of becoming an active reason.
  * An existing tuple with no ledger is ambiguous and must never be claimed by login.
  */
 export async function withAdminGrantOwnership<T>(
@@ -63,28 +66,55 @@ export async function withAdminGrantOwnership<T>(
     const changes = new Map<string, { tuple: OpenFgaTupleKey; assign: boolean }>();
     for (const tuple of diff.deletes.filter(isDirectAdminBaselineTuple)) changes.set(JSON.stringify([tuple.user, tuple.relation, tuple.object]), { tuple, assign: false });
     for (const tuple of diff.writes.filter(isDirectAdminBaselineTuple)) changes.set(JSON.stringify([tuple.user, tuple.relation, tuple.object]), { tuple, assign: true });
+    const plans = [];
     for (const { tuple, assign } of changes.values()) {
       const _id = JSON.stringify([tuple.user, tuple.relation, tuple.object]);
       const recorded = await ledger.findOne({ _id });
-      if (!recorded && source === "login" && !assign) {
-        if (await exists(tuple)) console.warn("[LoginOpenFGA] Unattributed admin grant retained; operator review required", tuple);
-        continue;
-      }
-      const ownership: AdminGrantOwnership = recorded ?? {
-        _id, login: false, independent: source === "login" && await exists(tuple),
-      };
-      if (source === "purge") {
-        // Explicit resource/user cleanup must not leave a reason that a later
-        // login reconciliation could use to recreate the deleted tuple.
-        ownership.login = false;
-        ownership.independent = false;
-      } else {
-        ownership[source] = assign;
-      }
-      await ledger.updateOne({ _id }, { $set: { login: ownership.login, independent: ownership.independent } }, { upsert: true });
-      (ownership.login || ownership.independent ? writes : deletes).push(tuple);
+      if (recorded?.independent_pending) throw new PolicyWritePendingError();
+      plans.push({ _id, tuple, assign, recorded });
     }
-    return apply({ writes, deletes });
+    const pending: AdminGrantOwnership[] = [];
+    try {
+      for (const { _id, tuple, assign, recorded } of plans) {
+        if (!recorded && source === "login" && !assign) {
+          if (await exists(tuple)) console.warn("[LoginOpenFGA] Unattributed admin grant retained; operator review required", tuple);
+          continue;
+        }
+        const ownership: AdminGrantOwnership = recorded ?? {
+          _id, login: false, independent: source === "login" && await exists(tuple),
+        };
+        const pendingGrant = source === "independent" && assign && !ownership.independent;
+        if (source === "purge") {
+          // Explicit resource/user cleanup must not leave a reason that a later
+          // login reconciliation could use to recreate the deleted tuple.
+          ownership.login = false;
+          ownership.independent = false;
+        } else {
+          ownership[source] = assign;
+        }
+        if (pendingGrant) {
+          // Do not activate an intent before OpenFGA acknowledges it. An uncertain
+          // response retains the marker and requires verification before retry.
+          pending.push(ownership);
+          await ledger.updateOne({ _id }, { $set: { login: ownership.login, independent: false, independent_pending: true } }, { upsert: true });
+        } else {
+          await ledger.updateOne({ _id }, { $set: { login: ownership.login, independent: ownership.independent } }, { upsert: true });
+        }
+        (ownership.login || ownership.independent ? writes : deletes).push(tuple);
+      }
+      const result = await apply({ writes, deletes });
+      for (const ownership of pending) {
+        await ledger.updateOne({ _id: ownership._id }, {
+          $set: { independent: true }, $unset: { independent_pending: "" },
+        });
+      }
+      return result;
+    } catch (error) {
+      // Do not compensate an unacknowledged request: it may still be in flight.
+      // Confirmation can also fail after committing, so report pending, not failed.
+      if (pending.length) throw new PolicyWritePendingError(error);
+      throw error;
+    }
   }
   return acquire(0);
 }

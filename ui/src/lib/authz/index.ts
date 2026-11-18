@@ -17,6 +17,7 @@ import type {
 import { compose } from "./compose";
 import { emitBatchDecisionAudit, emitDecisionAudit, emitGrantAudit, emitListObjectsDecisionAudit } from "./audit";
 import { createOpenFgaEngine, createOpenFgaAdmin } from "./engines/openfga";
+import { PolicyWritePendingError } from "./engine";
 import { workflowDelegationPreCheck } from "./domains/workflow";
 
 // ─── Singleton engine (module-level, reused across requests) ──────────────────
@@ -158,7 +159,7 @@ export async function grant(intent: GrantIntent, ctx: DecisionContext = {}): Pro
     await admin.grant(intent);
     await emitGrantAudit("grant", intent, ctx, { outcome: "success" });
   } catch (err) {
-    await emitGrantAudit("grant", intent, ctx, { outcome: "error", reasonCode: "PDP_WRITE_FAILED" });
+    await emitGrantAudit("grant", intent, ctx, { outcome: "error", reasonCode: err instanceof PolicyWritePendingError ? "PDP_WRITE_PENDING" : "PDP_WRITE_FAILED" });
     throw err;
   }
 }
@@ -168,7 +169,7 @@ export async function revoke(intent: GrantIntent, ctx: DecisionContext = {}): Pr
     await admin.revoke(intent);
     await emitGrantAudit("revoke", intent, ctx, { outcome: "success" });
   } catch (err) {
-    await emitGrantAudit("revoke", intent, ctx, { outcome: "error", reasonCode: "PDP_WRITE_FAILED" });
+    await emitGrantAudit("revoke", intent, ctx, { outcome: "error", reasonCode: err instanceof PolicyWritePendingError ? "PDP_WRITE_PENDING" : "PDP_WRITE_FAILED" });
     throw err;
   }
 }
@@ -192,6 +193,7 @@ export type { TupleReconcileContext } from "./reconcile";
 // ─── Re-exports ───────────────────────────────────────────────────────────────
 
 export { describeFgaCheck, getEngineStats } from "./engines/openfga";
+export { PolicyWritePendingError } from "./engine";
 export type { EngineStats } from "./engines/openfga";
 
 export type {

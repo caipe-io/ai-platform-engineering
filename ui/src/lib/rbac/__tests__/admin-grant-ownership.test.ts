@@ -10,8 +10,10 @@ jest.mock("@/lib/authz/engines/openfga-client", () => ({
   requestOpenFga: (...args: unknown[]) => mockRequest(...args),
 }));
 let mockPersistError: Error | undefined;
+let mockConfirmationResponseLost = false;
 const mockLocks = new Map<string, string>();
-const mockRows = new Map<string, { login: boolean; independent: boolean }>();
+type OwnershipRow = { login: boolean; independent: boolean; independent_pending?: boolean };
+const mockRows = new Map<string, OwnershipRow>();
 jest.mock("@/lib/mongodb", () => ({
   getCollection: async (name: string) => name === "agent_mutation_locks" ? {
     insertOne: async ({ _id, token }: { _id: string; token: string }) => {
@@ -26,9 +28,12 @@ jest.mock("@/lib/mongodb", () => ({
       const row = mockRows.get(_id);
       return row ? { _id, ...row } : null;
     },
-    updateOne: async ({ _id }: { _id: string }, { $set }: { $set: { login: boolean; independent: boolean } }) => {
+    updateOne: async ({ _id }: { _id: string }, { $set, $unset }: { $set: OwnershipRow; $unset?: Record<string, string> }) => {
       if (mockPersistError) throw mockPersistError;
-      mockRows.set(_id, { ...$set });
+      const row = { ...mockRows.get(_id), ...$set };
+      if ($unset?.independent_pending !== undefined) delete row.independent_pending;
+      mockRows.set(_id, row);
+      if ($unset?.independent_pending !== undefined && mockConfirmationResponseLost) throw new Error("Confirmation response lost");
     },
   },
 }));
@@ -41,11 +46,108 @@ const apply = jest.fn(async (diff: TeamResourceTupleDiff) => {
   if (diff.writes.length) stored = true;
   return diff;
 });
+
 const assign = (source: "login" | "independent") => withAdminGrantOwnership({ writes: [tuple], deletes: [] }, source, exists, apply);
 const remove = (source: "login" | "independent") => withAdminGrantOwnership({ writes: [], deletes: [tuple] }, source, exists, apply);
 beforeEach(() => {
   process.env.CAIPE_ORG_KEY = "example";
-  mockRows.clear(); mockLocks.clear(); jest.clearAllMocks(); stored = false; mockPersistError = undefined;
+  mockRows.clear(); mockLocks.clear(); jest.clearAllMocks(); stored = false; mockPersistError = undefined; mockConfirmationResponseLost = false;
+});
+
+it.each([false, true])("RBAC-01.03 quarantines an unconfirmed independent grant after tuple write applied=%s", async committed => {
+  await expect(withAdminGrantOwnership({ writes: [tuple], deletes: [] }, "independent", exists, async () => {
+    stored = committed;
+    throw new Error("OpenFGA response lost");
+  })).rejects.toMatchObject({ code: "AUTHZ_WRITE_PENDING" });
+  expect(mockRows.get(key)).toEqual({ login: false, independent: false, independent_pending: true });
+  apply.mockClear();
+  await expect(remove("login")).rejects.toMatchObject({ code: "AUTHZ_WRITE_PENDING" });
+  await expect(assign("login")).rejects.toMatchObject({ code: "AUTHZ_WRITE_PENDING" });
+  await expect(remove("independent")).rejects.toMatchObject({ code: "AUTHZ_WRITE_PENDING" });
+  expect(apply).not.toHaveBeenCalled();
+  expect(stored).toBe(committed);
+  expect(mockLocks.size).toBe(0);
+});
+
+it("does not record a grant as active when its existence read fails", async () => {
+  const { createOpenFgaAdmin } = await import("@/lib/authz/engines/openfga");
+  mockRequest.mockRejectedValueOnce(new Error("read unavailable"));
+  await expect(createOpenFgaAdmin().grant({
+    resource: { type: "system_config", id: "platform_settings" },
+    grantee: { type: "user", id: "test-user" }, capability: "manage",
+  })).rejects.toMatchObject({ code: "AUTHZ_WRITE_PENDING" });
+  expect([...mockRows.values()]).toEqual([{ login: false, independent: false, independent_pending: true }]);
+  expect(mockRequest).toHaveBeenCalledTimes(1);
+  expect(mockRequest.mock.calls[0][0]).toMatch(/\/read$/);
+});
+
+it("reports pending when OpenFGA succeeds but ownership confirmation fails", async () => {
+  await expect(withAdminGrantOwnership({ writes: [tuple], deletes: [] }, "independent", exists, async diff => {
+    stored = true;
+    mockPersistError = new Error("Mongo unavailable");
+    return diff;
+  })).rejects.toMatchObject({ code: "AUTHZ_WRITE_PENDING" });
+  expect(stored).toBe(true);
+  expect(mockRows.get(key)).toEqual({ login: false, independent: false, independent_pending: true });
+  mockPersistError = undefined;
+  await expect(remove("login")).rejects.toMatchObject({ code: "AUTHZ_WRITE_PENDING" });
+});
+
+it("reports pending rather than failed if Mongo commits confirmation but its response is lost", async () => {
+  await expect(withAdminGrantOwnership({ writes: [tuple], deletes: [] }, "independent", exists, async diff => {
+    stored = true;
+    mockConfirmationResponseLost = true;
+    return diff;
+  })).rejects.toMatchObject({ code: "AUTHZ_WRITE_PENDING" });
+  // The client cannot infer either rollback or denial from an ambiguous response.
+  expect(mockRows.get(key)).toEqual({ login: false, independent: true });
+  expect(stored).toBe(true);
+  expect(mockLocks.size).toBe(0);
+});
+
+it("keeps an already confirmed independent reason when a repeated grant fails", async () => {
+  await assign("independent");
+  await expect(withAdminGrantOwnership({ writes: [tuple], deletes: [] }, "independent", exists, async () => {
+    throw new Error("read unavailable");
+  })).rejects.toThrow("read unavailable");
+  expect(mockRows.get(key)).toEqual({ login: false, independent: true });
+  await remove("login");
+  expect(stored).toBe(true);
+});
+
+it("checks all pending records before changing another tuple's ownership", async () => {
+  const secondary = { ...tuple, relation: "manager", object: "system_config:platform_settings" };
+  const secondaryKey = JSON.stringify([secondary.user, secondary.relation, secondary.object]);
+  mockRows.set(secondaryKey, { login: true, independent: false, independent_pending: true });
+  await expect(withAdminGrantOwnership({ writes: [tuple, secondary], deletes: [] }, "login", exists, apply))
+    .rejects.toMatchObject({ code: "AUTHZ_WRITE_PENDING" });
+  expect(mockRows.has(key)).toBe(false);
+  expect(apply).not.toHaveBeenCalled();
+  expect(mockLocks.size).toBe(0);
+});
+
+it("keeps valid login ownership separate from an unconfirmed manual grant", async () => {
+  await assign("login");
+  await expect(withAdminGrantOwnership({ writes: [tuple], deletes: [] }, "independent", exists, async () => {
+    throw new Error("read unavailable");
+  })).rejects.toMatchObject({ code: "AUTHZ_WRITE_PENDING" });
+  expect(mockRows.get(key)).toEqual({ login: true, independent: false, independent_pending: true });
+  expect(stored).toBe(true);
+  await expect(remove("login")).rejects.toMatchObject({ code: "AUTHZ_WRITE_PENDING" });
+});
+
+it("invalidates this replica's decisions when a CAS admin grant becomes pending", async () => {
+  const { createOpenFgaAdmin, createOpenFgaEngine, getEngineStats, invalidateDecisionCache } = await import("@/lib/authz/engines/openfga");
+  invalidateDecisionCache();
+  const resource = { type: "system_config" as const, id: "platform_settings" };
+  mockRequest.mockResolvedValueOnce(Response.json({ allowed: false }));
+  expect((await createOpenFgaEngine().check({ subject: { type: "user", id: "test-user" }, resource, action: "manage" })).decision).toBe("DENY");
+  expect(getEngineStats().cacheSize).toBe(1);
+  mockRequest.mockRejectedValueOnce(new Error("read unavailable"));
+  await expect(createOpenFgaAdmin().grant({ resource, grantee: { type: "user", id: "test-user" }, capability: "manage" }))
+    .rejects.toMatchObject({ code: "AUTHZ_WRITE_PENDING" });
+  expect(getEngineStats().cacheSize).toBe(0);
+  invalidateDecisionCache();
 });
 it("removes login-only direct grants", async () => {
   await assign("login"); expect(stored).toBe(true);
@@ -193,4 +295,90 @@ it("bounds a stalled tuple read and releases the identity lock when it aborts", 
     deadline.mockRestore();
     jest.useRealTimers();
   }
+});
+
+
+it.each(["before", "after"])("RBAC-01.01 CAS manual assignment %s login promotion survives repeated demotion", async order => {
+  const { createOpenFgaAdmin } = await import("@/lib/authz/engines/openfga");
+  const { writeOpenFgaTuples } = await import("../openfga");
+  const target = { user: "user:test-user", relation: "manager", object: "system_config:platform_settings" };
+  const ownershipKey = JSON.stringify([target.user, target.relation, target.object]);
+  mockRequest.mockImplementation(async (path: string, options: { body: string }) => {
+    if (path.endsWith("/read")) return Response.json({ tuples: stored ? [{ key: target }] : [] });
+    if (path.endsWith("/write")) {
+      const body = JSON.parse(options.body);
+      if (body.deletes) stored = false;
+      if (body.writes) stored = true;
+      return Response.json({});
+    }
+    throw new Error(`Unexpected OpenFGA request: ${path}`);
+  });
+  const admin = createOpenFgaAdmin();
+  const intent = { resource: { type: "system_config" as const, id: "platform_settings" }, grantee: { type: "user" as const, id: "test-user" }, capability: "manage" as const };
+  if (order === "before") await admin.grant(intent);
+  await writeOpenFgaTuples({ writes: [target], deletes: [] }, "login");
+  if (order === "after") await admin.grant(intent);
+  await writeOpenFgaTuples({ writes: [], deletes: [target] }, "login");
+  await writeOpenFgaTuples({ writes: [], deletes: [target] }, "login");
+  expect(stored).toBe(true);
+  expect(mockRows.get(ownershipKey)).toEqual({ login: false, independent: true });
+  await admin.revoke(intent);
+  expect(stored).toBe(false);
+  await writeOpenFgaTuples({ writes: [], deletes: [target] }, "login");
+  expect(stored).toBe(false);
+  expect(mockRows.get(ownershipKey)).toEqual({ login: false, independent: false });
+});
+
+it("RBAC-01.02 CAS revocation clears independent ownership without removing a current login reason", async () => {
+  const { createOpenFgaAdmin } = await import("@/lib/authz/engines/openfga");
+  const { writeOpenFgaTuples } = await import("../openfga");
+  const target = { user: "user:test-user", relation: "manager", object: "system_config:platform_settings" };
+  mockRequest.mockImplementation(async (path: string, options: { body: string }) => {
+    if (path.endsWith("/read")) return Response.json({ tuples: stored ? [{ key: target }] : [] });
+    if (path.endsWith("/write")) {
+      const body = JSON.parse(options.body);
+      if (body.deletes) stored = false;
+      if (body.writes) stored = true;
+      return Response.json({});
+    }
+    throw new Error(`Unexpected OpenFGA request: ${path}`);
+  });
+  const admin = createOpenFgaAdmin();
+  const intent = { resource: { type: "system_config" as const, id: "platform_settings" }, grantee: { type: "user" as const, id: "test-user" }, capability: "manage" as const };
+  await writeOpenFgaTuples({ writes: [target], deletes: [] }, "login");
+  await admin.grant(intent);
+  await admin.revoke(intent);
+  expect(stored).toBe(true);
+  expect(mockRows.get(JSON.stringify([target.user, target.relation, target.object]))).toEqual({ login: true, independent: false });
+  await writeOpenFgaTuples({ writes: [], deletes: [target] }, "login");
+  await writeOpenFgaTuples({ writes: [], deletes: [target] }, "login");
+  expect(stored).toBe(false);
+});
+
+it.each([false, true])("RBAC-01.05 repairs a historical revoked reason with tuple present=%s", async present => {
+  const { createOpenFgaAdmin } = await import("@/lib/authz/engines/openfga");
+  const { writeOpenFgaTuples } = await import("../openfga");
+  const target = { user: "user:test-user", relation: "manager", object: "system_config:platform_settings" };
+  const ownershipKey = JSON.stringify([target.user, target.relation, target.object]);
+  mockRows.set(ownershipKey, { login: present, independent: true });
+  stored = present;
+  mockRequest.mockImplementation(async (path: string, options: { body: string }) => {
+    if (path.endsWith("/read")) return Response.json({ tuples: stored ? [{ key: target }] : [] });
+    if (path.endsWith("/write")) {
+      const body = JSON.parse(options.body);
+      stored = Boolean(body.writes);
+      return Response.json({});
+    }
+    throw new Error(`Unexpected OpenFGA request: ${path}`);
+  });
+  await createOpenFgaAdmin().revoke({
+    resource: { type: "system_config", id: "platform_settings" },
+    grantee: { type: "user", id: "test-user" }, capability: "manage",
+  });
+  expect(mockRows.get(ownershipKey)).toEqual({ login: present, independent: false });
+  expect(stored).toBe(present);
+  await writeOpenFgaTuples({ writes: [target], deletes: [] }, "login");
+  await writeOpenFgaTuples({ writes: [], deletes: [target] }, "login");
+  expect(stored).toBe(false);
+  expect(mockRows.get(ownershipKey)).toEqual({ login: false, independent: false });
 });

@@ -13,6 +13,7 @@ jest.mock("@/lib/api-middleware", () => ({
   getAuthFromBearerOrSession: (...a: unknown[]) => mockGetAuth(...a),
 }));
 jest.mock("@/lib/authz", () => ({
+  PolicyWritePendingError: jest.requireActual("@/lib/authz/engine").PolicyWritePendingError,
   authorize: (...a: unknown[]) => mockAuthorize(...a),
   grant: (...a: unknown[]) => mockGrant(...a),
   revoke: (...a: unknown[]) => mockRevoke(...a),

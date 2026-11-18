@@ -11,6 +11,8 @@ import type {
   Subject,
 } from "../contract";
 import type { ListObjectsResult, PolicyAdmin, PolicyEngine } from "../engine";
+import { isDirectAdminBaselineTuple } from "@/lib/rbac/admin-grant-ownership";
+import { writeOpenFgaTuples } from "@/lib/rbac/openfga";
 import { BoundedTtlCache } from "../cache";
 import { getReasonMeta } from "../reasons";
 import { openFgaRelation, openFgaCheckRelation } from "@/lib/rbac/tuple-builders";
@@ -360,6 +362,19 @@ function grantTuple(intent: GrantIntent): FgaTuple {
 }
 
 async function fgaWrite(storeId: string, writes: FgaTuple[], deletes: FgaTuple[]): Promise<void> {
+  // Direct admin baseline mutations share login's durable ownership ledger and
+  // per-subject lock. Other CAS resources retain their existing write contract.
+  if ([...writes, ...deletes].some(isDirectAdminBaselineTuple)) {
+    try {
+      const result = await writeOpenFgaTuples({ writes, deletes }, "independent");
+      if (!result.enabled) throw new Error("OpenFGA writes are not configured");
+    } finally {
+      // An uncertain write may have reached OpenFGA. Drop this replica's cached
+      // decisions even when confirmation fails; other replicas retain their TTL.
+      invalidateDecisionCache();
+    }
+    return;
+  }
   const body = {
     ...(writes.length ? { writes: { tuple_keys: writes } } : {}),
     ...(deletes.length ? { deletes: { tuple_keys: deletes } } : {}),

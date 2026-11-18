@@ -103,8 +103,39 @@ This is the **once-per-session** flow. After it completes, the user holds a Keyc
   by that promotion. Contention times out after ten seconds and is reported
   as a failed reconciliation, rather than running without the lock.
 - Direct admin baseline tuples have separate login and independent ownership
-  in `admin_grant_ownership`. Manual grants through the tuple editor or shared
-  write adapter survive login demotion, even when added after promotion.
+  in `admin_grant_ownership`. Manual grants through CAS (`/api/authz/v1/grants`),
+  the tuple editor, or the shared write adapter use the same ownership boundary
+  and survive login demotion, even when added after promotion. CAS revocation
+  removes the independent reason; a still-valid login reason retains access
+  until demotion. Later demotion cannot restore a revoked independent reason.
+  The CAS facade retains grant/revoke auditing and decision-cache invalidation.
+- New independent grants remain `independent_pending` until both the OpenFGA
+  operation and ownership confirmation acknowledge completion. A read, write,
+  or confirmation error reports `AUTHZ_WRITE_PENDING` (HTTP 503, not automatically
+  retriable) and CAS audit reason `PDP_WRITE_PENDING`, rather than reporting a
+  definitive failed grant. An unconfirmed intent is not an active independent
+  reason. Further login/manual/purge changes for that tuple stop for recovery.
+  A lost response can still leave a tuple present, or a confirmation committed;
+  pending does not mean denied, rolled back, or safe to retry. All ownership
+  writers must run the upgraded implementation before mutations resume; older
+  binaries do not honor pending markers. Resolve pending records before rollback.
+- **Pending recovery:** pause writers for the affected subject and confirm all
+  outstanding requests have stopped. Compare exact OpenFGA tuples, ownership
+  records, and grant/revoke audit history with the approved access. Restore the
+  verified `login`/`independent` reasons and corresponding tuples under the
+  subject's mutation lock, then clear `independent_pending`. Verify effective
+  access with a fresh authorization check before resuming writers. Never clear
+  the marker merely because a tuple is currently absent: a delayed request may
+  still complete. This requires operator recovery; there is no automatic retry
+  or recovery endpoint.
+- **Upgrade audit:** ownership is not reconstructed for historical CAS mutations.
+  Inspect `admin_grant_ownership` records as well as current tuples, including
+  records whose tuple is absent. Compare both with available grant/revoke history.
+  A pre-fix revoke can leave a stale independent reason after deleting the tuple;
+  login can recreate that tuple and later demotion can preserve it. When history
+  confirms revocation, reapply the revoke through the fixed CAS path to clear
+  that reason while retaining any valid login reason. Do not infer manual grants
+  from current team membership or delete unattributed grants when history is unclear.
 - **Existing installations:** old direct grants have no reliable ownership
   history. An existing unrecorded tuple is preserved and logged for operator
   review; super-admin membership alone does not prove that login owns it.
