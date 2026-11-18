@@ -1,5 +1,4 @@
 name: "[CI][MCP] MCP Servers Docker Build and Push"
-description: "Build and push MCP server Docker images"
 
 on:
   push:
@@ -105,20 +104,19 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           FILTER_OUTPUTS: ${{ toJson(steps.filter.outputs) }}
-          TAG_VERSION: ${{ steps.version.outputs.tag_version }}
+          MANUAL_TAG_VERSION: ${{ inputs.tag_version }}
           MANUAL_BUILD_ALL: ${{ inputs.build_all || 'false' }}
         with:
           script: |
             const allAgents = JSON.parse(process.env.ALL_AGENTS);
             const filterOutputs = JSON.parse(process.env.FILTER_OUTPUTS);
-            const tagVersion = process.env.TAG_VERSION;
             const manualBuildAll = process.env.MANUAL_BUILD_ALL === 'true';
             const isTagPush = (process.env.GITHUB_REF || '').startsWith('refs/tags/');
             // A manual dispatch with an explicit tag_version (e.g. re-running a
             // coordinated release build) still builds all agents, same as a real
             // tag push — but a plain push to main is never a "tag push" and must
             // not be treated as one just because tag_version resolved to `canary`.
-            const isManualTaggedDispatch = '${{ github.event_name }}' === 'workflow_dispatch' && !!tagVersion;
+            const isManualTaggedDispatch = '${{ github.event_name }}' === 'workflow_dispatch' && !!process.env.MANUAL_TAG_VERSION;
 
             const isSharedChanged = filterOutputs.shared_config === 'true' ||
                                    filterOutputs.shared_dockerfile === 'true';

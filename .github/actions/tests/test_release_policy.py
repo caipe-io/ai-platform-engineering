@@ -120,6 +120,7 @@ def test_image_workflows_use_the_shared_channel_decision() -> None:
     text = path.read_text()
     aliases = [line.strip() for line in text.splitlines() if "type=raw,value=latest" in line]
     if not aliases:
+      assert "docker/metadata-action" not in text, path
       continue
     jobs = yaml.safe_load(text)["jobs"]
     resolver_name, resolver = next((name, job) for name, job in jobs.items() if "is_final_release" in job.get("outputs", {}))
@@ -187,6 +188,7 @@ def test_changelog_rolls_up_prereleases_and_preserves_published_history(reposito
 def test_prepare_release_validates_stable_input_before_writing_files() -> None:
   data = yaml.safe_load((ROOT / ".github/actions/prepare-release/action.yml").read_text())
   first_step = data["runs"]["steps"][0]
+  assert "continue-on-error" not in first_step
   assert first_step["uses"] == "./.github/actions/validate-release-tag"
   assert first_step["with"] == {
     "version": "${{ inputs.version }}",
@@ -314,3 +316,47 @@ def test_manual_candidate_suffix_cannot_move_backwards(repository: Path, suffix:
   )
   assert result.returncode != 0
   assert "must be greater" in result.stdout
+
+
+@pytest.mark.parametrize(
+  ("event", "ref", "manual_tag", "build_all", "shared", "expected"),
+  [
+    ("workflow_dispatch", "refs/heads/main", "", False, False, ["primary"]),
+    ("workflow_dispatch", "refs/heads/main", "1.1.0-rc.2", False, False, ["primary", "secondary"]),
+    ("workflow_dispatch", "refs/heads/main", "1.1.0", False, False, ["primary", "secondary"]),
+    ("workflow_dispatch", "refs/heads/main", "", True, False, ["primary", "secondary"]),
+    ("push", "refs/heads/main", "", False, False, ["primary"]),
+    ("push", "refs/tags/1.1.0-rc.2", "", False, False, ["primary", "secondary"]),
+    ("pull_request", "refs/pull/1/merge", "", False, True, ["primary", "secondary"]),
+  ],
+)
+def test_mcp_matrix_uses_explicit_manual_version(
+  event: str, ref: str, manual_tag: str, build_all: bool, shared: bool, expected: list[str],
+) -> None:
+  workflow = yaml.safe_load((ROOT / ".github/workflows/ci-mcp-servers.yml").read_text())
+  steps = workflow["jobs"]["determine-agents"]["steps"]
+  step = next(step for step in steps if step.get("id") == "set-matrix")
+  assert step["env"]["MANUAL_TAG_VERSION"] == "${{ inputs.tag_version }}"
+  script = step["with"]["script"].replace("${{ github.event_name }}", event)
+  result = subprocess.run(
+    ["node", "-e", "const core = {setOutput: (key, value) => console.log(JSON.stringify({key, value}))};\n" + script],
+    env={
+      **os.environ,
+      "ALL_AGENTS": json.dumps(["primary", "secondary"]),
+      "FILTER_OUTPUTS": json.dumps({"primary": "true", "secondary": "false", "shared_config": str(shared).lower()}),
+      "GITHUB_REF": ref,
+      "TAG_VERSION": "canary",
+      "MANUAL_TAG_VERSION": manual_tag,
+      "MANUAL_BUILD_ALL": str(build_all).lower(),
+    },
+    text=True,
+    capture_output=True,
+    check=True,
+  )
+  outputs = dict(
+    (item["key"], item["value"])
+    for line in result.stdout.splitlines() if line.startswith("{")
+    for item in [json.loads(line)]
+  )
+  assert json.loads(outputs["agents_to_build"]) == expected
+  assert outputs["should_build"] == "true"

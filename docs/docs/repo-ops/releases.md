@@ -150,3 +150,15 @@ git checkout -b release/x.y.z-hotfix tags/x.y.z
 # when ready:
 gh workflow run release-manual.yml -f version=1.2.1 # for a fix to 1.2.0
 ```
+
+### Prepared changelog entries
+
+- `CHANGELOG.md` sections for a version without a stable tag are generated from
+  conventional commits. Preparing that version again regenerates its section to
+  include commits added during review; hand-written lines in that section are
+  replaced.
+- Record change entries as conventional commits. Put curated summaries, migration
+  instructions, and other hand-written release notes in the release post under
+  `docs/releases/`; changelog generation does not rewrite that post.
+- Published stable sections remain historical records and are preserved by
+  incremental generation.
