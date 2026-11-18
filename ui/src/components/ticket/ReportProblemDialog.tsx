@@ -443,9 +443,21 @@ export function ReportProblemDialog({
     resetState();
   }, [resetState]);
 
+  const recoveryDescription = isServiceDesk ? [
+    title.trim(),
+    sdDescription.trim(),
+    `Areas of impact: ${sdAreas.join(", ")}`,
+    `Severity: ${sdSeverityValue}`,
+    `Type: ${sdTypeValue}`,
+    ...sdAreas.flatMap(area => (SERVICE_DESK_DETAILS[area] ?? []).flatMap(field => {
+      const value = sdDetails[`${area}|${field.label}`]?.trim();
+      return value ? [`${area} — ${field.label}: ${value}`] : [];
+    })),
+  ].filter(Boolean).join("\n\n") : reportDescription;
+
   const handleCopyDescription = useCallback(() => {
-    navigator.clipboard.writeText(reportDescription);
-  }, [reportDescription]);
+    navigator.clipboard.writeText(recoveryDescription);
+  }, [recoveryDescription]);
 
   return (
     <>

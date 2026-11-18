@@ -369,3 +369,16 @@ it("reports the service desk destination with the platform options", async () =>
   const response = await GET(new NextRequest("https://host.example.test/api/tickets/report?contextUrl=https%3A%2F%2Fhost.example.test%2Fprojects&componentId="));
   expect((await response.json()).data.serviceDesk).toEqual({ repository: "example/service-desk", areas: ["Vault"], severities: ["High"], types: ["Ticket"] });
 });
+
+
+it.each(["explicit", "context"])("rejects %s app-owned Request help before GitHub feedback dispatch", async ownership => {
+  mockApps.mockReturnValue([{ ...app(), installation: { ...app().installation, feedbackPath: undefined,
+    feedbackGitHub: { repository: "example/product", tokenEnv: "FEEDBACK_EXAMPLE_TOKEN" }, feedbackFeatures: ["Publishing"] } }]);
+  const response = await post({ requestType: "service-desk", feature: "Publishing",
+    ...(ownership === "explicit" ? { componentId: "example" } : {}) });
+  expect(response.status).toBe(400);
+  expect((await response.json()).error).toBe("Request help is not available for this component");
+  expect(mockPlatformFeedback).not.toHaveBeenCalled();
+  expect(mockServiceDesk).not.toHaveBeenCalled();
+  expect(mockProxy).not.toHaveBeenCalled();
+});

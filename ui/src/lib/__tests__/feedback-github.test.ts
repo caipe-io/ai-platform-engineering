@@ -361,6 +361,11 @@ describe("Request help", () => {
     expect(body).toContain("- **Team name:** @\u200Bexample-org/team");
     expect(body).not.toContain("@example-org");
   });
+  it.each(["``` @example-org/team", "~~~ @example-org/team", "```\n@example-org/team", "text | ` @example-org/team"])("neutralises mentions in formatted detail values: %s", async value => {
+    await create({ serviceDesk: { ...ticket.serviceDesk, areas: ["GitHub"], details: [{ area: "GitHub", label: "Team name", value }] } });
+    expect(sent().body).toContain("@\u200Bexample-org/team");
+    expect(sent().body).not.toContain("@example-org/team");
+  });
   it("rejects a description over 4000 characters", async () => {
     await expect(create({ description: "x".repeat(4001) })).rejects.toMatchObject({ statusCode: 400 });
     await expect(create({ description: "x".repeat(4000) })).resolves.toBeDefined();

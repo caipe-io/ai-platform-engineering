@@ -145,13 +145,14 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   try { body = JSON.parse(new TextDecoder().decode(bytes)); }
   catch { throw new ApiError("Invalid feedback JSON", 400); }
   const app = await feedbackApp(body?.contextUrl, body?.conversationId, auth.authenticatedUser, body?.componentId);
+  if (body?.requestType === "service-desk" && app) throw new ApiError("Request help is not available for this component", 400);
   if (app?.installation.feedbackGitHub) {
     if (!canLaunchAgenticApp(app, agenticAppUserContextFromSession(auth.authenticatedUser.session, auth.authenticatedUser.user.role))) throw new ApiError("Feedback component is unavailable", 403);
     const data = await createGitHubFeedback(body, auth.authenticatedUser.user.email, request.signal, appGitHubFeedbackSettings(app));
     return NextResponse.json({ success: true, data });
   }
   if (body?.requestType === "service-desk") {
-    if (app || platformFeedbackCapabilities().serviceDesk === undefined) throw new ApiError("Request help is not available for this component", 400);
+    if (platformFeedbackCapabilities().serviceDesk === undefined) throw new ApiError("Request help is not available for this component", 400);
     const data = await createServiceDeskTicket(body, auth.authenticatedUser.user.email, request.signal);
     return NextResponse.json({ success: true, data });
   }

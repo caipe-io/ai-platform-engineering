@@ -505,6 +505,31 @@ describe("Request help", () => {
     }) })));
   });
 
+  it("copies the help request, classification and selected details after submission fails", async () => {
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    try {
+      mockCreateTicketViaAgent.mockRejectedValueOnce(new Error("Service unavailable"));
+      await openRequestHelp();
+      fireEvent.change(screen.getByLabelText("Ticket title *"), { target: { value: "Access request" } });
+      fireEvent.change(screen.getByLabelText("Description *"), { target: { value: "Please grant access to the example namespace." } });
+      chooseAreas("Vault");
+      fireEvent.change(screen.getByLabelText("Namespace path"), { target: { value: "example/apps" } });
+      fireEvent.change(screen.getByLabelText("Severity *"), { target: { value: "High" } });
+      fireEvent.click(screen.getByRole("button", { name: "Submit Request" }));
+      await screen.findByText("Service unavailable");
+      fireEvent.click(screen.getByRole("button", { name: "Copy Description" }));
+      expect(writeText).toHaveBeenCalledWith([
+        "Access request", "Please grant access to the example namespace.", "Areas of impact: Vault",
+        "Severity: High", "Type: Ticket", "Vault — Namespace path: example/apps",
+      ].join("\n\n"));
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+  });
+
   it("is not offered in the chat-feedback flow", async () => {
     render(<ReportProblemDialog open onOpenChange={jest.fn()} feedbackContext={{ reason: "Wrong answer", feedbackType: "dislike" }} />);
     await waitFor(() => expect(screen.getByLabelText("Feature")).toBeEnabled());

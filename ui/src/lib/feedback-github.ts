@@ -243,7 +243,7 @@ export async function createServiceDeskTicket(input: unknown, reporter: string, 
     const value = text(item.value, "detail value", 500);
     if (!value) continue;
     if (field.options && !field.options.includes(value)) throw new ApiError("Invalid request detail", 400);
-    detailLines.set(item.area, [...detailLines.get(item.area) ?? [], `- **${field.label}:** ${cell(neutraliseMentions(value))}`]);
+    detailLines.set(item.area, [...detailLines.get(item.area) ?? [], `- **${field.label}:** ${cell(value).replace(/@(?=[A-Za-z0-9])/g, "@\u200B")}`]);
   }
   const body = ["| Area | Reported severity | Type | Requested by |", "| --- | --- | --- | --- |",
     `| ${[areas.join(", "), severity, type, reporter].map(cell).join(" | ")} |`,
