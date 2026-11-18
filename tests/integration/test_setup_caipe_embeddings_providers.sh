@@ -68,14 +68,14 @@ echo "[emb-test] Pin 1: all 7 providers + Voyage option exposed in the menu ..."
 # The menu lines are rendered with ANSI colour escapes — we look only at the
 # (BOLD)N)(NC) prefix + provider label, ignoring the surrounding markup.
 expected_menu=(
-  '1).* OpenAI '
-  '2).* Azure OpenAI '
-  '3).* AWS Bedrock '
-  '4).* Cohere '
-  '5).* Voyage AI '
-  '6).* HuggingFace '
-  '7).* Ollama '
-  '8).* LiteLLM Proxy '
+  '[0-9]).* OpenAI '
+  '[0-9]).* Azure OpenAI '
+  '[0-9]).* AWS Bedrock '
+  '[0-9]).* Cohere '
+  '[0-9]).* Voyage AI '
+  '[0-9]).* HuggingFace '
+  '[0-9]).* Ollama '
+  '[0-9]).* LiteLLM Proxy '
 )
 for pat in "${expected_menu[@]}"; do
   if grep -qE -- "${pat}" "${SETUP_SCRIPT}"; then

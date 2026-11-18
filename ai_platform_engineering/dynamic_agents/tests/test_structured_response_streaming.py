@@ -40,6 +40,7 @@ def _runtime(graph: Any = None) -> AgentRuntime:
         id="example-agent", name="Example", model=SimpleNamespace(id="example-model"),
         interrupt_on={}, app_context_prompt=None,
     )
+    runtime._resolved_model_id = runtime.config.model.id
     runtime.settings = SimpleNamespace(max_input_file_bytes=1024, max_input_turn_bytes=1024, max_input_files=1)
     runtime.tracing = SimpleNamespace(create_config=lambda thread: {"configurable": {"thread_id": thread}}, get_trace_id=lambda: None)
     runtime._active_stream_count = 0
@@ -223,7 +224,7 @@ async def test_invoke_rejects_invalid_active_schema_with_422(monkeypatch: pytest
         _id="example-agent", name="Example", owner_id="owner@example.test", system_prompt="Example",
         model={"id": "example-model", "provider": "example"},
     )
-    mongo = SimpleNamespace(get_agent=lambda _agent_id: agent, get_agent_mcp_servers=lambda _agent: [])
+    mongo = SimpleNamespace(_db=None, get_agent=lambda _agent_id: agent, get_agent_mcp_servers=lambda _agent: [])
     response = await chat.chat_invoke(
         ChatRequest(agent_id=agent.id, conversation_id="example-thread", message="hello"),
         user=UserContext(email="test-user@example.test"), mongo=mongo,

@@ -3,9 +3,10 @@ import {
   isWorkspaceRailCollapsed,
 } from "@/lib/workspace-rail";
 import { authOptions } from "@/lib/auth-config";
+import { AUTH_RETURN_TO_HEADER, buildLoginUrl } from "@/lib/auth/callback-url";
 import { getConfig } from "@/lib/config";
 import { recordAppVisit } from "@/lib/app-usage";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
@@ -66,7 +67,7 @@ async function requireApplicationSession(): Promise<"authenticated" | "anonymous
   const session = await getServerSession(authOptions);
   if (session?.error === 'SessionUnavailable') return "unavailable";
   if (!session || session.error || !session.user?.email) {
-    redirect("/login");
+    redirect(buildLoginUrl((await headers()).get(AUTH_RETURN_TO_HEADER)));
   }
   if (session.isAuthorized === false) {
     redirect("/unauthorized");

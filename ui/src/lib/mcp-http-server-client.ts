@@ -7,7 +7,7 @@
 import crypto from "crypto";
 
 import { ApiError } from "@/lib/api-middleware";
-import { resolveMcpHeaderCredentials } from "@/lib/mcp-credential-headers";
+import { isMcpCredentialUnavailableError, resolveMcpHeaderCredentials } from "@/lib/mcp-credential-headers";
 import { writeOpenFgaTuples, type OpenFgaTupleKey } from "@/lib/rbac/openfga";
 import type { MCPServerConfig, MCPToolInfo } from "@/types/dynamic-agent";
 import type { NextRequest } from "next/server";
@@ -140,10 +140,11 @@ export async function revokeDiagnosticAgentAccess(
   }
 }
 
-async function readJsonOrSse(response: Response): Promise<unknown> {
+async function readJsonOrSse(response: Response, allowEmpty = false): Promise<unknown> {
   const contentType = response.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) return response.json();
   const text = await response.text();
+  if (allowEmpty && !text.trim()) return null;
+  if (contentType.includes("application/json")) return JSON.parse(text);
   const sseJson = contentType.includes("text/event-stream") ? parseSseJson(text) : null;
   if (sseJson) return sseJson;
   try {
@@ -159,13 +160,14 @@ async function mcpJsonRpc(input: {
   headers: Record<string, string>;
   sessionId?: string;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<{ ok: boolean; status: number; payload: unknown; sessionId?: string }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? 15_000);
   try {
     const response = await fetch(input.endpoint, {
       method: "POST",
-      signal: controller.signal,
+      signal: input.signal ? AbortSignal.any([controller.signal, input.signal]) : controller.signal,
       headers: {
         accept: "application/json, text/event-stream;q=0.9, */*;q=0.1",
         "content-type": "application/json",
@@ -174,10 +176,13 @@ async function mcpJsonRpc(input: {
       },
       body: JSON.stringify(input.payload),
     });
+    // Authentication failures may have an empty or non-JSON body. Preserve the
+    // HTTP status before decoding so callers can handle unavailable connections.
+    rejectMcpAuthorization(response.status);
     return {
       ok: response.ok,
       status: response.status,
-      payload: await readJsonOrSse(response),
+      payload: await readJsonOrSse(response, response.ok && typeof input.payload.method === "string" && input.payload.method.startsWith("notifications/")),
       sessionId: response.headers.get("mcp-session-id") ?? input.sessionId,
     };
   } finally {
@@ -226,6 +231,7 @@ async function buildMcpRequestHeaders(input: {
   server: MCPServerConfig;
   viaAgentGateway: boolean;
   serverId: string;
+  agentId?: string;
 }): Promise<Record<string, string>> {
   try {
     const { headers } = await resolveMcpHeaderCredentials({
@@ -235,11 +241,18 @@ async function buildMcpRequestHeaders(input: {
       viaAgentGateway: input.viaAgentGateway,
       retrievalCaller: "mcp-http-server-client",
     });
+    const contextHeaders = buildAgentContextHeaders(input.agentId ?? diagnosticAgentId(input.serverId, input.session));
+    if (input.agentId && Object.keys(contextHeaders).length === 0) {
+      throw new ApiError("Agent context signing is unavailable", 503, "AGENT_CONTEXT_UNAVAILABLE");
+    }
     return {
       ...headers,
-      ...buildAgentContextHeaders(diagnosticAgentId(input.serverId, input.session)),
+      ...contextHeaders,
     };
   } catch (error) {
+    if (isMcpCredentialUnavailableError(error)) {
+      throw new ApiError("Connect or reconnect your provider account to use this MCP connection", 401, "MCP_CREDENTIAL_UNAVAILABLE");
+    }
     if (error instanceof Error && error.message === "MCP_AUTH_REQUIRED") {
       throw new ApiError(
         "A signed-in user token is required for AgentGateway-routed MCP servers",
@@ -256,10 +269,12 @@ export async function listHttpMcpTools(input: {
   session: AuthSession;
   server: MCPServerConfig & { endpoint: string };
   serverId: string;
+  agentId?: string;
+  signal?: AbortSignal;
 }): Promise<{ tools: MCPToolInfo[]; sessionId?: string }> {
   const viaAgentGateway = isAgentGatewayEndpoint(input.server);
   const diagnosticAgent = diagnosticAgentId(input.serverId, input.session);
-  const diagnosticTuples = viaAgentGateway
+  const diagnosticTuples = viaAgentGateway && !input.agentId
     ? await grantDiagnosticAgentAccess(input.serverId, diagnosticAgent, input.session)
     : [];
 
@@ -270,7 +285,34 @@ export async function listHttpMcpTools(input: {
       server: input.server,
       viaAgentGateway,
       serverId: input.serverId,
+      agentId: input.agentId,
     });
+
+    async function collectPages(first: Awaited<ReturnType<typeof mcpJsonRpc>>, initialTools: MCPToolInfo[]): Promise<{ tools: MCPToolInfo[]; sessionId?: string }> {
+      const tools = [...initialTools];
+      const cursors = new Set<string>();
+      let page = first;
+      while (true) {
+        const payload = page.payload as { result?: { nextCursor?: unknown }; nextCursor?: unknown } | null;
+        const cursor = payload?.result?.nextCursor ?? payload?.nextCursor;
+        if (cursor === undefined || cursor === null || cursor === "") return { tools, sessionId: page.sessionId };
+        // Reject looping/unbounded catalogs instead of returning a partial list.
+        if (typeof cursor !== "string" || cursors.has(cursor) || cursors.size >= 99) {
+          throw new ApiError("MCP tools/list pagination is invalid or exceeds 100 pages", 502, "MCP_LIST_INVALID");
+        }
+        cursors.add(cursor);
+        page = await mcpJsonRpc({
+          endpoint: input.server.endpoint, headers, sessionId: page.sessionId,
+          payload: { jsonrpc: "2.0", id: `tools-list-${Date.now()}`, method: "tools/list", params: { cursor } },
+          timeoutMs: 5_000, signal: input.signal,
+        });
+        rejectMcpAuthorization(page.status);
+        if (!page.ok) throw new ApiError(`MCP tools/list failed with HTTP ${page.status}`, 502, "MCP_LIST_FAILED");
+        const nextTools = extractTools(page.payload);
+        if (!nextTools) throw new ApiError("MCP tools/list returned an unexpected payload", 502, "MCP_LIST_INVALID");
+        tools.push(...nextTools);
+      }
+    }
 
     const first = await mcpJsonRpc({
       endpoint: input.server.endpoint,
@@ -282,10 +324,12 @@ export async function listHttpMcpTools(input: {
         params: {},
       },
       timeoutMs: 5_000,
+      signal: input.signal,
     });
+    rejectMcpAuthorization(first.status);
     if (first.ok) {
       const tools = extractTools(first.payload);
-      if (tools) return { tools, sessionId: first.sessionId };
+      if (tools) return await collectPages(first, tools);
     }
 
     const initialized = await mcpJsonRpc({
@@ -302,9 +346,21 @@ export async function listHttpMcpTools(input: {
         },
       },
       timeoutMs: 5_000,
+      signal: input.signal,
     });
-    if (!initialized.ok || !initialized.sessionId) {
+    rejectMcpAuthorization(initialized.status);
+    if (!initialized.ok || !initialized.sessionId || (initialized.payload as { error?: unknown } | null)?.error) {
       throw new ApiError(`MCP initialize failed with HTTP ${initialized.status}`, 502, "MCP_INIT_FAILED");
+    }
+
+    const ready = await mcpJsonRpc({
+      endpoint: input.server.endpoint, headers, sessionId: initialized.sessionId,
+      payload: { jsonrpc: "2.0", method: "notifications/initialized" },
+      timeoutMs: 5_000, signal: input.signal,
+    });
+    rejectMcpAuthorization(ready.status);
+    if (!ready.ok || (ready.payload as { error?: unknown } | null)?.error) {
+      throw new ApiError(`MCP initialized notification failed with HTTP ${ready.status}`, 502, "MCP_INIT_FAILED");
     }
 
     const listed = await mcpJsonRpc({
@@ -318,7 +374,9 @@ export async function listHttpMcpTools(input: {
         params: {},
       },
       timeoutMs: 5_000,
+      signal: input.signal,
     });
+    rejectMcpAuthorization(listed.status);
     if (!listed.ok) {
       throw new ApiError(`MCP tools/list failed with HTTP ${listed.status}`, 502, "MCP_LIST_FAILED");
     }
@@ -326,10 +384,53 @@ export async function listHttpMcpTools(input: {
     if (!tools) {
       throw new ApiError("MCP tools/list returned an unexpected payload", 502, "MCP_LIST_INVALID");
     }
-    return { tools, sessionId: initialized.sessionId };
+    return await collectPages(listed, tools);
   } finally {
     await revokeDiagnosticAgentAccess(diagnosticTuples, "mcp-http-server-client");
   }
+}
+
+function rejectMcpAuthorization(status: number): void {
+  if (status === 401) {
+    throw new ApiError("MCP authentication was rejected; check your sign-in and connected credentials", 401, "MCP_AUTH_REQUIRED");
+  }
+  if (status === 403) {
+    throw new ApiError("MCP tool access denied; check your MCP server and tool-call permissions", 403, "MCP_TOOL_ACCESS_DENIED");
+  }
+}
+
+/** Invoke once under the real agent policy; retries must never repeat tool side effects. */
+export async function callHttpMcpTool(input: {
+  request: NextRequest;
+  session: AuthSession;
+  server: MCPServerConfig & { endpoint: string };
+  serverId: string;
+  agentId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+}): Promise<unknown> {
+  const headers = await buildMcpRequestHeaders({ ...input, viaAgentGateway: true });
+  const initialized = await mcpJsonRpc({ endpoint: input.server.endpoint, headers,
+    payload: { jsonrpc: "2.0", id: crypto.randomUUID(), method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "harness-tool-broker", version: "1" } } } });
+  rejectMcpAuthorization(initialized.status);
+  if (!initialized.ok || (initialized.payload as { error?: unknown })?.error) {
+    throw new ApiError("MCP initialization failed", 502, "MCP_INIT_FAILED");
+  }
+  const ready = await mcpJsonRpc({ endpoint: input.server.endpoint, headers, sessionId: initialized.sessionId,
+    payload: { jsonrpc: "2.0", method: "notifications/initialized" } });
+  rejectMcpAuthorization(ready.status);
+  if (!ready.ok) throw new ApiError("MCP initialization was not acknowledged", 502, "MCP_INIT_FAILED");
+  const result = await mcpJsonRpc({ endpoint: input.server.endpoint, headers,
+    sessionId: initialized.sessionId, timeoutMs: 900_000,
+    payload: { jsonrpc: "2.0", id: crypto.randomUUID(), method: "tools/call",
+      params: { name: input.toolName, arguments: input.args } } });
+  rejectMcpAuthorization(result.status);
+  const payload = result.payload as { result?: unknown; error?: unknown } | null;
+  if (!result.ok || !payload || payload.error || payload.result === undefined) {
+    throw new ApiError("MCP tool invocation failed; the request was not retried", 502, "MCP_CALL_FAILED");
+  }
+  return payload.result;
 }
 
 export async function listDirectHttpMcpTools(input: {

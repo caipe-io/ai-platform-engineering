@@ -1,9 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import type { NativeExtensionProps } from "../../../app-sdk";
 import { NativeExtensionHost } from "../NativeExtensionHost";
 import { installedNativeExtensions } from "../installed.generated";
 
+jest.mock("@/lib/config", () => ({ getConfig: () => true }));
+jest.mock("@/components/ticket/ReportProblemDialog", () => ({ ReportProblemDialog: ({ initialComponentId }: { initialComponentId: string }) => <div data-testid="shared-feedback" data-component={initialComponentId} /> }));
 jest.mock("@/lib/api-client", () => ({ apiClient: {} }));
 jest.mock("@/store/chat-store", () => ({ useChatStore: {} }));
 jest.mock("../NativeExtensionAssistant", () => ({
@@ -29,8 +31,9 @@ jest.mock("../installed.generated", () => ({
       },
       module: {
         contractVersion: "2.0",
-        Component: ({ chat }: NativeExtensionProps) => (
-          <button type="button" disabled={!chat?.assistant}>Open app assistant</button>
+        Component: ({ chat, feedback }: NativeExtensionProps) => (
+          <><button type="button" disabled={!chat?.assistant}>Open app assistant</button>
+          <button onClick={() => feedback?.open({ feature: "Publishing" })}>App feedback</button></>
         ),
       },
     },
@@ -102,4 +105,13 @@ describe("NativeExtensionHost", () => {
     render(<NativeExtensionHost extensionId="example-app" slot />);
     expect(screen.getByText("Native extension is not installed.")).toBeInTheDocument();
   });
+});
+
+
+it("opens the shared host form with the native component selected", () => {
+  installedNativeExtensions[0].manifest.contractVersion = "2.0";
+  installedNativeExtensions[0].module.contractVersion = "2.0";
+  render(<NativeExtensionHost extensionId="example-app" />);
+  fireEvent.click(screen.getByRole("button", { name: "App feedback" }));
+  expect(screen.getByTestId("shared-feedback")).toHaveAttribute("data-component", "example-app");
 });

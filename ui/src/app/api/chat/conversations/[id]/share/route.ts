@@ -1,6 +1,6 @@
 // GET /api/chat/conversations/[id]/share - Get sharing info
 // POST /api/chat/conversations/[id]/share - Share conversation with users
-// DELETE /api/chat/conversations/[id]/share/[userId] handled in separate file
+// DELETE /api/chat/conversations/[id]/share - Revoke user or team access
 
 import {
 ApiError,
@@ -13,7 +13,16 @@ withErrorHandler
 } from '@/lib/api-middleware';
 import { getCollection } from '@/lib/mongodb';
 import { requireConversationResourcePermission } from '@/lib/rbac/conversation-implicit-authz';
-import { writeOpenFgaTuples, type OpenFgaTupleKey } from '@/lib/rbac/openfga';
+import {
+  commitConversationSharingMutation,
+  resumeConversationSharingMutation,
+  withConversationSharingLock,
+} from '@/lib/rbac/conversation-sharing-mutation';
+import type { OpenFgaTupleKey } from '@/lib/rbac/openfga';
+import {
+stableKeycloakSubject,
+type ShareableUserDocument,
+} from '@/lib/rbac/shareable-users';
 import type { Conversation,ShareConversationRequest,SharingAccess } from '@/types/mongodb';
 import { ObjectId,type Document } from 'mongodb';
 import { NextRequest } from 'next/server';
@@ -30,14 +39,6 @@ interface ResolvedTeamShare {
   shareRef: string;
   subjectRef: string;
   aliases: string[];
-}
-
-interface UserShareDocument {
-  email?: string;
-  keycloak_sub?: string;
-  metadata?: {
-    keycloak_sub?: string;
-  };
 }
 
 interface ResolvedUserShare {
@@ -57,19 +58,11 @@ function uniqueEmails(values: string[]): string[] {
   return uniqueStrings(values.map(normalizedEmail));
 }
 
-function stableUserSubject(user: UserShareDocument): string | undefined {
-  const candidates = [
-    user.keycloak_sub,
-    user.metadata?.keycloak_sub,
-  ];
-  return candidates.find((candidate) => typeof candidate === 'string' && candidate.trim())?.trim();
-}
-
-async function resolveUserShares(emails: string[]): Promise<ResolvedUserShare[]> {
+async function lookupUserShares(emails: string[]): Promise<ResolvedUserShare[]> {
   const recipientEmails = uniqueEmails(emails);
   if (recipientEmails.length === 0) return [];
 
-  const users = await getCollection<UserShareDocument>('users');
+  const users = await getCollection<ShareableUserDocument>('users');
   const docs = await users
     .find({ email: { $in: recipientEmails } })
     .project({ email: 1, keycloak_sub: 1, 'metadata.keycloak_sub': 1 })
@@ -81,9 +74,24 @@ async function resolveUserShares(emails: string[]): Promise<ResolvedUserShare[]>
   );
 
   return recipientEmails.flatMap((email) => {
-    const subjectRef = stableUserSubject(docsByEmail.get(email) ?? {});
+    const subjectRef = stableKeycloakSubject(docsByEmail.get(email) ?? {});
     return subjectRef ? [{ email, subjectRef }] : [];
   });
+}
+
+async function resolveUserShares(emails: string[]): Promise<ResolvedUserShare[]> {
+  const recipientEmails = uniqueEmails(emails);
+  const resolvedUsers = await lookupUserShares(recipientEmails);
+  const resolvedEmails = new Set(resolvedUsers.map((user) => user.email));
+  const unavailableEmails = recipientEmails.filter((email) => !resolvedEmails.has(email));
+  if (unavailableEmails.length > 0) {
+    throw new ApiError(
+      `These users must sign in before they can be shared with: ${unavailableEmails.join(', ')}`,
+      400,
+      'SHARE_RECIPIENT_NOT_PROVISIONED',
+    );
+  }
+  return resolvedUsers;
 }
 
 function userConversationGrantDiff(
@@ -104,21 +112,6 @@ function userConversationGrantDiff(
     }
   }
   return { writes, deletes };
-}
-
-async function writeUserConversationGrantTuplesBestEffort(
-  conversationId: string,
-  emails: string[],
-  permission: SharePermission,
-): Promise<void> {
-  try {
-    const resolvedUsers = await resolveUserShares(emails);
-    const diff = userConversationGrantDiff(conversationId, resolvedUsers, permission);
-    if (diff.writes.length === 0 && diff.deletes.length === 0) return;
-    await writeOpenFgaTuples(diff);
-  } catch (err) {
-    console.warn('[chat/share] User conversation grant write failed (best-effort):', err);
-  }
 }
 
 function teamLookupFilter(teamRef: string): Record<string, unknown> {
@@ -144,7 +137,6 @@ async function resolveTeamShares(teamRefs: string[]): Promise<ResolvedTeamShare[
 
     const id = team._id !== undefined && team._id !== null ? String(team._id) : rawRef;
     const slug = typeof team.slug === 'string' ? team.slug.trim() : '';
-    // assisted-by Codex Codex-sonnet-4-6
     // Store canonical slugs for new team shares, while accepting legacy Mongo _id refs.
     const shareRef = slug || id;
 
@@ -186,20 +178,25 @@ function mergeTeamPermissions(
   return next;
 }
 
-function teamConversationGrantTuples(
+function teamConversationGrantDiff(
   conversationId: string,
   resolvedTeams: ResolvedTeamShare[],
   permission: SharePermission,
-): OpenFgaTupleKey[] {
-  const tuples: OpenFgaTupleKey[] = [];
+): { writes: OpenFgaTupleKey[]; deletes: OpenFgaTupleKey[] } {
+  const writes: OpenFgaTupleKey[] = [];
+  const deletes: OpenFgaTupleKey[] = [];
   for (const team of resolvedTeams) {
     const user = `team:${team.subjectRef}#member`;
-    tuples.push({ user, relation: 'reader', object: `conversation:${conversationId}` });
+    const object = `conversation:${conversationId}`;
+    writes.push({ user, relation: 'reader', object });
+    const writerTuple = { user, relation: 'writer', object };
     if (permission === 'comment') {
-      tuples.push({ user, relation: 'writer', object: `conversation:${conversationId}` });
+      writes.push(writerTuple);
+    } else {
+      deletes.push(writerTuple);
     }
   }
-  return tuples;
+  return { writes, deletes };
 }
 
 // GET /api/chat/conversations/[id]/share
@@ -226,7 +223,7 @@ export const GET = withErrorHandler(async (
     const accessList = await sharingAccess
       .find({ 
         conversation_id: conversationId, 
-        revoked_at: { $exists: false }
+        revoked_at: null,
       })
       .toArray();
 
@@ -251,7 +248,6 @@ export const POST = withErrorHandler(async (
       throw new ApiError('Invalid conversation ID format', 400);
     }
 
-    // assisted-by Codex Codex-sonnet-4-6
     // Public conversation sharing is retired; keep only a cleanup path for legacy state.
     if (body.is_public === true || body.public_permission !== undefined) {
       throw new ApiError(
@@ -276,105 +272,108 @@ export const POST = withErrorHandler(async (
       throw new ApiError('permission must be "view" or "comment"', 400);
     }
 
-    const conversations = await getCollection<Conversation>('conversations');
-    const conversation = await conversations.findOne({ _id: conversationId });
+    return withConversationSharingLock(conversationId, async (assertOwned) => {
+      const conversations = await getCollection<Conversation>('conversations');
+      let conversation = await conversations.findOne({ _id: conversationId });
 
-    if (!conversation) {
-      throw new ApiError('Conversation not found', 404);
-    }
+      if (!conversation) {
+        throw new ApiError('Conversation not found', 404);
+      }
 
-    await requireConversationResourcePermission(session, user.email, conversation, 'share');
+      await requireConversationResourcePermission(session, user.email, conversation, 'share');
+      if (await resumeConversationSharingMutation(conversationId, assertOwned)) {
+        conversation = await conversations.findOne({ _id: conversationId });
+        if (!conversation) throw new ApiError('Conversation not found', 404);
+      }
 
-    const now = new Date();
-    const sharingAccess = await getCollection<SharingAccess>('sharing_access');
-    const update: Document = {};
+      const now = new Date();
+      const accessInserts: SharingAccess[] = [];
+      const update: Document = {};
+      let recipientEmails: string[] = [];
+      let resolvedUsers: ResolvedUserShare[] = [];
+      let resolvedTeams: ResolvedTeamShare[] = [];
 
-    // Handle user sharing
-    if (body.user_emails && body.user_emails.length > 0) {
-      // Validate emails
-      for (const email of body.user_emails) {
-        if (!validateEmail(email)) {
-          throw new ApiError(`Invalid email format: ${email}`, 400);
+      // Resolve every requested subject before any write so a mixed user/team
+      // request cannot partially persist when one recipient is invalid.
+      if (body.user_emails && body.user_emails.length > 0) {
+        for (const email of body.user_emails) {
+          if (!validateEmail(email)) {
+            throw new ApiError(`Invalid email format: ${email}`, 400);
+          }
         }
+        recipientEmails = uniqueEmails(body.user_emails);
+        resolvedUsers = await resolveUserShares(recipientEmails);
       }
-      const recipientEmails = uniqueEmails(body.user_emails);
+      if (body.team_ids && body.team_ids.length > 0) {
+        resolvedTeams = await resolveTeamShares(body.team_ids);
+      }
+
       const permission = body.permission as SharePermission;
+      const userDiff = userConversationGrantDiff(conversationId, resolvedUsers, permission);
+      const teamDiff = teamConversationGrantDiff(conversationId, resolvedTeams, permission);
+      const grantDiff = {
+        writes: [...userDiff.writes, ...teamDiff.writes],
+        deletes: [...userDiff.deletes, ...teamDiff.deletes],
+      };
 
-      // Create sharing access records for users
-      const accessRecords: SharingAccess[] = recipientEmails.map((email) => ({
-        conversation_id: conversationId,
-        granted_by: user.email,
-        granted_to: email,
-        permission,
-        granted_at: now,
-      }));
+      // Handle user sharing
+      if (body.user_emails && body.user_emails.length > 0) {
+        const permission = body.permission as SharePermission;
 
-      if (accessRecords.length > 0) {
-        await sharingAccess.insertMany(accessRecords);
-      }
-      await writeUserConversationGrantTuplesBestEffort(conversationId, recipientEmails, permission);
+        // Create sharing access records for users
+        const accessRecords: SharingAccess[] = recipientEmails.map((email) => ({
+          _id: new ObjectId(),
+          conversation_id: conversationId,
+          granted_by: user.email,
+          granted_to: email,
+          permission,
+          granted_at: now,
+        }));
 
-      // Initialize sharing object if it doesn't exist
-      if (!conversation.sharing) {
-        update['sharing'] = {};
-      }
-      
-      // Update conversation shared_with
-      const existingSharedWith = conversation.sharing?.shared_with || [];
-      update['sharing.shared_with'] = uniqueStrings([...existingSharedWith, ...recipientEmails]);
-    }
+        accessInserts.push(...accessRecords);
 
-    // Handle team sharing
-    if (body.team_ids && body.team_ids.length > 0) {
-      const resolvedTeams = await resolveTeamShares(body.team_ids);
-      const permission = body.permission as SharePermission;
-
-      // Initialize sharing object if it doesn't exist
-      if (!conversation.sharing) {
-        update['sharing'] = {};
+        // Update conversation shared_with
+        const existingSharedWith = conversation.sharing?.shared_with || [];
+        update['sharing.shared_with'] = uniqueStrings([...existingSharedWith, ...recipientEmails]);
       }
 
-      // Update conversation shared_with_teams
-      const existingSharedWithTeams = conversation.sharing?.shared_with_teams || [];
-      update['sharing.shared_with_teams'] = canonicalizeSharedTeamRefs(existingSharedWithTeams, resolvedTeams);
+      // Handle team sharing
+      if (body.team_ids && body.team_ids.length > 0) {
+        const permission = body.permission as SharePermission;
 
-      // Store per-team permission
-      update['sharing.team_permissions'] = mergeTeamPermissions(
-        conversation.sharing?.team_permissions,
-        resolvedTeams,
-        permission,
-      );
+        // Update conversation shared_with_teams
+        const existingSharedWithTeams = conversation.sharing?.shared_with_teams || [];
+        update['sharing.shared_with_teams'] = canonicalizeSharedTeamRefs(existingSharedWithTeams, resolvedTeams);
 
-      const grantTuples = teamConversationGrantTuples(conversationId, resolvedTeams, permission);
-      if (grantTuples.length > 0) {
-        try {
-          await writeOpenFgaTuples({ writes: grantTuples, deletes: [] });
-        } catch (err) {
-          console.warn('[chat/share] Team conversation grant write failed (best-effort):', err);
-        }
+        // Store per-team permission
+        update['sharing.team_permissions'] = mergeTeamPermissions(
+          conversation.sharing?.team_permissions,
+          resolvedTeams,
+          permission,
+        );
       }
-    }
 
-    if (disablesPublicSharing) {
-      update['sharing.is_public'] = false;
-    }
+      if (disablesPublicSharing) {
+        update['sharing.is_public'] = false;
+      }
 
-    if (body.enable_link !== undefined) {
-      update['sharing.share_link_enabled'] = body.enable_link;
-    }
+      if (body.enable_link !== undefined) {
+        update['sharing.share_link_enabled'] = body.enable_link;
+      }
 
-    if (body.link_expires) {
-      update['sharing.share_link_expires'] = new Date(body.link_expires);
-    }
+      if (body.link_expires) {
+        update['sharing.share_link_expires'] = new Date(body.link_expires);
+      }
 
-    await conversations.updateOne(
-      { _id: conversationId },
-      { $set: update }
-    );
+      await commitConversationSharingMutation({
+        _id: conversationId, grants: grantDiff, accessInserts,
+        conversationUpdate: { $set: update },
+      }, assertOwned);
 
-    const updated = await conversations.findOne({ _id: conversationId });
+      const updated = await conversations.findOne({ _id: conversationId });
 
-    return successResponse(updated);
+      return successResponse(updated);
+    });
   });
 });
 
@@ -400,37 +399,162 @@ export const PATCH = withErrorHandler(async (
       throw new ApiError('email or team_id is required', 400);
     }
 
-    const conversations = await getCollection<Conversation>('conversations');
-    const conversation = await conversations.findOne({ _id: conversationId });
-    if (!conversation) {
-      throw new ApiError('Conversation not found', 404);
-    }
-
-    await requireConversationResourcePermission(session, user.email, conversation, 'share');
-
-    if (email) {
-      if (!validateEmail(email)) {
-        throw new ApiError(`Invalid email format: ${email}`, 400);
+    return withConversationSharingLock(conversationId, async (assertOwned) => {
+      const conversations = await getCollection<Conversation>('conversations');
+      let conversation = await conversations.findOne({ _id: conversationId });
+      if (!conversation) {
+        throw new ApiError('Conversation not found', 404);
       }
-      const recipientEmail = normalizedEmail(email);
-      const sharingAccess = await getCollection<SharingAccess>('sharing_access');
-      await sharingAccess.updateOne(
-        { conversation_id: conversationId, granted_to: { $in: uniqueStrings([email, recipientEmail]) }, revoked_at: null },
-        { $set: { permission, granted_to: recipientEmail } }
-      );
-      await writeUserConversationGrantTuplesBestEffort(conversationId, [recipientEmail], permission);
+
+      await requireConversationResourcePermission(session, user.email, conversation, 'share');
+      if (await resumeConversationSharingMutation(conversationId, assertOwned)) {
+        conversation = await conversations.findOne({ _id: conversationId });
+        if (!conversation) throw new ApiError('Conversation not found', 404);
+      }
+
+      const grants: { writes: OpenFgaTupleKey[]; deletes: OpenFgaTupleKey[] } = { writes: [], deletes: [] };
+      const accessUpdates = [];
+      const update: Document = {};
+      if (email) {
+        if (!validateEmail(email)) throw new ApiError(`Invalid email format: ${email}`, 400);
+        const recipientEmail = normalizedEmail(email);
+        if (!(conversation.sharing?.shared_with ?? []).some((ref) => normalizedEmail(ref) === recipientEmail)) {
+          throw new ApiError('User is no longer shared with this conversation', 404);
+        }
+        const resolvedUsers = await resolveUserShares([recipientEmail]);
+        const diff = userConversationGrantDiff(conversationId, resolvedUsers, permission);
+        grants.writes.push(...diff.writes);
+        grants.deletes.push(...diff.deletes);
+        accessUpdates.push({
+          filter: { conversation_id: conversationId, granted_to: { $in: uniqueStrings([email, recipientEmail]) }, revoked_at: null },
+          update: { $set: { permission, granted_to: recipientEmail } },
+        });
+      }
+      if (team_id) {
+        const resolvedTeams = await resolveTeamShares([team_id]);
+        const sharedTeams = conversation.sharing?.shared_with_teams ?? [];
+        if (!resolvedTeams.every((team) => team.aliases.some((ref) => sharedTeams.includes(ref)))) {
+          throw new ApiError('Team is no longer shared with this conversation', 404);
+        }
+        const diff = teamConversationGrantDiff(conversationId, resolvedTeams, permission);
+        grants.writes.push(...diff.writes);
+        grants.deletes.push(...diff.deletes);
+        update['sharing.team_permissions'] = mergeTeamPermissions(
+          conversation.sharing?.team_permissions, resolvedTeams, permission,
+        );
+      }
+      await commitConversationSharingMutation({
+        _id: conversationId, grants, accessUpdates,
+        conversationUpdate: { $set: update },
+      }, assertOwned);
+
+      const updated = await conversations.findOne({ _id: conversationId });
+      return successResponse(updated);
+    });
+  });
+});
+
+// DELETE /api/chat/conversations/[id]/share — revoke access for one user or team
+export const DELETE = withErrorHandler(async (
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) => {
+  return withAuth(request, async (req, user, session) => {
+    const params = await context.params;
+    const conversationId = params.id;
+    const body = await request.json();
+
+    if (!validateConversationId(conversationId)) {
+      throw new ApiError('Invalid conversation ID format', 400);
     }
 
-    if (team_id) {
-      const teamPerms = conversation.sharing?.team_permissions || {};
-      teamPerms[team_id] = permission;
-      await conversations.updateOne(
-        { _id: conversationId },
-        { $set: { 'sharing.team_permissions': teamPerms } }
-      );
+    const email = typeof body.email === 'string' ? normalizedEmail(body.email) : '';
+    const teamId = typeof body.team_id === 'string' ? body.team_id.trim() : '';
+    if (Boolean(email) === Boolean(teamId)) {
+      throw new ApiError('Exactly one of email or team_id is required', 400);
+    }
+    if (email && !validateEmail(email)) {
+      throw new ApiError(`Invalid email format: ${email}`, 400);
     }
 
-    const updated = await conversations.findOne({ _id: conversationId });
-    return successResponse(updated);
+    return withConversationSharingLock(conversationId, async (assertOwned) => {
+      const conversations = await getCollection<Conversation>('conversations');
+      let conversation = await conversations.findOne({ _id: conversationId });
+      if (!conversation) {
+        throw new ApiError('Conversation not found', 404);
+      }
+
+      await requireConversationResourcePermission(session, user.email, conversation, 'share');
+      if (await resumeConversationSharingMutation(conversationId, assertOwned)) {
+        conversation = await conversations.findOne({ _id: conversationId });
+        if (!conversation) throw new ApiError('Conversation not found', 404);
+      }
+      const now = new Date();
+      const grants: { writes: OpenFgaTupleKey[]; deletes: OpenFgaTupleKey[] } = { writes: [], deletes: [] };
+      const accessUpdates = [];
+      const update: Document = {};
+      const pull: Document = {};
+
+      if (email) {
+        // Revocation remains idempotent for legacy drift: if the recipient was
+        // never provisioned there is no subject tuple to remove, but Mongo state
+        // must still be cleaned up.
+        const resolvedUsers = await lookupUserShares([email]);
+        if (resolvedUsers.length > 0) {
+          const tupleDiff = userConversationGrantDiff(conversationId, resolvedUsers, 'comment');
+          grants.deletes.push(...tupleDiff.writes);
+        }
+
+        accessUpdates.push({
+          filter: {
+            conversation_id: conversationId,
+            granted_to: { $in: uniqueStrings([body.email, email]) },
+            revoked_at: null,
+          },
+          update: { $set: { revoked_at: now, revoked_by: user.email } },
+        });
+        const aliases = (conversation.sharing?.shared_with ?? [])
+          .filter((ref) => normalizedEmail(ref) === email);
+        pull['sharing.shared_with'] = { $in: uniqueStrings([...aliases, body.email, email]) };
+      }
+
+      if (teamId) {
+        let resolvedTeams: ResolvedTeamShare[];
+        try {
+          resolvedTeams = await resolveTeamShares([teamId]);
+        } catch (err) {
+          if (!(err instanceof ApiError) || err.statusCode !== 404) throw err;
+          // A deleted/stale team must still be removable from a conversation.
+          resolvedTeams = [{
+            shareRef: teamId,
+            subjectRef: teamId,
+            aliases: [teamId],
+          }];
+        }
+        const aliases = new Set(resolvedTeams.flatMap((team) => team.aliases));
+        const revokeTuples = resolvedTeams.flatMap((team) => {
+          const tupleUser = `team:${team.subjectRef}#member`;
+          const object = `conversation:${conversationId}`;
+          return [
+            { user: tupleUser, relation: 'reader', object },
+            { user: tupleUser, relation: 'writer', object },
+          ];
+        });
+        grants.deletes.push(...revokeTuples);
+
+        pull['sharing.shared_with_teams'] = { $in: Array.from(aliases) };
+        update['sharing.team_permissions'] = Object.fromEntries(
+          Object.entries(conversation.sharing?.team_permissions || {})
+            .filter(([ref]) => !aliases.has(ref)),
+        );
+      }
+      await commitConversationSharingMutation({
+        _id: conversationId, grants, accessUpdates,
+        conversationUpdate: { $pull: pull, ...(Object.keys(update).length ? { $set: update } : {}) },
+      }, assertOwned);
+
+      const updated = await conversations.findOne({ _id: conversationId });
+      return successResponse(updated);
+    });
   });
 });

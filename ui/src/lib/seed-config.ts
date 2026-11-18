@@ -520,6 +520,11 @@ async function seedMCPServers(
     await reconcileConfigDrivenMcpServerRelationships({
       serverId,
       organizationId: caipeOrgKey(),
+    }).catch((error) => {
+      console.warn(
+        `[seed-config] Failed to reconcile config-driven MCP server OpenFGA tuples for ${serverId}:`,
+        error instanceof Error ? error.message : String(error),
+      );
     });
     console.log(`[seed-config] Seeded MCP server: ${serverId}`);
     count++;
@@ -1221,9 +1226,10 @@ export async function cleanupStaleConfigDriven(
  *   policy lock — operators who want a curated default should add their
  *   agent to the seed YAML and the bootstrap will then no-op (collection
  *   no longer empty).
- * - `model: { id: "", provider: "" }` defers model selection to the
- *   dynamic-agents backend default. Hard-coding a model here would
- *   couple bootstrap behavior to a specific deployment.
+ * - The first config-driven model is used when one was seeded by the
+ *   installer. This keeps a fresh starter agent aligned with the configured
+ *   gateway (for example, an external LiteLLM Bedrock model). If no model was
+ *   seeded, empty model fields defer selection to the backend default.
  * - Built-in tools enabled with conservative defaults (`fetch_url` allow-list
  *   `*`, `sleep.max_seconds: 60`, `request_user_input` for workflow HITL).
  *   Lock-down environments can tighten these via the UI after first login.
@@ -1233,7 +1239,23 @@ export const HELLO_WORLD_AGENT_ID = "hello-world";
 /** Bump when bootstrap fields change so reconcile updates existing installs. */
 export const HELLO_WORLD_BOOTSTRAP_REVISION = 2;
 
-export function buildHelloWorldAgentDoc(now: string): DynamicAgentConfig {
+type BootstrapModel = { id: string; provider: string };
+
+const EMPTY_BOOTSTRAP_MODEL: BootstrapModel = { id: "", provider: "" };
+
+async function resolveBootstrapModel(): Promise<BootstrapModel> {
+  if (!isMongoDBConfigured) return EMPTY_BOOTSTRAP_MODEL;
+
+  const models = await getCollection<LLMModelDoc>("llm_models");
+  const model = await models.findOne({ config_driven: true });
+  if (!model?.model_id || !model.provider) return EMPTY_BOOTSTRAP_MODEL;
+  return { id: model.model_id, provider: model.provider };
+}
+
+export function buildHelloWorldAgentDoc(
+  now: string,
+  model: BootstrapModel = EMPTY_BOOTSTRAP_MODEL,
+): DynamicAgentConfig {
   return {
     _id: HELLO_WORLD_AGENT_ID,
     name: "Hello World",
@@ -1247,7 +1269,7 @@ When a workflow step asks you to save data for later steps, use \`write_file\` o
 
 Be concise and helpful.`,
     allowed_tools: {},
-    model: { id: "", provider: "" },
+    model,
     visibility: "global",
     subagents: [],
     skills: [],
@@ -1282,7 +1304,10 @@ export async function bootstrapDefaultDynamicAgentIfEmpty(): Promise<boolean> {
   const existingCount = await collection.countDocuments({});
   if (existingCount > 0) return false;
 
-  const doc = buildHelloWorldAgentDoc(new Date().toISOString());
+  const doc = buildHelloWorldAgentDoc(
+    new Date().toISOString(),
+    await resolveBootstrapModel(),
+  );
   // Use insertOne to make the empty-collection invariant explicit. If a
   // racing seedAgents() inserted something between countDocuments() and
   // here, the unique _id index would already protect us, but a duplicate

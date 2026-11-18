@@ -7,16 +7,19 @@ changes take effect without a service restart.
 """
 
 import asyncio
+import json
 import logging
 import secrets
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response, status
+from pydantic import ValidationError
 
 from autonomous_agents.config import get_settings
 from autonomous_agents.models import (
     Acknowledgement,
     FollowUpContext,
+    ManualTaskRunCreate,
     TaskCreate,
     TaskDefinition,
     TaskRun,
@@ -46,6 +49,7 @@ from autonomous_agents.services.task_runner import (
     task_chat_history_publishing_enabled,
 )
 from autonomous_agents.services.trigger_instances import DedupKey
+from autonomous_agents.services.webhook_limits import read_limited_webhook_body
 from autonomous_agents.services.webhook_runtime import dispatch_webhook_run
 
 logger = logging.getLogger("autonomous_agents")
@@ -185,6 +189,7 @@ def _serialize_task(task: TaskDefinition, next_run_iso: str | None) -> dict:
         ack_dump = raw_ack
 
     return {
+        "manual_run_context_version": 1,
         "id": task.id,
         "name": task.name,
         "description": task.description,
@@ -697,8 +702,13 @@ async def follow_up_task_run(
 
 
 @router.post("/tasks/{task_id}/run", response_model=dict)
-async def trigger_task_manually(task_id: str, request: Request) -> dict:
-    """Manually trigger a task to run immediately (for testing)."""
+async def trigger_task_manually(
+    task_id: str,
+    request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    """Trigger the task, optionally queueing authenticated, idempotent context."""
     task = await get_task_store().get(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
@@ -709,6 +719,50 @@ async def trigger_task_manually(task_id: str, request: Request) -> dict:
             "Admin %s acted on task %s (%r) owned by %s (action=%s)",
             caller_email, task_id, task.name, task.owner_id, "trigger",
         )
+
+    raw = await read_limited_webhook_body(request, max_bytes=32768)
+    try:
+        data = json.loads(raw) if raw.strip() else None
+        # JSON clients historically sent {} or unrelated options to this
+        # endpoint. Only the new fields opt a caller into context validation.
+        if isinstance(data, dict) and not {"request_id", "context"}.intersection(data):
+            data = None
+        payload = ManualTaskRunCreate.model_validate(data) if data is not None else None
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=422, detail="Manual run body must be valid JSON") from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_context=False, include_input=False)) from exc
+
+    if payload is not None:
+        if not caller_email:
+            raise HTTPException(status_code=403, detail="Authenticated caller required for manual context")
+        if not task.enabled:
+            raise HTTPException(status_code=409, detail="Enable the task before submitting context")
+        context = {
+            **payload.context,
+            "_caipe_manual_request": {
+                "source": "authenticated_ui",
+                "request_id": str(payload.request_id),
+                "actor": caller_email,
+            },
+        }
+        settings = get_settings()
+        outcome = await dispatch_webhook_run(
+            task=task,
+            dedup_key=DedupKey(key=f"{task.id}:manual:{payload.request_id}", strategy="manual"),
+            body=json.dumps(context, allow_nan=False).encode("utf-8"),
+            context=context,
+            follow_up=None,
+            background_tasks=background_tasks,
+            max_pending_per_task=settings.webhook_max_pending_per_task,
+            max_pending_per_owner=settings.webhook_max_pending_per_owner,
+            max_pending_global=settings.webhook_max_pending_global,
+            max_pending_payload_bytes_global=settings.webhook_max_pending_payload_bytes_global,
+            max_concurrent_per_owner=settings.webhook_max_concurrent_per_owner,
+            max_concurrent_global=settings.webhook_max_concurrent_global,
+        )
+        response.status_code = outcome.status_code
+        return {"status": "accepted", "task_id": task_id, "run_id": outcome.run_id}
 
     # Fire-and-forget -- the run is recorded in the store as it
     # progresses so the UI can poll /tasks/{id}/runs to see the result.

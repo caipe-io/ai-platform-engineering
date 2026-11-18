@@ -4,6 +4,10 @@
 
 Foundation routes for remote consumers; BFF callers use CAS in process:
 
+Gateway MCP tools use resource type `tool` and an exact `server/tool` ID, for
+example `mcp-example/read_item`. These IDs support `call` grants and revocation;
+wildcards, nested paths and OpenFGA relation/type syntax are rejected.
+
 | Method and path | Request | Success |
 | --- | --- | --- |
 | `POST /api/access/check` | `{resource: {type, id}, action}` | CAS `{decision, reason, retriable, ttl_seconds?, via?}` |

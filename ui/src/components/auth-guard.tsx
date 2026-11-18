@@ -2,7 +2,9 @@
 
 import { LoadingScreen } from "@/components/loading-screen";
 import { isTokenExpired } from "@/lib/auth-utils";
+import { buildLoginUrl, clearLoginReturnTo } from "@/lib/auth/callback-url";
 import { getConfig } from "@/lib/config";
+import { debugLog } from "@/lib/debug-log";
 import { useSession } from "next-auth/react";
 import { signOutWithFeedback } from "@/lib/sign-out";
 import { usePathname,useRouter } from "next/navigation";
@@ -32,11 +34,9 @@ export function AuthGuard({ children }: AuthGuardProps) {
    * user returns here after re-authenticating (e.g. /chat/<uuid>).
    */
   const loginUrl = useCallback((params?: string): string => {
-    const cb = pathname && pathname !== '/' && pathname !== '/login'
-      ? `callbackUrl=${encodeURIComponent(pathname)}`
-      : '';
-    const parts = [params, cb].filter(Boolean).join('&');
-    return parts ? `/login?${parts}` : '/login';
+    const target = typeof window !== 'undefined' && window.location.pathname === pathname
+      ? `${pathname}${window.location.search}${window.location.hash}` : pathname;
+    return buildLoginUrl(target, params);
   }, [pathname]);
 
   // Check for corrupted session cookies on mount
@@ -121,7 +121,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
 
       if (isTokenExpiryHandling) {
         // Let TokenExpiryGuard handle the expiry with its modal
-        console.log("[AuthGuard] TokenExpiryGuard is handling expiry, skipping redirect");
+        debugLog("[AuthGuard] TokenExpiryGuard is handling expiry, skipping redirect");
         return;
       }
 
@@ -158,7 +158,8 @@ export function AuthGuard({ children }: AuthGuardProps) {
         sessionStorage.removeItem('token-expiry-handling');
       }
 
-      console.log("[AuthGuard] ✅ Authorization complete, rendering app");
+      clearLoginReturnTo();
+      debugLog("[AuthGuard] ✅ Authorization complete, rendering app");
     }
   }, [status, session, router, loginUrl]);
 
@@ -174,7 +175,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
       : "Checking authentication...";
 
     const handleCancel = async () => {
-      console.log("[AuthGuard] User manually resetting session...");
+      debugLog("[AuthGuard] User manually resetting session...");
       // Clear everything including cookies
       if (typeof window !== 'undefined') {
         localStorage.clear();

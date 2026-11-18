@@ -1,0 +1,61 @@
+---
+header:
+  schema-version: "2.2.0"
+  last-updated: "2026-11-09"
+  last-reviewed: "2026-11-09"
+  url: https://raw.githubusercontent.com/caipe-io/ai-platform-engineering/main/security-insights.yml
+
+project:
+  name: CAIPE
+  homepage: https://caipe.io
+  roadmap: https://caipe.io/roadmap
+  administrators:
+    - name: CAIPE project maintainers
+      primary: true
+      social: https://github.com/caipe-io/ai-platform-engineering/blob/main/MAINTAINERS.md
+  repositories:
+    - name: ai-platform-engineering
+      url: https://github.com/caipe-io/ai-platform-engineering
+      comment: Platform services, UI, integrations, charts, and documentation.
+    - name: caipe-cli
+      url: https://github.com/caipe-io/caipe-cli
+      comment: Terminal client for the platform.
+    - name: agentic-apps
+      url: https://github.com/caipe-io/agentic-apps
+      comment: Agentic applications for the platform.
+    - name: governance
+      url: https://github.com/caipe-io/governance
+      comment: Project charter, decision making, and community governance.
+  vulnerability-reporting:
+    reports-accepted: true
+    bug-bounty-available: false
+    policy: https://github.com/caipe-io/ai-platform-engineering/blob/main/SECURITY.md
+    comment: The security policy provides private reporting and coordination; it does not advertise a bug bounty.
+  documentation:
+    detailed-guide: https://caipe.io/docs/getting-started/quick-start
+    code-of-conduct: https://github.com/caipe-io/ai-platform-engineering/blob/main/CODE_OF_CONDUCT.md
+
+repository:
+  url: https://github.com/caipe-io/ai-platform-engineering
+  status: active
+  accepts-change-request: true
+  accepts-automated-change-request: true
+  core-team:
+    - name: CAIPE project maintainers
+      primary: true
+      social: https://github.com/caipe-io/ai-platform-engineering/blob/main/MAINTAINERS.md
+  license:
+    url: https://github.com/caipe-io/ai-platform-engineering/blob/main/LICENSE
+    expression: Apache-2.0
+  documentation:
+    contributing-guide: https://github.com/caipe-io/ai-platform-engineering/blob/main/CONTRIBUTING.md
+    dependency-management-policy: https://github.com/caipe-io/ai-platform-engineering/blob/main/DEPENDENCY_POLICY.md
+    governance: https://github.com/caipe-io/governance
+    review-policy: https://github.com/caipe-io/ai-platform-engineering/blob/main/docs/docs/repo-ops/code-review.md
+    security-policy: https://github.com/caipe-io/ai-platform-engineering/blob/main/SECURITY.md
+  security:
+    assessments:
+      self:
+        comment: >-
+          This manifest records repository policies and public project information.
+          It does not represent a comprehensive security assessment or certification.

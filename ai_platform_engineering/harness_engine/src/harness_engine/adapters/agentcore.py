@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -26,6 +27,8 @@ from harness_engine.models import (
 )
 from harness_engine.repository import RunRepository
 from harness_engine.sessions import DeterministicProviderSessionManager, ProviderSessionManager
+
+logger = logging.getLogger(__name__)
 
 
 class AgentCoreDataClient(Protocol):
@@ -108,7 +111,7 @@ class AgentCoreAdapter:
         ]
         return HarnessDescriptor(
             id="agentcore",
-            display_name="Amazon Bedrock AgentCore",
+            display_name="Amazon Bedrock AgentCore (Remote sessions)",
             adapter_version="1.0.0",
             execution_mode=ExecutionMode.PROVIDER_MANAGED,
             availability="available" if profiles else "misconfigured",
@@ -222,13 +225,12 @@ class AgentCoreAdapter:
     ) -> AsyncIterator[CanonicalEventDraft]:
         if not context.binding.provider_session_id:
             raise RuntimeError("AgentCore session manager did not assign a runtime session ID")
+        actor_id = "caipe-user-" + hashlib.sha256(context.binding.owner_subject.encode()).hexdigest()[:32]
         request: dict[str, Any] = {
             "harnessArn": target.arn,
             "runtimeSessionId": context.binding.provider_session_id,
-            "runtimeUserId": (
-                "caipe-user-"
-                + hashlib.sha256(context.binding.owner_subject.encode()).hexdigest()[:32]
-            ),
+            "runtimeUserId": actor_id,
+            "actorId": actor_id,
             "qualifier": target.qualifier,
             "messages": [
                 {
@@ -251,16 +253,32 @@ class AgentCoreAdapter:
             raise RuntimeError("AgentCore Harness returned no response stream")
 
         iterator = iter(body)
+        message: list[str] = []
         while True:
             raw = await asyncio.to_thread(_next_or_end, iterator)
             if raw is _END:
                 break
             if not isinstance(raw, dict):
                 continue
+            if "messageStart" in raw:
+                message = []
+            for error_type in ("runtimeClientError", "internalServerException", "validationException"):
+                if error_type in raw:
+                    logger.error(
+                        "AgentCore %s for run %s (AWS request %s)",
+                        error_type,
+                        context.turn.run_id,
+                        response.get("ResponseMetadata", {}).get("RequestId", "unknown"),
+                    )
+                    raise RuntimeError(f"AgentCore reported {error_type}")
             delta = raw.get("contentBlockDelta", {}).get("delta", {})
             text = delta.get("text")
             if text:
+                message.append(str(text))
                 yield CanonicalEventDraft(event_type="content.delta", data={"text": str(text)})
+            if raw.get("messageStop", {}).get("stopReason") == "end_turn":
+                final = "".join(message)
+                yield CanonicalEventDraft(event_type="result.updated", data={"content": final, "final_content": final})
             reasoning = delta.get("reasoningContent", {}).get("text")
             if reasoning:
                 yield CanonicalEventDraft(
@@ -303,6 +321,7 @@ class AgentCoreAdapter:
 
         if "text/event-stream" in content_type and hasattr(body, "iter_lines"):
             iterator = iter(body.iter_lines(chunk_size=64))
+            final: str | None = None
             while True:
                 raw = await asyncio.to_thread(_next_or_end, iterator)
                 if raw is _END:
@@ -314,6 +333,16 @@ class AgentCoreAdapter:
                     line = line[5:].lstrip()
                 if line:
                     yield CanonicalEventDraft(event_type="content.delta", data={"text": line})
+                    try:
+                        value = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(value, dict):
+                        result = value.get("result", value.get("response"))
+                        if isinstance(result, str):
+                            final = result
+            if final is not None:
+                yield CanonicalEventDraft(event_type="result.updated", data={"content": final, "final_content": final})
             return
 
         chunks: list[bytes] = []
@@ -332,3 +361,4 @@ class AgentCoreAdapter:
         except json.JSONDecodeError:
             text = decoded
         yield CanonicalEventDraft(event_type="content.delta", data={"text": text})
+        yield CanonicalEventDraft(event_type="result.updated", data={"content": text, "final_content": text})

@@ -47,6 +47,14 @@ export interface PlatformDiagnosticProbe {
   };
 }
 
+export interface PlatformHealthComponent {
+  id: string;
+  label: string;
+  status: PlatformCapabilityStatus;
+  detail: string;
+  version: string | null;
+}
+
 interface PlatformHealthResponse {
   status: "healthy" | "degraded" | "down";
   checked_at: string;
@@ -58,6 +66,7 @@ interface PlatformHealthResponse {
     disabled: number;
   };
   capabilities: PlatformHealthCapability[];
+  components?: PlatformHealthComponent[];
   probe_summary?: {
     total: number;
     healthy: number;
@@ -70,6 +79,7 @@ interface PlatformHealthResponse {
 interface UsePlatformHealthProbesResult {
   status: PlatformProbeStatus;
   capabilities: PlatformHealthCapability[];
+  components: PlatformHealthComponent[];
   summary: PlatformHealthResponse["summary"] | null;
   probeSummary: NonNullable<PlatformHealthResponse["probe_summary"]> | null;
   probes: PlatformDiagnosticProbe[];
@@ -83,6 +93,7 @@ export function usePlatformHealthProbes(options?: { diagnostics?: boolean }): Us
   const diagnostics = options?.diagnostics === true;
   const [status, setStatus] = useState<PlatformProbeStatus>("checking");
   const [capabilities, setCapabilities] = useState<PlatformHealthCapability[]>([]);
+  const [components, setComponents] = useState<PlatformHealthComponent[]>([]);
   const [summary, setSummary] = useState<PlatformHealthResponse["summary"] | null>(null);
   const [probeSummary, setProbeSummary] = useState<NonNullable<PlatformHealthResponse["probe_summary"]> | null>(null);
   const [probes, setProbes] = useState<PlatformDiagnosticProbe[]>([]);
@@ -115,6 +126,7 @@ export function usePlatformHealthProbes(options?: { diagnostics?: boolean }): Us
       const body = (await response.json()) as PlatformHealthResponse;
       hasLoadedRef.current = true;
       setCapabilities(Array.isArray(body.capabilities) ? body.capabilities : []);
+      setComponents(Array.isArray(body.components) ? body.components : []);
       setSummary(body.summary ?? null);
       setProbes(Array.isArray(body.probes) ? body.probes : []);
       setProbeSummary(body.probe_summary ?? null);
@@ -147,6 +159,7 @@ export function usePlatformHealthProbes(options?: { diagnostics?: boolean }): Us
         lastStatusRef.current = "down";
         setStatus("down");
         setSummary(null);
+        setComponents([]);
         setProbes([]);
         setProbeSummary(null);
       }
@@ -173,6 +186,7 @@ export function usePlatformHealthProbes(options?: { diagnostics?: boolean }): Us
   return {
     status,
     capabilities,
+    components,
     summary,
     probeSummary,
     probes,

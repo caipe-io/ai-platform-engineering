@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { githubHubOptions, type GitHubHubOptions } from "./github-hub-options";
 /**
  * Hub Crawler — GitHub/GitLab repo crawler + MongoDB cache for skill hubs.
  *
@@ -142,6 +144,7 @@ export interface AncillarySummary {
 }
 
 export interface HubSkillDoc {
+  cache_generation?: string;
   hub_id: string;
   skill_id: string;
   name: string;
@@ -205,6 +208,7 @@ export type HubLastCrawlTruncation =
 
 export interface SkillHubDoc {
   id: string;
+  cache_generation?: string;
   type: "github" | "gitlab";
   location: string;
   enabled: boolean;
@@ -218,6 +222,8 @@ export interface SkillHubDoc {
    * begins with one of these prefixes. Empty/absent => crawl whole repo.
    */
   include_paths?: readonly string[];
+  revision?: string;
+  entry_paths?: string[];
   /**
    * GitLab only: per-hub override of the recursive-tree page cap.
    * Each page returns up to 100 entries, so a cap of 50 walks at most
@@ -435,7 +441,7 @@ const TEXT_FILE_EXTENSIONS = new Set([
   // Markup / config / data
   "md", "markdown", "mdx", "rst", "txt", "log",
   "json", "jsonc", "ndjson", "yaml", "yml", "toml", "ini", "cfg", "conf", "env",
-  "xml", "html", "htm", "css", "scss", "less",
+  "xml", "html", "htm", "css", "scss", "less", "svg", "ql",
   "csv", "tsv",
   // DevOps
   "dockerfile", "tf", "tfvars", "hcl",
@@ -559,7 +565,10 @@ export async function crawlGitHubRepo(
   token?: string,
   includePaths?: readonly string[],
   emitter: CrawlEventEmitter = NOOP_EMITTER,
+  sourceOptions: GitHubHubOptions = {},
 ): Promise<CrawlResult> {
+  const { revision, entry_paths: entryPaths = [] } = githubHubOptions(sourceOptions);
+  const ref = revision || "HEAD";
   const normalizedIncludes = normalizeIncludePaths(includePaths);
 
   const headers: Record<string, string> = {
@@ -570,7 +579,7 @@ export async function crawlGitHubRepo(
 
   // Use Git Trees API (recursive) for efficiency — single request for full tree
   const treeRes = await fetchWithEmitter(
-    `https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`,
+    `https://api.github.com/repos/${owner}/${repo}/git/trees/${ref}?recursive=1`,
     { headers, signal: AbortSignal.timeout(15000) },
     emitter,
     "tree",
@@ -589,6 +598,7 @@ export async function crawlGitHubRepo(
   // a partial set of skills is more useful than no skills at all, and
   // the warning makes it clear the result is incomplete.
   const platformTruncated = treeData.truncated === true;
+  if (platformTruncated && (revision || entryPaths.length)) throw new Error("Original package tree is truncated");
   const entries: GitHubTreeEntry[] = treeData.tree || [];
 
   // GitHub returns the entire recursive tree in a single response.
@@ -607,7 +617,7 @@ export async function crawlGitHubRepo(
   const skillMdPaths = entries
     .filter(
       (e: GitHubTreeEntry) =>
-        e.type === "blob" && e.path.endsWith("/SKILL.md"),
+        e.type === "blob" && (e.path.endsWith("/SKILL.md") || entryPaths.includes(e.path)),
     )
     .map((e: GitHubTreeEntry) => e.path)
     .filter((p) => pathMatchesIncludePrefixes(p, normalizedIncludes));
@@ -621,7 +631,7 @@ export async function crawlGitHubRepo(
 
   // Sort skill dirs by path so nested-skill detection is deterministic.
   const skillDirs = skillMdPaths
-    .map((p) => p.replace(/\/SKILL\.md$/, ""))
+    .map((p) => p.slice(0, p.lastIndexOf("/")))
     .sort();
 
   /**
@@ -646,7 +656,7 @@ export async function crawlGitHubRepo(
     try {
       // Fetch SKILL.md content
       const contentRes = await fetchWithEmitter(
-        `https://api.github.com/repos/${owner}/${repo}/contents/${skillPath}`,
+        `https://api.github.com/repos/${owner}/${repo}/contents/${skillPath}${revision ? `?ref=${revision}` : ""}`,
         { headers, signal: AbortSignal.timeout(10000) },
         emitter,
         "skill_md",
@@ -666,8 +676,8 @@ export async function crawlGitHubRepo(
       );
 
       // Derive skill directory and id
-      const dir = skillPath.replace(/\/SKILL\.md$/, "");
-      const id = dir.split("/").pop() || dir;
+      const dir = skillPath.slice(0, skillPath.lastIndexOf("/"));
+      const id = skillPath.endsWith("/SKILL.md") ? dir.split("/").pop() || dir : skillPath.split("/").pop()!.replace(/\.md$/, "");
 
       // Collect ancillary siblings (everything under `dir/` except SKILL.md
       // itself and any files belonging to a nested skill). metadata.json is
@@ -676,8 +686,7 @@ export async function crawlGitHubRepo(
       const ancillary = newAncillaryAccumulator();
       const dirPrefix = `${dir}/`;
       const candidates = Array.from(blobBySize.entries())
-        .filter(([p]) => p.startsWith(dirPrefix))
-        .filter(([p]) => p !== skillPath)
+        .filter(([p]) => p.startsWith(dirPrefix) && p !== skillPath)
         .filter(([p]) => !belongsToNestedSkill(dir, p))
         .sort(([a], [b]) => a.localeCompare(b));
 
@@ -689,7 +698,7 @@ export async function crawlGitHubRepo(
           size,
           async () => {
             const fileRes = await fetchWithEmitter(
-              `https://api.github.com/repos/${owner}/${repo}/contents/${absPath}`,
+              `https://api.github.com/repos/${owner}/${repo}/contents/${absPath}${revision ? `?ref=${revision}` : ""}`,
               { headers, signal: AbortSignal.timeout(10000) },
               emitter,
               "ancillary",
@@ -726,12 +735,17 @@ export async function crawlGitHubRepo(
       const fm = parseFrontmatter(content);
 
       const skillName = fm.name || id;
+      const original = !!revision || entryPaths.includes(skillPath);
+      if (original && (ancillary.summary.skipped_binary || ancillary.summary.skipped_too_large ||
+        ancillary.summary.truncated_at_count_cap || ancillary.summary.truncated_at_size_cap)) {
+        throw new Error(`Original package is incomplete: ${skillPath}`);
+      }
       skills.push({
-        id: skillName,
+        id: original ? `${skillName}-${createHash("sha256").update(skillPath).digest("hex").slice(0, 12)}` : skillName,
         name: skillName,
         description: fm.description || "",
         content,
-        metadata,
+        metadata: { ...metadata, ...(revision || entryPaths.includes(skillPath) ? { upstream_revision: revision || null, upstream_entry_path: skillPath, original_content: true } : {}) },
         path: skillPath,
         ancillary_files: ancillary.files,
         ancillary_summary: ancillary.summary,
@@ -743,6 +757,7 @@ export async function crawlGitHubRepo(
         ancillary_count: Object.keys(ancillary.files).length,
       });
     } catch (err) {
+      if (revision || entryPaths.includes(skillPath)) throw err;
       console.error(`[HubCrawl] Failed to fetch ${skillPath}:`, err);
       emitter.emit({
         type: "warning",
@@ -1171,7 +1186,7 @@ export async function getHubSkills(
 
   // Always check for any cached docs first
   const cached = await hubSkillsCol
-    .find({ hub_id: hub.id })
+    .find({ hub_id: hub.id, ...(hub.cache_generation ? {cache_generation: hub.cache_generation} : {}) })
     .toArray();
 
   if (!forceFresh && cached.length > 0) {
@@ -1231,6 +1246,7 @@ async function _crawlAndCache(
         token,
         hub.include_paths,
         emitter,
+        { revision: hub.revision, entry_paths: hub.entry_paths },
       );
       crawled = result.skills;
       truncation = result.truncation;
@@ -1286,6 +1302,10 @@ async function _crawlAndCache(
     throw err;
   }
 
+  const currentHub = await (await getCollection("skill_hubs")).findOne({id: hub.id});
+  if (currentHub?.cache_generation !== hub.cache_generation) throw new Error("Hub settings changed during crawl; refresh again");
+  if (new Set(crawled.map(skill => skill.id)).size !== crawled.length) throw new Error("Hub has colliding skill identities");
+
   // Upsert crawled skills into cache. Track which ones are *new* or have
   // *changed content* so we can fire an async scan only for those — saves
   // scanner work on a no-op refresh of a 100-skill hub.
@@ -1295,7 +1315,7 @@ async function _crawlAndCache(
   const priorDocs = await hubSkillsCol
     .find(
       { hub_id: hub.id },
-      { projection: { skill_id: 1, content: 1, scan_status: 1 } },
+      { projection: { skill_id: 1, content: 1, scan_status: 1, ancillary_files: 1 } },
     )
     .toArray();
   const priorById = new Map(
@@ -1303,6 +1323,7 @@ async function _crawlAndCache(
       d.skill_id,
       {
         content: d.content ?? "",
+        ancillary: d.ancillary_files ?? {},
         scan_status: (d.scan_status as string | undefined) ?? null,
       },
     ]),
@@ -1311,11 +1332,16 @@ async function _crawlAndCache(
   const refsToScan: HubSkillScanRef[] = [];
 
   for (const skill of crawled) {
+    const prior = priorById.get(skill.id);
+    const sameFiles = (a: Record<string, string>, b: Record<string, string>) =>
+      Object.keys(a).length === Object.keys(b).length && Object.entries(a).every(([path, content]) => b[path] === content);
+    const packageChanged = !!prior && (prior.content !== skill.content || !sameFiles(prior.ancillary, skill.ancillary_files ?? {}));
     await hubSkillsCol.updateOne(
       { hub_id: hub.id, skill_id: skill.id },
       {
         $set: {
           hub_id: hub.id,
+          cache_generation: hub.cache_generation ?? null,
           skill_id: skill.id,
           name: skill.name,
           description: skill.description,
@@ -1323,6 +1349,7 @@ async function _crawlAndCache(
           metadata: skill.metadata,
           path: skill.path,
           cached_at: now,
+          ...(packageChanged ? { scan_status: "unscanned", scan_summary: "Package changed; security scan pending" } : {}),
           ancillary_files: skill.ancillary_files ?? {},
           ancillary_summary:
             skill.ancillary_summary ?? {
@@ -1338,11 +1365,9 @@ async function _crawlAndCache(
       { upsert: true },
     );
 
-    const prior = priorById.get(skill.id);
     const isNew = !prior;
-    const contentChanged = prior !== undefined && prior.content !== skill.content;
     const neverScanned = prior !== undefined && !prior.scan_status;
-    if (isNew || contentChanged || neverScanned) {
+    if (isNew || packageChanged || neverScanned || prior?.scan_status === "unscanned") {
       refsToScan.push({
         hub_id: hub.id,
         skill_id: skill.id,
@@ -1360,7 +1385,7 @@ async function _crawlAndCache(
 
   // Remove stale skills that no longer exist in the repo
   const currentIds = crawled.map((s) => s.id);
-  if (currentIds.length > 0) {
+  if (truncation.kind === "ok") {
     await hubSkillsCol.deleteMany({
       hub_id: hub.id,
       skill_id: { $nin: currentIds },
@@ -1390,6 +1415,7 @@ async function _crawlAndCache(
     metadata: {
       ...s.metadata,
       hub_location: hub.location,
+      hub_revision: hub.revision || null,
       hub_type: hub.type,
       path: s.path,
       tags: [...(Array.isArray(s.metadata?.tags) ? (s.metadata.tags as string[]) : []), ...hubLabels],
@@ -1426,6 +1452,7 @@ function docToCatalogSkill(hub: SkillHubDoc) {
     metadata: {
       ...doc.metadata,
       hub_location: hub.location,
+      hub_revision: hub.revision || null,
       hub_type: hub.type,
       path: doc.path,
       // Surface the hub composite identity to the UI so the override

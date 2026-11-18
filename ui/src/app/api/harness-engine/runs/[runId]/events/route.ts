@@ -1,4 +1,4 @@
-import { proxyHarnessEngine } from "@/lib/harness-engine-proxy";
+import { proxyHarnessEngine, harnessConversationReadHeaders } from "@/lib/harness-engine-proxy";
 import { authorizeHarnessRunAccess } from "../../../_run-authz";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -21,5 +21,6 @@ export async function GET(
     access.config,
     access.auth,
     `/api/v1/runs/${encodeURIComponent(runId)}/events${suffix}`,
+    access.readScope ? { headers: harnessConversationReadHeaders(access.readScope) } : {},
   );
 }

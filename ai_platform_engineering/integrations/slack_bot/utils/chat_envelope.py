@@ -24,6 +24,7 @@ def augment_slack_client_context(
     workspace_id: Optional[str],
     thread_ts: Optional[str],
     surface_kind: SurfaceKind,
+    message_ts: Optional[str] = None,
 ) -> MutableMapping[str, object]:
     """Return a new dict that copies ``base`` and adds the four Phase 1 fields.
 
@@ -54,4 +55,6 @@ def augment_slack_client_context(
         augmented["workspace_id"] = workspace_id
     if thread_ts:
         augmented["thread_ts"] = thread_ts
+    if message_ts:
+        augmented["delivery_id"] = f"{workspace_id or ''}:{channel_id}:{message_ts}"
     return augmented

@@ -62,6 +62,38 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+        {{- if .Values.litellmMcp.tokenAlertScanner.enabled }}
+        - name: litellm-token-alert-scanner
+          image: "{{ .Values.litellmMcp.image.repository }}:{{ .Values.litellmMcp.image.tag | default (include "ai-platform-engineering.appVersion" .) }}"
+          imagePullPolicy: {{ .Values.litellmMcp.image.pullPolicy }}
+          command:
+            - python
+            - -m
+            - token_alert_scanner.py
+          {{- with .Values.litellmMcp.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "ai-platform-engineering.litellmMcp.fullname" . }}
+            {{- if or .Values.litellmMcp.existingSecret .Values.litellmMcp.secret.create .Values.litellmMcp.externalSecrets.enabled }}
+            - secretRef:
+                name: {{ include "ai-platform-engineering.litellmMcp.secretName" . }}
+            {{- end }}
+          volumeMounts:
+            - name: litellm-token-alert-state
+              mountPath: /tmp/litellm-token-alerts
+          {{- with .Values.litellmMcp.tokenAlertScanner.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        {{- end }}
+      {{- if .Values.litellmMcp.tokenAlertScanner.enabled }}
+      volumes:
+        - name: litellm-token-alert-state
+          emptyDir: {}
+      {{- end }}
       {{- with .Values.litellmMcp.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

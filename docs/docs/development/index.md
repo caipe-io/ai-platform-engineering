@@ -11,6 +11,7 @@ This development guide covers:
 - **[Creating an Agent](./creating-an-agent)** - Build a new AI agent from scratch
 - **[Creating an MCP Server](./creating-mcp-server)** - Develop a Model Context Protocol server
 - **[CI/CD and Releases](./ci-cd-and-releases)** - Understand PR version bumps, prebuild artifacts, RC tags, hotfixes, and final releases
+- **[Regression and Release Readiness](./caipe-regression-suite.md)** - Maintain feature acceptance cases and distinguish live coverage from CI and health checks
 
 ## 🎯 Who Is This For?
 

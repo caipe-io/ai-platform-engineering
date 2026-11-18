@@ -21,6 +21,19 @@ or collecting an approval before a change is made.
 
 ## Create and run a workflow
 
+### Enable workflows
+
+If Workflows is unavailable, ask the deployment administrator to set
+`WORKFLOWS_ENABLED=true` and `WORKFLOW_RUNNER_ENABLED=true` in the CAIPE UI
+environment and restart or redeploy the UI. With Helm, set these under
+`caipe-ui.config` in the umbrella chart values. The agent runtime must also be
+deployed and reachable. See the [CAIPE UI chart](../installation/helm-charts/ai-platform-engineering/caipe-ui-chart)
+for deployment configuration.
+
+After the deployment is updated, refresh the UI and enable **Workflows** in the
+setup wizard's optional capabilities. That checkbox controls navigation visibility;
+it does not deploy services or grant access to workflow resources.
+
 1. Open **Workflows** and choose **Create Workflow**.
 2. Add the agents in the order they should run and give each step a focused
    prompt.

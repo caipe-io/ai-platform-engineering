@@ -19,7 +19,12 @@ export async function authenticateChatStreamRequest(
   const anonymousDevelopment = isDevAnonymousAuthEnabled() && session?.sub === DEV_AUTH_SUBJECT;
   if (session?.authMethod === "session" && !anonymousDevelopment) {
     const expectedOrigin = new URL(process.env.NEXTAUTH_URL || request.url).origin;
-    if (request.headers.get("origin") !== expectedOrigin ||
+    // Native EventSource GETs omit Origin; Fetch Metadata still identifies
+    // same-origin documents. Mutation requests continue to require Origin.
+    const sameOriginGet = request.method === "GET" &&
+      request.headers.get("sec-fetch-site") === "same-origin" &&
+      !request.headers.has("origin");
+    if ((request.headers.get("origin") !== expectedOrigin && !sameOriginGet) ||
         request.headers.get("sec-fetch-site") === "cross-site") {
       return NextResponse.json(
         { error: "Same-origin requests are required for session authentication" },

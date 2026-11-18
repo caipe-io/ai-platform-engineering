@@ -56,6 +56,11 @@ jest.mock('@/lib/mongodb', () => ({
   isMongoDBConfigured: true,
 }));
 
+const mockRevokeConversationGrants = jest.fn().mockResolvedValue({ enabled: true });
+jest.mock('@/lib/rbac/openfga-owned-resources-reconcile', () => ({
+  deleteAllConversationRelationshipTuples: (...args: unknown[]) => mockRevokeConversationGrants(...args),
+}));
+
 jest.mock('@/lib/rbac/openfga', () => ({
   checkOpenFgaTuple: jest.fn().mockResolvedValue({ allowed: false }),
 }));
@@ -94,7 +99,7 @@ function createMockCollection() {
     }),
     findOne: jest.fn().mockResolvedValue(null),
     insertOne: jest.fn().mockResolvedValue({ insertedId: new ObjectId() }),
-    updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
+    updateOne: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
     deleteOne: jest.fn().mockResolvedValue({ deletedCount: 1 }),
     deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
     countDocuments: jest.fn().mockResolvedValue(0),
@@ -147,6 +152,7 @@ import { GET as GET_CONVERSATIONS } from '../chat/conversations/route';
 describe('Archive API', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRevokeConversationGrants.mockResolvedValue({ enabled: true });
     delete process.env.OPENFGA_HTTP;
     // Reset mock collections
     Object.keys(mockCollections).forEach(key => delete mockCollections[key]);
@@ -469,6 +475,26 @@ describe('Archive API', () => {
       expect(msgCollection.deleteMany).toHaveBeenCalledWith({
         conversation_id: { $in: ['expired-conv-id'] },
       });
+    });
+
+    it('lists restorable trash when automatic grant cleanup fails', async () => {
+      const restorable = makeConversation({ deleted_at: new Date() });
+      const expired = makeConversation({ _id: 'expired-example', deleted_at: new Date(0) });
+      const collection = createMockCollection();
+      collection.find
+        .mockReturnValueOnce({ toArray: async () => [expired] })
+        .mockReturnValueOnce({ sort: () => ({ skip: () => ({ limit: () => ({ toArray: async () => [restorable] }) }) }) });
+      collection.countDocuments.mockResolvedValue(1);
+      mockCollections['conversations'] = collection;
+      mockRevokeConversationGrants.mockRejectedValueOnce(new Error('authorization unavailable'));
+      const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const response = await GET_TRASH(makeRequest('https://example.test/api/chat/conversations/trash'));
+        expect(response.status).toBe(200);
+        expect((await response.json()).data.items).toEqual([JSON.parse(JSON.stringify(restorable))]);
+        expect(collection.deleteMany).not.toHaveBeenCalled();
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('Automatic conversation purge failed'), expect.any(Error));
+      } finally { log.mockRestore(); }
     });
 
     it('returns empty list when no deleted conversations exist', async () => {
@@ -894,13 +920,12 @@ describe('Archive API', () => {
       await GET_TRASH(req);
 
       // Both conversations should be purged
-      expect(convCollection.deleteMany).toHaveBeenCalledWith({
-        _id: { $in: ['exp-1', 'exp-2'] },
-      });
+      for (const id of ['exp-1', 'exp-2']) {
+        expect(convCollection.deleteMany).toHaveBeenCalledWith({ _id: { $in: [id] } });
+        expect(msgCollection.deleteMany).toHaveBeenCalledWith({ conversation_id: { $in: [id] } });
+      }
       // Messages for both should be deleted
-      expect(msgCollection.deleteMany).toHaveBeenCalledWith({
-        conversation_id: { $in: ['exp-1', 'exp-2'] },
-      });
+
     });
 
     it('restore returns 400 for conversation without deleted_at (not in archive)', async () => {

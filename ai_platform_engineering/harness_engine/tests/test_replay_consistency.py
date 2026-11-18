@@ -7,6 +7,7 @@ from typing import Any
 import mongomock
 import pytest
 from fastapi.testclient import TestClient
+from pymongo.errors import OperationFailure
 
 from harness_engine.main import create_app
 from harness_engine.models import RunRecord, RunStatus
@@ -121,3 +122,56 @@ async def test_concurrent_appends_keep_a_contiguous_replay_head(mongo_repository
     assert [event.sequence for event in events] == list(range(1, 18))
     assert {event.data["text"] for event in events[:-1]} == {str(number) for number in range(16)}
     assert events[-1].event_type == "run.completed"
+
+
+@pytest.mark.parametrize("stage", ["head", "event", "clear"])
+async def test_replay_writes_retry_documentdb_conflicts_without_duplicate_events(
+    mongo_repository: MongoRunRepository, monkeypatch: pytest.MonkeyPatch, stage: str,
+) -> None:
+    collection = mongo_repository._db.harness_events if stage == "event" else mongo_repository._db.harness_runs
+    method = "find_one_and_update" if stage == "head" else "update_one"
+    original = getattr(collection, method)
+    attempts = 0
+
+    def conflict(*args: Any, **kwargs: Any) -> Any:
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 3:
+            raise OperationFailure("injected write conflict", code=112)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(collection, method, conflict)
+    monkeypatch.setattr("harness_engine.repository.time.sleep", lambda _: None)
+    await mongo_repository.append_event("run-example", "content.delta", {"text": "saved"})
+    await mongo_repository.append_event("run-example", "run.completed", {}, RunStatus.COMPLETED)
+    events = await mongo_repository.list_events("run-example", 0)
+    assert [(e.sequence, e.event_type) for e in events] == [(1, "content.delta"), (2, "run.completed")]
+    assert events[0].data == {"text": "saved"}
+    assert await mongo_repository.list_events("run-example", 1) == events[1:]
+    assert mongo_repository._db.harness_events.count_documents({"run_id": "run-example"}) == 2
+
+
+@pytest.mark.parametrize("code, expected_attempts", [(112, 8), (13, 1)])
+async def test_replay_write_retries_are_bounded_and_do_not_hide_other_errors(
+    mongo_repository: MongoRunRepository, monkeypatch: pytest.MonkeyPatch, code: int, expected_attempts: int,
+) -> None:
+    attempts = 0
+
+    def fail(*args: Any, **kwargs: Any) -> None:
+        nonlocal attempts
+        attempts += 1
+        raise OperationFailure("injected failure", code=code)
+
+    collection = mongo_repository._db.harness_events
+    original = collection.update_one
+    with monkeypatch.context() as fault:
+        fault.setattr(collection, "update_one", fail)
+        fault.setattr("harness_engine.repository.time.sleep", lambda _: None)
+        with pytest.raises(OperationFailure) as exc:
+            await mongo_repository.append_event("run-example", "run.completed", {}, RunStatus.COMPLETED)
+        assert exc.value.code == code
+        assert attempts == expected_attempts
+    # The pending payload survives exhaustion and remains recoverable by a reader.
+    assert collection.update_one == original
+    events = await mongo_repository.list_events("run-example", 0)
+    assert [(e.sequence, e.event_type) for e in events] == [(1, "run.completed")]

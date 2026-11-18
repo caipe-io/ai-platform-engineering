@@ -19,6 +19,9 @@ creates or resumes conversations, and streams responses through Dynamic Agents.
 
 ## Core Features
 
+An independent, deployment-level Harness Gateway switch is available for durable
+Engine run admission and event replay. See [Bot Harness Gateway transport](./bot-harness-gateway.md).
+
 - Channel and DM routing to configured dynamic-agent IDs
 - Thread-aware follow-ups with bounded Slack thread context
 - MongoDB-backed route, team, and link metadata

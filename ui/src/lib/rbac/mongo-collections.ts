@@ -10,6 +10,7 @@ export const RBAC_COLLECTION_NAMES = {
   externalGroups: "external_groups",
   externalGroupTeamLinks: "external_group_team_links",
   teamMembershipSources: "team_membership_sources",
+  adminGrantOwnership: "admin_grant_ownership",
   rebacResources: "rebac_resources",
   rebacRelationships: "rebac_relationships",
   policyRules: "policy_rules",

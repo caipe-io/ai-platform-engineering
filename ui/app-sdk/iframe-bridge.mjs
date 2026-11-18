@@ -62,6 +62,11 @@ export function createAgenticAppBridge({ appId, onNavigate, onStatus, onAssistan
   send("caipe.agenticApp.bridge.connect.v1");
   return {
     getCapabilities: () => capabilities,
+    openFeedback(options = {}) {
+      if (!capabilities?.feedback) throw new Error("Host feedback is unavailable");
+      if (options.feature !== undefined && (typeof options.feature !== "string" || options.feature.length > 40)) throw new Error("Invalid feedback feature");
+      send("caipe.agenticApp.feedback.open.v1", options.feature === undefined ? {} : { feature: options.feature });
+    },
     configureAssistant(configuration) {
       if (!capabilities?.composerExtensions?.includes("configuration.v1")) throw new Error("Host assistant configuration is unsupported");
       validateAssistantConfiguration(configuration, capabilities.assistantOptions);

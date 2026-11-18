@@ -3,6 +3,21 @@ name: "[Release] Finalize Release"
 on:
   repository_dispatch:
     types: [ci-completed]
+  workflow_run:
+    workflows:
+      - "[CI][MCP] MCP Servers Docker Build and Push"
+      - "[CI] CAIPE RAG Build and Push"
+      - "[CI] Dynamic Agents Build and Push"
+      - "[CI] Harness Engine Build and Push"
+      - "[CI] Autonomous Agents Build and Push"
+      - "[CI] CAIPE UI Build and Push"
+      - "[CI] Audit Service Build and Push"
+      - "[CI] Slack Bot Build and Push"
+      - "[CI] Skill Scanner Build and Push"
+      - "[CI] Keycloak Init Build and Push"
+      - "[CI] OpenFGA Authz Bridge Build and Push"
+      - "[CI][Helm] Publish Tagged Helm Charts"
+    types: [completed]
 
 permissions:
   contents: read
@@ -21,13 +36,22 @@ jobs:
       published: ${{ steps.publish-release.outputs.published }}
     steps:
       - name: 🔒 Harden runner
-        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
           egress-policy: audit
 
       - name: 📥 Extract payload
         id: payload
         env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+          TRIGGER_EVENT: ${{ github.event_name }}
+          UPSTREAM_EVENT: ${{ github.event.workflow_run.event }}
+          UPSTREAM_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          UPSTREAM_SHA: ${{ github.event.workflow_run.head_sha }}
+          UPSTREAM_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          UPSTREAM_WORKFLOW: ${{ github.event.workflow_run.name }}
+          UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           DISPATCH_TAG: ${{ github.event.client_payload.tag }}
           DISPATCH_WORKFLOW: ${{ github.event.client_payload.workflow }}
           DISPATCH_CONCLUSION: ${{ github.event.client_payload.conclusion }}
@@ -37,6 +61,20 @@ jobs:
           TAG="$DISPATCH_TAG"
           WORKFLOW="$DISPATCH_WORKFLOW"
           CONCLUSION="$DISPATCH_CONCLUSION"
+
+          # Completion events close the race where a component dispatch arrives
+          # before its own run is marked completed. Never consume PR/fork code.
+          if [[ "$TRIGGER_EVENT" == "workflow_run" ]]; then
+            if [[ "$UPSTREAM_EVENT" != "push" || "$UPSTREAM_REPOSITORY" != "$GH_REPOSITORY" ]]; then
+              exit 0
+            fi
+            TAG="$UPSTREAM_BRANCH"
+            WORKFLOW="$UPSTREAM_WORKFLOW"
+            CONCLUSION="$UPSTREAM_CONCLUSION"
+            if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then exit 0; fi
+            tag_sha=$(gh api "repos/${GH_REPOSITORY}/commits/${TAG}" --jq '.sha')
+            if [[ "$tag_sha" != "$UPSTREAM_SHA" ]]; then exit 0; fi
+          fi
 
           echo "🏷️ Tag: $TAG"
           echo "📦 Triggered by: $WORKFLOW"
@@ -89,6 +127,7 @@ jobs:
             "[CI][MCP] MCP Servers Docker Build and Push"
             "[CI] CAIPE RAG Build and Push"
             "[CI] Dynamic Agents Build and Push"
+            "[CI] Harness Engine Build and Push"
             "[CI] Autonomous Agents Build and Push"
             "[CI] CAIPE UI Build and Push"
             "[CI] Audit Service Build and Push"
@@ -189,9 +228,13 @@ jobs:
           RELEASE_INFO=$(gh release view "$TAG" --repo="${{ github.repository }}" --json isDraft,url,body)
           IS_DRAFT=$(echo "$RELEASE_INFO" | jq -r '.isDraft')
 
-          if [[ "$IS_DRAFT" != "true" ]]; then
-            echo "ℹ️ Release $TAG is not a draft (already published or doesn't exist)"
+          if [[ "$IS_DRAFT" == "false" ]]; then
+            echo "ℹ️ Release $TAG is already published"
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
             exit 0
+          elif [[ "$IS_DRAFT" != "true" ]]; then
+            echo "❌ Could not determine draft status for release $TAG"
+            exit 1
           fi
 
           # Docs deploy independently of image CI. Keep the release as a draft
@@ -215,7 +258,7 @@ jobs:
           echo "🔗 $(echo "$RELEASE_INFO" | jq -r '.url')"
 
       - name: 🧹 Clean up old RC tags
-        if: steps.publish-release.outputs.published == 'true'
+        if: steps.publish-release.outputs.published == 'true' || steps.publish-release.outputs.already_published == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.payload.outputs.tag }}
@@ -365,6 +408,7 @@ jobs:
           ANY_FAILED: ${{ steps.check-cis.outputs.any_failed }}
           ANY_RUNNING: ${{ steps.check-cis.outputs.any_running }}
           PUBLISHED: ${{ steps.publish-release.outputs.published }}
+          ALREADY_PUBLISHED: ${{ steps.publish-release.outputs.already_published }}
         run: |
           echo "## Release Finalize Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -379,6 +423,9 @@ jobs:
             echo "All CI builds passed. Release has been published." >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "🧹 Old RC tags (for versions < \`$TAG\`) have been cleaned up." >> $GITHUB_STEP_SUMMARY
+          elif [[ "$ALREADY_PUBLISHED" == "true" ]]; then
+            echo "### ✅ Release Already Published" >> $GITHUB_STEP_SUMMARY
+            echo "This run retried RC cleanup without publishing the release again." >> $GITHUB_STEP_SUMMARY
           elif [[ "$ALL_PASSED" == "true" ]]; then
             echo "### ⚠️ Release Not Published" >> $GITHUB_STEP_SUMMARY
             echo "CI passed, but this run did not publish the release. Check the publication step, including release-notes availability." >> $GITHUB_STEP_SUMMARY

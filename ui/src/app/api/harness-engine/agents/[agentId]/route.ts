@@ -3,6 +3,7 @@ import type { AuthResult } from "@/lib/da-proxy";
 import { getHarnessEngineConfig, proxyHarnessEngine } from "@/lib/harness-engine-proxy";
 import { requireAgentPermission } from "@/lib/rbac/resource-authz";
 import { NextRequest, NextResponse } from "next/server";
+import { getCollection } from "@/lib/mongodb";
 
 export const runtime = "nodejs";
 
@@ -32,10 +33,11 @@ async function proxy(
     const config = getHarnessEngineConfig();
     if (config instanceof NextResponse) return config;
     const body = method === "PUT" ? await request.text() : undefined;
+    const published = method === "GET" ? await (await getCollection<{ _id: string; execution_blueprint_version?: number }>("dynamic_agents")).findOne({ _id: agentId }) : null;
     return proxyHarnessEngine(
       config,
       auth,
-      `/api/v1/agents/${encodeURIComponent(agentId)}`,
+      `/api/v1/agents/${encodeURIComponent(agentId)}${published?.execution_blueprint_version ? `?version=${published.execution_blueprint_version}` : ""}`,
       { method, body },
     );
   } catch (error) {

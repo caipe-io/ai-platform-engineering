@@ -50,8 +50,14 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     }).toArray();
 
     if (expired.length > 0) {
-      await deleteConversationsPermanently(expired);
-      console.log(`[Trash] Auto-purged ${expired.length} conversations older than ${ARCHIVE_RETENTION_DAYS} days for ${user.email}`);
+      try {
+        await deleteConversationsPermanently(expired);
+        console.log(`[Trash] Auto-purged ${expired.length} conversations older than ${ARCHIVE_RETENTION_DAYS} days for ${user.email}`);
+      } catch (error) {
+        // Cleanup retains owning records for retry; a failed purge must not
+        // prevent users from listing or restoring their remaining trash.
+        console.error('[Trash] Automatic conversation purge failed; will retry on a later listing', error);
+      }
     }
 
     // Query for soft-deleted conversation candidates, then filter by ReBAC.

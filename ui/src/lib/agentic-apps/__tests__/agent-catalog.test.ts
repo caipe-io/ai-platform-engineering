@@ -60,6 +60,26 @@ it("fails closed on ambiguous ownership and invalid configuration", () => {
   log.mockRestore();
 });
 
+it("keeps a shared platform agent independent of each app's presentation and access", () => {
+  delete app.manifest.ui.assistant!.streamPath;
+  const second = structuredClone(app);
+  second.installation.appId = "second-app";
+  second.manifest.access.requiredRoles = ["admin"];
+  jest.mocked(loadConfiguredAgenticApps).mockReturnValue([app, second]);
+  const result = projectAgentAppIdentity([agent], user, { availableOnly: true });
+  expect(result).toEqual([agent]);
+  expect(result[0]).not.toHaveProperty("presentation");
+});
+
+it("rejects a shared ID if either app owns the assistant stream", () => {
+  const shared = structuredClone(app);
+  delete shared.manifest.ui.assistant!.streamPath;
+  for (const pair of [[shared, app], [app, shared]]) {
+    jest.mocked(loadConfiguredAgenticApps).mockReturnValue(pair);
+    expect(() => projectAgentAppIdentity([agent], user)).toThrow("Ambiguous");
+  }
+});
+
 it("offers native bot agents only when the app declares Webex support", () => {
   const session = { ...user, authMethod: "bearer", authorizedParty: "caipe-webex-bot" };
   expect(projectAgentAppIdentity([agent], session, { availableOnly: true })).toEqual([]);

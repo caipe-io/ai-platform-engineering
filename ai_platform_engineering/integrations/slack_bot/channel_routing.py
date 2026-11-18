@@ -455,6 +455,7 @@ def handle_mention(
       workspace_id=team_id,
       thread_ts=thread_ts,
       surface_kind="channel",
+      message_ts=event.get("ts"),
     )
 
     esc_config = get_escalation_config(agent_match) if agent_match else None
@@ -757,6 +758,7 @@ def _route_to_agent(
       workspace_id=team_id,
       thread_ts=thread_ts,
       surface_kind="channel",
+      message_ts=event.get("ts"),
     )
 
     esc_config = get_escalation_config(agent_match)

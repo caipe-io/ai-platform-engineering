@@ -1,6 +1,8 @@
+import { withAdminGrantLock } from "./admin-grant-ownership";
 import { getCollection } from "@/lib/mongodb";
 import {
   baselineMemberTuples,
+  adminBaselineGrantDefinitions,
   effectiveBaselineBootstrapTuples,
   getBaselineFgaProfile,
   getBaselineFgaProfileBundle,
@@ -29,9 +31,15 @@ export interface LoginOpenFgaBootstrapInput {
   email?: string;
   isAuthorized: boolean;
   isAdmin: boolean;
+  isBootstrapAdmin?: boolean;
+  isOidcAdmin?: boolean;
+  oidcAdminGroup?: string;
+  oidcProviderId?: string;
 }
 
 const OPENFGA_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~@|*+=,/-]{0,191}$/;
+const OIDC_ADMIN_RECONCILER = "oidc-admin-login-reconciliation";
+const LEGACY_LOGIN_BOOTSTRAP = "login-bootstrap";
 
 function normalizeDefaultAgentId(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -53,8 +61,10 @@ async function defaultAgentTuple(): Promise<OpenFgaTupleKey[]> {
 }
 
 interface TeamDoc {
+  _id?: unknown;
   slug?: string;
   name?: string;
+  created_at?: Date;
   baseline_profile_overrides?: {
     member_profile_id?: string;
     admin_profile_id?: string;
@@ -127,62 +137,143 @@ async function teamOverridesForLogin(email: string | undefined): Promise<TeamBas
   }
 }
 
-async function ensureSuperAdminTeamMembership(subject: string, email: string | undefined): Promise<void> {
-  try {
-    await writeTeamMembershipTuples(subject, SUPER_ADMINS_TEAM_SLUG, mongoRoleToOpenFgaRelations("admin"), "assign");
+function loginManagedAdminSource(source: TeamMembershipSource): boolean {
+  return source.created_by === OIDC_ADMIN_RECONCILER || source.created_by === LEGACY_LOGIN_BOOTSTRAP;
+}
 
-    const teams = await getCollection<{ _id: unknown; created_at?: Date }>("teams");
-    const team = await teams.findOne({ slug: SUPER_ADMINS_TEAM_SLUG } as never);
-    const teamId = team?._id ? String(team._id) : SUPER_ADMINS_TEAM_SLUG;
-    const now = new Date().toISOString();
-    const normalizedEmail = email?.trim().toLowerCase() ?? "";
+function sourceIdentityFilter(subject: string, email: string | undefined): Record<string, unknown>[] {
+  const filters: Record<string, unknown>[] = [{ user_subject: subject }];
+  const normalizedEmail = email?.trim().toLowerCase();
+  if (normalizedEmail) filters.push({ user_email: normalizedEmail });
+  return filters;
+}
 
-    const source: TeamMembershipSource = {
-      team_id: teamId,
+async function reconcileOidcSuperAdminMembership(input: {
+  subject: string;
+  email?: string;
+  shouldHaveOidcAdmin: boolean;
+  preserveBootstrapAdmin: boolean;
+  oidcAdminGroup?: string;
+  oidcProviderId?: string;
+}): Promise<{ hasIndependentAdminSource: boolean; hadLoginManagedAdminSource: boolean }> {
+  const sources = await getRbacCollection<TeamMembershipSource>("teamMembershipSources");
+  const identityFilter = sourceIdentityFilter(input.subject, input.email);
+  const recordedSources = await sources
+    .find({
       team_slug: SUPER_ADMINS_TEAM_SLUG,
-      user_email: normalizedEmail,
-      user_subject: subject,
-      source_type: "manual",
       relationship: "admin",
-      managed: false,
+      $or: identityFilter,
+    })
+    .toArray();
+  const activeSources = recordedSources.filter((source) => source.status === "active");
+  const hasIndependentAdminSource = activeSources.some((source) => !loginManagedAdminSource(source));
+  const hadLoginManagedAdminSource = recordedSources.some(loginManagedAdminSource);
+
+  if (input.shouldHaveOidcAdmin) {
+    const teams = await getCollection<TeamDoc>("teams");
+    const team = await teams.findOne({ slug: SUPER_ADMINS_TEAM_SLUG });
+    const now = new Date().toISOString();
+    const source: TeamMembershipSource = {
+      team_id: team?._id ? String(team._id) : SUPER_ADMINS_TEAM_SLUG,
+      team_slug: SUPER_ADMINS_TEAM_SLUG,
+      user_email: input.email?.trim().toLowerCase(),
+      user_subject: input.subject,
+      relationship: "admin",
+      source_type: "oidc_claim",
+      provider_id: input.oidcProviderId?.trim() || "oidc-claims",
+      external_group_id: input.oidcAdminGroup?.trim() || "configured-admin-group",
+      managed: true,
       status: "active",
-      created_by: "login-bootstrap",
+      created_by: OIDC_ADMIN_RECONCILER,
       created_at: now,
       first_seen_at: now,
       last_seen_at: now,
       last_applied_at: now,
     };
     await upsertTeamMembershipSource(source);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[LoginOpenFGA] Failed to add ${email ?? subject} to super-admins team: ${message}`);
+    await writeTeamMembershipTuples(
+      input.subject,
+      SUPER_ADMINS_TEAM_SLUG,
+      mongoRoleToOpenFgaRelations("admin"),
+      "assign",
+    );
+    return { hasIndependentAdminSource, hadLoginManagedAdminSource: true };
   }
+
+  await sources.updateMany(
+    {
+      team_slug: SUPER_ADMINS_TEAM_SLUG,
+      relationship: "admin",
+      status: "active",
+      created_by: { $in: [OIDC_ADMIN_RECONCILER, LEGACY_LOGIN_BOOTSTRAP] },
+      $or: identityFilter,
+    },
+    {
+      $set: {
+        status: "removed",
+        removed_by: OIDC_ADMIN_RECONCILER,
+        removed_at: new Date().toISOString(),
+      },
+    },
+  );
+
+  if (
+    hadLoginManagedAdminSource &&
+    !input.preserveBootstrapAdmin &&
+    !hasIndependentAdminSource
+  ) {
+    await writeTeamMembershipTuples(
+      input.subject,
+      SUPER_ADMINS_TEAM_SLUG,
+      mongoRoleToOpenFgaRelations("admin"),
+      "remove",
+    );
+  }
+
+  return { hasIndependentAdminSource, hadLoginManagedAdminSource };
 }
 
 export async function reconcileLoginOpenFgaAccess(
   input: LoginOpenFgaBootstrapInput
 ): Promise<LoginOpenFgaBootstrapResult> {
   const subject = input.subject?.trim();
-  if (!input.isAuthorized || !subject) {
+  if (!subject) {
     return { status: "skipped", tuple_write_count: 0 };
   }
 
-  const bundle = await getBaselineFgaProfileBundle();
-  const writes = effectiveBaselineBootstrapTuples({
-    subject,
-    isAdmin: input.isAdmin,
-    bundle,
-    teamOverrides: await teamOverridesForLogin(input.email),
-  });
-  writes.push(...(await defaultAgentTuple()));
-
-  if (input.isAdmin) {
-    await ensureSuperAdminTeamMembership(subject, input.email);
-  }
-
   try {
-    const result = await writeOpenFgaTuples({ writes, deletes: [] });
-    return { status: "completed", tuple_write_count: result.writes };
+    return await withAdminGrantLock(subject, async () => {
+      const effectiveAdmin = input.isAuthorized && input.isAdmin;
+      const isOidcAdmin = input.isOidcAdmin ?? input.isAdmin;
+      const superAdminReconciliation = await reconcileOidcSuperAdminMembership({
+        subject,
+        email: input.email,
+        shouldHaveOidcAdmin: input.isAuthorized && isOidcAdmin,
+        preserveBootstrapAdmin: input.isBootstrapAdmin === true,
+        oidcAdminGroup: input.oidcAdminGroup,
+        oidcProviderId: input.oidcProviderId,
+      });
+      const bundle = await getBaselineFgaProfileBundle();
+      const writes = input.isAuthorized
+        ? effectiveBaselineBootstrapTuples({
+            subject,
+            isAdmin: effectiveAdmin,
+            bundle,
+            teamOverrides: await teamOverridesForLogin(input.email),
+          })
+        : [];
+      if (input.isAuthorized) writes.push(...(await defaultAgentTuple()));
+
+      const deletes =
+        effectiveAdmin ||
+        input.isBootstrapAdmin === true ||
+        superAdminReconciliation.hasIndependentAdminSource ||
+        !superAdminReconciliation.hadLoginManagedAdminSource
+          ? []
+          : adminBaselineGrantDefinitions().map((definition) => definition.tuple(subject));
+      const result = await writeOpenFgaTuples({ writes, deletes }, "login");
+      return { status: "completed", tuple_write_count: result.writes };
+    });
   } catch (error) {
     const warning = error instanceof Error ? error.message : String(error);
     console.warn(

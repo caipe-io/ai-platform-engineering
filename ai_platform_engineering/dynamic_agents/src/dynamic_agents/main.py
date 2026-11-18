@@ -41,6 +41,7 @@ from dynamic_agents.routes import (
     conversations,
     files,
     health,
+    llm_models,
     mcp_servers,
     middleware,
     model_capabilities,
@@ -184,6 +185,7 @@ def create_app() -> FastAPI:
     app.include_router(assistant.router, prefix="/api/v1")
     app.include_router(middleware.router, prefix="/api/v1")
     app.include_router(model_capabilities.router, prefix="/api/v1")
+    app.include_router(llm_models.router, prefix="/api/v1")
     # Agent reachability probe used by the autonomous-agents service
     # to verify ``dynamic_agent_id`` targets exist before scheduling.
     app.include_router(agents.router, prefix="/api/v1")

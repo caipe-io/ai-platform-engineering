@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { getAgenticAppRoutingSnapshot, loadConfiguredAgenticApps } from "../config";
+import example from "../../../../examples/agentic-apps/shared/manifest.json";
 
 describe("External Apps deployment config", () => {
   const previousEnabled = process.env.AGENTIC_APPS_INSTALL_ENABLED;
@@ -27,6 +28,32 @@ describe("External Apps deployment config", () => {
       expect(() => loadConfiguredAgenticApps()).toThrow();
       expect(getAgenticAppRoutingSnapshot()).toEqual(apps);
     }); } finally { if (previous === undefined) delete process.env.AGENTIC_APPS_CONFIG_PATH; else process.env.AGENTIC_APPS_CONFIG_PATH = previous; }
+  });
+
+  it("requires an origin for a feedback-only app without runtime or API mounts", () => {
+    withConfig(validConfig(), path => {
+      const manifest = { ...loadConfiguredAgenticApps(path)[0].manifest, version: "1.0.0",
+        ui: { profiles: [], routes: [] }, api: { mounts: [] }, surfaces: { showInHub: false, navOrder: 50 } };
+      delete manifest.runtime;
+      const config = { agentic_apps: {
+        packages: [{ package_id: "example-app", manifest }],
+        installations: [{ app_id: "example-app", package_id: "example-app", feedback_path: "/api/example/feedback" }],
+      } };
+      withConfig(JSON.stringify(config), feedbackPath => {
+        expect(() => loadConfiguredAgenticApps(feedbackPath)).toThrow(/requires a runtime origin/);
+      });
+    });
+  });
+
+  it("loads an optional app-owned feedback path", () => {
+    withConfig(validConfig().replace("      installed: true", "      feedback_path: /api/example/feedback\n      installed: true"), path => {
+      expect(loadConfiguredAgenticApps(path)[0].installation.feedbackPath).toBe("/api/example/feedback");
+    });
+  });
+  it.each(["https://other.example.test/report", "/api/../admin", "/api/feedback?repo=other", "/api//feedback"])("rejects unsafe feedback paths %s", feedbackPath => {
+    withConfig(validConfig().replace("      installed: true", `      feedback_path: ${feedbackPath}\n      installed: true`), path => {
+      expect(() => loadConfiguredAgenticApps(path)).toThrow(/feedback_path/);
+    });
   });
 
   it("loads and joins generic packages and installations", () => {
@@ -166,6 +193,22 @@ describe("External Apps deployment config", () => {
     });
   });
 
+  it("allows multiple apps to use a shared platform agent", () => {
+    withConfig(sharedAssistantConfig(false, false), (path) => {
+      expect(loadConfiguredAgenticApps(path).map((app) => app.manifest.ui.assistant?.agentId))
+        .toEqual(["shared-agent", "shared-agent"]);
+    });
+  });
+
+  it.each([[true, false], [false, true], [true, true]])(
+    "rejects a shared assistant ID when an app owns its stream (%s, %s)",
+    (firstStream, secondStream) => {
+      withConfig(sharedAssistantConfig(firstStream, secondStream), (path) => {
+        expect(() => loadConfiguredAgenticApps(path)).toThrow(/Multiple installed apps claim the assistant/);
+      });
+    },
+  );
+
   it("rejects unsafe origins and mount paths", () => {
     withConfig(validConfig().replace("http://example-app.example.svc", "file:///tmp/app"), (path) => {
       expect(() => loadConfiguredAgenticApps(path)).toThrow(/HTTP\(S\)/);
@@ -243,6 +286,29 @@ function withConfig(config: string, assertion: (path: string) => void): void {
   }
 }
 
+function sharedAssistantConfig(firstStream: boolean, secondStream: boolean): string {
+  const packages = ["example-app", "second-app"].map((id, index) => {
+    const manifest = structuredClone(example) as typeof example & { ui: typeof example.ui & { assistant?: Record<string, string> } };
+    manifest.id = id;
+    manifest.runtime.mountPath = `/apps/${id}`;
+    manifest.ui.routes = [{ id: "home", path: `/${id}` }];
+    manifest.provides.mcp = [];
+    manifest.ui.profiles = [{ id: "hosted", mode: "iframe" }];
+    manifest.api.mounts = [];
+    manifest.ui.assistant = {
+      agentId: "shared-agent", label: "Ask", name: "Assistant",
+      ...((index === 0 ? firstStream : secondStream) ? { streamPath: `/api/${id}/chat` } : {}),
+    };
+    manifest.access.policyActions.push({ action: "proxy:POST", defaultEffect: "allow", requiredScopes: [] });
+    return { package_id: id, manifest };
+  });
+  const installations = packages.map(({ package_id }) => ({
+    app_id: package_id, package_id, selected_ui_profile: "hosted",
+    runtime_origin_override: `http://${package_id}.example.test`,
+  }));
+  return JSON.stringify({ agentic_apps: { packages, installations } });
+}
+
 function validConfig(): string {
   return `agentic_apps:
   packages:
@@ -280,3 +346,31 @@ function validConfig(): string {
       runtime_origin_override: http://example-app.example.svc
 `;
 }
+
+it("loads deployment-owned feedback features", () => {
+  const previous = process.env.AGENTIC_APPS_INSTALL_ENABLED;
+  process.env.AGENTIC_APPS_INSTALL_ENABLED = "true";
+  try { withConfig(validConfig().replace("      installed: true", "      feedback_features: [Routing, Other]\n      installed: true"), path => {
+    expect(loadConfiguredAgenticApps(path)[0].installation.feedbackFeatures).toEqual(["Routing", "Other"]);
+  }); } finally { if (previous === undefined) delete process.env.AGENTIC_APPS_INSTALL_ENABLED; else process.env.AGENTIC_APPS_INSTALL_ENABLED = previous; }
+});
+
+
+it("registers host-managed feedback from deployment settings and replaces the app endpoint", () => {
+  const original = process.env.FEEDBACK_COMPONENTS_JSON;
+  const enabled = process.env.AGENTIC_APPS_INSTALL_ENABLED;
+  process.env.AGENTIC_APPS_INSTALL_ENABLED = "true";
+  try {
+    process.env.FEEDBACK_COMPONENTS_JSON = JSON.stringify({ "example-app": { handler: "github", repository: "example/product", tokenEnv: "FEEDBACK_EXAMPLE_TOKEN", features: ["Publishing", "Other"], style: { labels: ["user-feedback"], titlePrefix: true } } });
+    withConfig(validConfig().replace("      installed: true", "      feedback_path: /api/example/feedback\n      installed: true"), path => {
+      const app = loadConfiguredAgenticApps(path)[0];
+      expect(app.installation.feedbackGitHub).toEqual(expect.objectContaining({ repository: "example/product", tokenEnv: "FEEDBACK_EXAMPLE_TOKEN" }));
+      expect(app.installation.feedbackPath).toBeUndefined();
+      expect(app.installation.feedbackFeatures).toEqual(["Publishing", "Other"]);
+      expect(app.installation.feedbackGitHub?.style).toEqual({ labels: ["user-feedback"], titlePrefix: true });
+    });
+  } finally {
+    if (original === undefined) delete process.env.FEEDBACK_COMPONENTS_JSON; else process.env.FEEDBACK_COMPONENTS_JSON = original;
+    if (enabled === undefined) delete process.env.AGENTIC_APPS_INSTALL_ENABLED; else process.env.AGENTIC_APPS_INSTALL_ENABLED = enabled;
+  }
+});

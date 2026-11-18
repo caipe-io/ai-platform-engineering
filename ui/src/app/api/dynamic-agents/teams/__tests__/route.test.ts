@@ -71,4 +71,67 @@ describe("GET /api/dynamic-agents/teams", () => {
       ]),
     );
   });
+
+  it("filters and limits team search on the server for organization admins", async () => {
+    mockRequireResourcePermission.mockResolvedValue(undefined);
+    const toArray = jest.fn().mockResolvedValue([
+      { _id: "team-1", name: "Shrinath Utility", slug: "shrinath-utility" },
+    ]);
+    const cursor = {
+      project: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      toArray,
+    };
+    const find = jest.fn().mockReturnValue(cursor);
+    mockGetCollection.mockResolvedValue({ find });
+
+    const { GET } = await import("../route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/dynamic-agents/teams?q=shri.*&limit=20"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(find).toHaveBeenCalledWith({
+      $or: [
+        { name: { $regex: "shri\\.\\*", $options: "i" } },
+        { slug: { $regex: "shri\\.\\*", $options: "i" } },
+        { description: { $regex: "shri\\.\\*", $options: "i" } },
+      ],
+    });
+    expect(cursor.limit).toHaveBeenCalledWith(20);
+    expect(body.data).toEqual([
+      expect.objectContaining({ slug: "shrinath-utility", user_role: "admin" }),
+    ]);
+  });
+
+  it("supports bounded exact ref lookups for existing share labels", async () => {
+    mockRequireResourcePermission.mockResolvedValue(undefined);
+    const cursor = {
+      project: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      toArray: jest.fn().mockResolvedValue([
+        { _id: "team-1", name: "Platform", slug: "platform" },
+        { _id: "team-2", name: "SRE", slug: "sre" },
+      ]),
+    };
+    const find = jest.fn().mockReturnValue(cursor);
+    mockGetCollection.mockResolvedValue({ find });
+
+    const { GET } = await import("../route");
+    const response = await GET(
+      new NextRequest("http://localhost/api/dynamic-agents/teams?ref=platform&ref=sre&limit=2"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(find).toHaveBeenCalledWith({
+      $or: [
+        { slug: { $in: ["platform", "sre"] } },
+        { _id: { $in: ["platform", "sre"] } },
+      ],
+    });
+    expect(cursor.limit).toHaveBeenCalledWith(2);
+  });
 });

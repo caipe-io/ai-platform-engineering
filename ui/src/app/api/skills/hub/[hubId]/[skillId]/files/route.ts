@@ -99,8 +99,9 @@ export async function resolveHubAndSkillDir(
   }
   // Path stored on the cache doc points at `<dir>/SKILL.md`; the skill folder
   // is the parent directory.
-  const skillDir = doc.path.replace(/\/SKILL\.md$/i, "");
-  return { hub, skillDir, doc };
+  const skillDir = doc.path.slice(0, doc.path.lastIndexOf("/"));
+  const revision = typeof doc.metadata?.upstream_revision === "string" && /^[a-f0-9]{40}$/.test(doc.metadata.upstream_revision) ? doc.metadata.upstream_revision : hub.revision;
+  return { hub: { ...hub, revision }, skillDir, doc };
 }
 
 export interface FileEntry {
@@ -129,7 +130,7 @@ async function listGitHubDir(
   };
   if (token) headers.Authorization = `token ${token}`;
 
-  const url = `https://api.github.com/repos/${hub.location}/contents/${encodeURI(fullPath)}`;
+  const url = `https://api.github.com/repos/${hub.location}/contents/${encodeURI(fullPath)}${hub.revision ? `?ref=${hub.revision}` : ""}`;
   const res = await fetch(url, {
     headers,
     signal: AbortSignal.timeout(15_000),

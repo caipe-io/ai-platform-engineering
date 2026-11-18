@@ -2,6 +2,12 @@
 
 - The platform announcement switch and each user's notification preference are
   independent. Existing deployed-version release notes remain the default.
+- Automatic notes prefer the exact patch-release blog in `docs/releases`, then
+  the same minor series' `X-Y-0` blog if the patch post is missing, unreadable,
+  or empty. Prerelease and build suffixes resolve to
+  their base patch version. Matching blog content takes precedence over the
+  changelog in both the upgrade prompt and settings preview; unrelated patch
+  or minor posts are never substituted.
 - Deployment operators approve comparison repositories through the server-side
   `RELEASE_NOTES_ALLOWED_REPOSITORIES` environment variable (comma-separated
   HTTPS GitHub repository URLs, up to 32). Unset permits only the canonical
@@ -53,7 +59,7 @@
 ## Curated release overrides
 
 - Platform announcements → Curated release notes supports automatic, entered Markdown, or an approved repository file.
-- Set the exact deployed release version; later versions do not inherit stale curated content.
+- Set the exact deployed **host platform** release version; hosted apps can have separate versions. New overrides default to the current host release. A mismatch notice explains when notes will not appear, and **Use current host release** retargets them without changing their content. Later host versions do not inherit stale curated content.
 - Save explicitly. Entered Markdown can be previewed before saving; the current-release preview fetches the saved source and reports errors. Repository Markdown is previewed after saving.
 - Repository mode uses the deployment's `RELEASE_NOTES_ALLOWED_REPOSITORIES` policy and existing server GitHub token variables. It accepts any repository-relative `.md`/`.mdx` path and a Git ref, independently of comparison refs.
 - Repository content is limited to 128 KiB and cached for ten minutes per repository/ref/path. Pin an immutable ref for release content. Relative media/links resolve against the file's raw GitHub location; private images still require browser access.

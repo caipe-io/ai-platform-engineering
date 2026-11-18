@@ -1,3 +1,160 @@
+## 1.4.0-rc.6 (2026-11-17)
+
+### Feat
+
+- **models**: connect and test saved model providers end to end (#3389)
+- **ui**: add first-install setup and product tour (#2763)
+- **app-sdk**: support opt-in assistant checkbox controls (#3134)
+- **ui**: unify agents with soft gradient cards (#3403)
+- **ui**: browse and test remote agents in a card catalog (#3401)
+- **ui**: unify CAIPE, A2A and configured ACP agents (#3391)
+- **agents**: discover remote A2A cards and Kubernetes Services (#3384)
+- **harness**: gate Claude research on source evidence (#3395)
+- **harness**: manage Claude operator profiles in Agent Builder (#3386)
+- **harness**: execute compiled subagents through saved runtimes (#3390)
+- **sharepoint-mcp**: support documents, pages and scoped search (#2968)
+- **ui**: glide Ask Tome into its assistant launcher (#3387)
+
+### Fix
+
+- **ui**: stop logging API response bodies to the browser console (#3410)
+- **rbac**: store MCP wildcard intent on a concrete object (#2965)
+- **slack-ingestor**: persist last_ts checkpoint only after ingest succeeds (#3363)
+- **ci**: initialize the RBAC Docker stack environment (#3217)
+- **mcp-server**: support configurable ExternalSecret API versions (#3252)
+- **harness**: guard chat admission against unavailable tools (#3392)
+- **ui**: validate and namespace operator profile IDs (#3393)
+- **ui**: select explicit MCP tools in Agent Builder (#3394)
+- **agents**: skip empty MongoDB checkpoint write batches (#3398)
+- **webex**: read completed meetings from User Hub (#3371)
+
+### Refactor
+
+- **agents**: reuse Deep Agents 0.7.37 for remote delegation (#3382)
+
+## 1.4.0-rc.5 (2026-11-12)
+
+### Fix
+
+- **harness**: accept private fsGroup workspaces for Claude isolation (#3383)
+
+## 1.4.0-rc.4 (2026-11-12)
+
+### Fix
+
+- **harness**: isolate remote Claude Code sessions by default (#3377)
+- **chat**: discover new Harness turns in shared tabs (#3376)
+
+## 1.4.0-rc.3 (2026-11-12)
+
+### Fix
+
+- **harness**: tolerate missing caller MCP connections (#3374)
+- **compose**: pull CAIPE images from ghcr.io/caipe-io (#3365)
+
+## 1.4.0-rc.2 (2026-11-12)
+
+### Feat
+
+- **integrations**: add opt-in Harness Gateway transport for Slack and Webex (#3241)
+
+### Fix
+
+- **webex**: clarify identity linking completion (#3146)
+- **chat**: persist turn anchors before detached execution (#3368)
+- **ui**: use the live chat picker for every count (#3370)
+- **harness**: retry DocumentDB replay write conflicts (#3369)
+- **mongodb**: batch startup indexes with bounded concurrency (#3245)
+
+## 1.4.0-rc.1 (2026-11-11)
+
+### Feat
+
+- **skills**: import pinned original GitHub packages (#3249)
+- **harness-engine**: include portable runtimes in standard installs (#3190)
+- **autonomous**: accept idempotent manual run context (#3213)
+- **apps**: preserve URLs and isolate app scrolling (#3257)
+
+### Fix
+
+- **webex**: bind transcript fallback to the requested occurrence (#3242)
+- **ui**: require agent owner selection before continuing (#3362)
+- **ui**: resolve automatic release blogs by patch version (#3155)
+- **apps**: support shared platform assistant agents (#3189)
+- **auth**: preserve deep links through login retries (#3269)
+- **ui**: add light-mode styling to Skills gallery action buttons (#3183)
+- **skills**: preserve distinct catalog skill identities (#3225)
+- **compose**: pull MinIO from images that are still published (#3094)
+- **chat**: improve selection contrast and use muted blue colors (#3259)
+- **harness**: preserve native model controls during agent publication (#3253)
+
+## 1.3.7-rc.7 (2026-11-10)
+
+### Feat
+
+- **mongodb**: support replica sets for Change Data Capture (CDC) (#3267)
+- **notifications**: define event and preference contracts (#2993)
+
+### Fix
+
+- **mongodb**: support pod-local replica set host mapping (#3357)
+- **deps**: update vulnerable Cloudability packages (#3355)
+- **deps**: remediate Dependabot alerts (#3314)
+- **auth**: harden OIDC refresh transport and response validation (#3255)
+
+## 1.3.7-rc.6 (2026-11-06)
+
+### Fix
+
+- **ui**: restore live chat navigation in the header (#3247)
+
+## 1.3.7-rc.5 (2026-11-05)
+
+### Feat
+
+- **helm**: add optional persistent harness runtimes (#3238)
+
+## 1.3.7-rc.4 (2026-11-05)
+
+### Feat
+
+- **webex**: sign bot-specific team scope for native assistants (#3244)
+
+### Fix
+
+- **webex**: keep incomplete space routes recoverable (#3243)
+
+## 1.3.7-rc.3 (2026-11-05)
+
+### Feat
+
+- **harness**: persist sessions and publish restricted runtime containers
+- add cloudability mcp to FinOps agent and alerting on litellm token usage  (#2019)
+
+### Fix
+
+- **llm**: support non-streaming proxies and agent UI overrides (#3035)
+- **ui**: theme the grid logo and keep the CAIPE logo unchanged (#3231)
+- **ui**: follow the app theme in code blocks and prompt editors (#3182)
+- **compose**: publish langfuse-web on host port 3001 (#3145)
+- **cloudability**: repair dependency pins and local package resolution (#3216)
+
+## 1.3.6 (2026-11-02)
+
+### Fix
+
+- **ui**: clarify curated release note version targeting (#3204)
+
+## 1.3.5 (2026-11-02)
+
+### Feat
+
+- **feedback**: unify component reports through the host (#2397)
+
+### Fix
+
+- **github-mcp**: run github-mcp-server in http mode in docker-compose (#3193)
+
 ## 1.3.4 (2026-10-30)
 
 ### Feat

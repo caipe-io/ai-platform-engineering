@@ -4,6 +4,11 @@
 
 import { NextRequest } from "next/server";
 
+jest.mock("@/lib/authz", () => ({
+  ...jest.requireActual("@/lib/authz"),
+  reconcileTupleDiff: jest.fn().mockResolvedValue({ enabled: true, writes: 1, deletes: 0 }),
+}));
+
 const mockGetCollection = jest.fn();
 const mockGetUserTeamIds = jest.fn();
 const mockRequireOwnership = jest.fn();
@@ -110,6 +115,8 @@ function collectionWithItems(items: unknown[]) {
     find: jest.fn().mockReturnValue({ sort, toArray: jest.fn().mockResolvedValue([]) }),
     findOne: jest.fn().mockResolvedValue(items[0] ?? null),
     insertMany: jest.fn(),
+    insertOne: jest.fn(),
+    deleteOne: jest.fn(),
     updateOne: jest.fn().mockResolvedValue({ matchedCount: 1, modifiedCount: 1 }),
   };
 }
@@ -285,9 +292,20 @@ describe("remaining conversation routes use OpenFGA instead of legacy owner/team
   it("share updates accept OpenFGA share permission without legacy owner equality", async () => {
     const conversations = collectionWithItems([conversation()]);
     const sharingAccess = { find: jest.fn(), insertMany: jest.fn(), updateOne: jest.fn() };
+    const users = {
+      find: jest.fn().mockReturnValue({
+        project: jest.fn().mockReturnValue({
+          toArray: jest.fn().mockResolvedValue([
+            { email: "viewer@example.com", keycloak_sub: "viewer-sub" },
+          ]),
+        }),
+      }),
+    };
     mockGetCollection.mockImplementation(async (name: string) => {
       if (name === "conversations") return conversations;
       if (name === "sharing_access") return sharingAccess;
+      if (name === "users") return users;
+      if (name === "conversation_mutation_locks" || name === "conversation_share_mutations") return collectionWithItems([]);
       throw new Error(`unexpected collection ${name}`);
     });
     const { POST } = await import("../chat/conversations/[id]/share/route");

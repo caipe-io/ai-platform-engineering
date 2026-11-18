@@ -221,7 +221,16 @@ describe('ThemeInjector', () => {
       expect(container.innerHTML).toBe('');
     });
 
-    it('logs applied theme values', () => {
+    it('does not log theme values by default', () => {
+      const logSpy = jest.spyOn(console, 'log');
+
+      render(<ThemeInjector />);
+
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    it('logs applied theme values when uiDebugLogging is enabled', () => {
+      mockConfigValues.uiDebugLogging = true;
       const logSpy = jest.spyOn(console, 'log');
 
       render(<ThemeInjector />);

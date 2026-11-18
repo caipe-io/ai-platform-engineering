@@ -1,0 +1,43 @@
+name: "[Tests] Release Blog Links"
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release-blog-tests.yml'
+      - '.github/workflows/release-manual.yml'
+      - '.github/workflows/release-finalize.yml'
+      - 'scripts/resolve_release_blog.py'
+      - 'tests/test_release_blog_links.py'
+      - 'tests/test_release_finalization.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/release-blog-tests.yml'
+      - '.github/workflows/release-manual.yml'
+      - '.github/workflows/release-finalize.yml'
+      - 'scripts/resolve_release_blog.py'
+      - 'tests/test_release_blog_links.py'
+      - 'tests/test_release_finalization.py'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: '3.14'
+      - name: Test release blog selection and publication
+        run: >-
+          uv run --no-project --with pytest==9.1.1
+          pytest -q tests/test_release_blog_links.py tests/test_release_finalization.py
+      - name: Lint release blog resolver and tests
+        run: >-
+          uv run --no-project --with ruff==0.16.4
+          ruff check scripts/resolve_release_blog.py tests/test_release_blog_links.py

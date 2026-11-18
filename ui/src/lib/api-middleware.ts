@@ -192,7 +192,7 @@ export function clearSessionAuthCacheForTests(): void {}
 // cookie request still resolves its authoritative session record independently.
 const KEYCLOAK_SUB_MAPPING_DEDUP_TTL_MS = 10_000;
 const MAX_KEYCLOAK_SUB_MAPPING_CACHE_ENTRIES = 500;
-const keycloakSubMappingCache = new Map<string, { promise: Promise<void>; expiresAt: number }>();
+const keycloakSubMappingCache = new Map<string, { promise: Promise<void>; expiresAt: number; role: string }>();
 
 /** Reset the Keycloak subject mapping dedup cache (for testing only). */
 export function _resetKeycloakSubMappingCacheForTests(): void {
@@ -225,7 +225,7 @@ async function persistKeycloakSubMapping(
 
   const cacheKey = `${keycloakSub}:${user.email}`;
   const cached = keycloakSubMappingCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
+  if (cached && cached.role === user.role && cached.expiresAt > Date.now()) {
     return cached.promise;
   }
 
@@ -239,6 +239,7 @@ async function persistKeycloakSubMapping(
   }
   keycloakSubMappingCache.set(cacheKey, {
     promise,
+    role: user.role,
     expiresAt: Date.now() + KEYCLOAK_SUB_MAPPING_DEDUP_TTL_MS,
   });
   return promise;
@@ -259,6 +260,7 @@ async function runKeycloakSubMappingWrites(
             $set: {
               keycloak_sub: keycloakSub,
               'metadata.keycloak_sub': keycloakSub,
+              'metadata.role': user.role === 'admin' ? 'admin' : 'user',
               updated_at: now,
             },
             $setOnInsert: {
@@ -268,7 +270,6 @@ async function runKeycloakSubMappingWrites(
               last_login: now,
               'metadata.sso_provider': 'keycloak',
               'metadata.sso_id': keycloakSub,
-              'metadata.role': user.role === 'admin' ? 'admin' : 'user',
             },
           },
           { upsert: true }

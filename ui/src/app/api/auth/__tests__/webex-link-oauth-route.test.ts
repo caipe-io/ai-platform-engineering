@@ -9,6 +9,8 @@ import { ApiError } from "@/lib/api-middleware";
 const mockGetAuthFromBearerOrSession = jest.fn();
 const mockMergeUserAttributes = jest.fn();
 const mockFindRealmUserIdByAttribute = jest.fn();
+const mockNotify = jest.fn();
+jest.mock("@/lib/webex-bot-admin", () => ({ callWebexBotAdmin: (...args: unknown[]) => mockNotify(...args) }));
 
 jest.mock("@/lib/api-middleware", () => {
   const actual = jest.requireActual("@/lib/api-middleware");
@@ -115,9 +117,9 @@ describe("GET /api/auth/webex-link/start", () => {
 });
 
 describe("GET /api/auth/webex-link/callback", () => {
-  async function startAndGetCookie(): Promise<string> {
+  async function startAndGetCookie(query = ""): Promise<string> {
     const { GET } = await import("../webex-link/start/route");
-    const response = await GET(new NextRequest("http://localhost:3000/api/auth/webex-link/start"));
+    const response = await GET(new NextRequest(`http://localhost:3000/api/auth/webex-link/start${query}`));
     const cookieHeader = response.headers.get("set-cookie") ?? "";
     return cookieHeader.split(";")[0];
   }
@@ -157,6 +159,23 @@ describe("GET /api/auth/webex-link/callback", () => {
       throw new Error(`Unexpected fetch to ${url}`);
     });
   }
+
+  it.each([false, true])("preserves saved identity and signed context when DM delivery fails: %s", async (fail) => {
+    setConfigured();
+    if (fail) mockNotify.mockRejectedValue(new Error("Delivery unavailable"));
+    else mockNotify.mockResolvedValue({ notified: true });
+    const cookie = await startAndGetCookie("?bot_id=primary&return_to=%2Fapps%2Fexample");
+    const { parseOAuthStateCookie } = await import("@/lib/credentials/oauth-state");
+    const parsed = parseOAuthStateCookie(cookie.split("=")[1]);
+    global.fetch = mockFetchSequence({ personId: "person-42", personOrgId: "org-1" });
+    const { GET } = await import("../webex-link/callback/route");
+    const response = await GET(new NextRequest(`http://localhost:3000/api/auth/webex-link/callback?code=code-1&state=${parsed.state}`, { headers: { cookie } }));
+    const location = new URL(response.headers.get("location")!);
+    expect(location.searchParams.get("webex_link")).toBe("success");
+    expect(location.searchParams.get("notification")).toBe(fail ? "unavailable" : "sent");
+    expect(location.searchParams.get("return_to")).toBe("/apps/example");
+    expect(mockNotify).toHaveBeenCalledWith("/admin/webex/identity-linked", expect.objectContaining({ body: { bot_id: "primary", webex_user_id: "person-42" } }));
+  });
 
   it("returns 404 when identity linking is not configured", async () => {
     const { GET } = await import("../webex-link/callback/route");

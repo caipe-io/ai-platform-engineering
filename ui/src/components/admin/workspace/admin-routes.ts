@@ -1,6 +1,7 @@
 import {
   Activity,
   Bot,
+  Compass,
   Database,
   FileText,
   Globe,
@@ -15,6 +16,7 @@ import {
   Shield,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   TrendingUp,
   User,
   Users,
@@ -33,6 +35,8 @@ export type AdminCategoryKey =
 
 export type AdminDestinationId =
   | "defaults"
+  | "setup-wizard"
+  | "tour"
   | "announcements"
   | "agents"
   | "autonomous"
@@ -112,6 +116,14 @@ export const ADMIN_CATEGORIES: AdminCategoryDefinition[] = [
     icon: SlidersHorizontal,
     destinations: [
       {
+        id: "announcements",
+        href: "/admin/configuration/announcements",
+        label: "Announcements",
+        description: "Control platform-wide release announcements.",
+        icon: Megaphone,
+        gateKey: "platform_settings",
+      },
+      {
         id: "defaults",
         href: "/admin/configuration/defaults",
         label: "Defaults",
@@ -120,11 +132,19 @@ export const ADMIN_CATEGORIES: AdminCategoryDefinition[] = [
         gateKey: "platform_settings",
       },
       {
-        id: "announcements",
-        href: "/admin/configuration/announcements",
-        label: "Announcements",
-        description: "Control platform-wide release announcements.",
-        icon: Megaphone,
+        id: "setup-wizard",
+        href: "/admin/configuration/setup-wizard",
+        label: "Setup Wizard",
+        description: "Review readiness and create or re-test a first working agent.",
+        icon: Sparkles,
+        gateKey: "platform_settings",
+      },
+      {
+        id: "tour",
+        href: "/admin/configuration/tour",
+        label: "Tour",
+        description: "Choose which CAIPE tours are available to your users.",
+        icon: Compass,
         gateKey: "platform_settings",
       },
     ],

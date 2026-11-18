@@ -37,6 +37,7 @@ describe("Keycloak service-account client helpers", () => {
       KEYCLOAK_REALM: "caipe",
       KEYCLOAK_ADMIN_CLIENT_ID: "caipe-platform",
       KEYCLOAK_ADMIN_CLIENT_SECRET: "secret",
+      OIDC_CLIENT_ID: "example-api",
     };
     global.fetch = jest.fn();
   });
@@ -93,6 +94,16 @@ describe("Keycloak service-account client helpers", () => {
       directAccessGrantsEnabled: false,
     });
     expect(sentBody.clientId).toBe(result.clientId);
+    expect(sentBody.protocolMappers).toEqual([{
+      name: "api-audience",
+      protocol: "openid-connect",
+      protocolMapper: "oidc-audience-mapper",
+      config: {
+        "included.client.audience": "example-api",
+        "access.token.claim": "true",
+        "id.token.claim": "false",
+      },
+    }]);
   });
 
   it("falls back to client lookup when the create response omits a Location header", async () => {

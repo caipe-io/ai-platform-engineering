@@ -4,6 +4,8 @@ export interface AgenticAppBridgeCapabilities {
   /** Metadata from the running host, never the application's build baseline. */
   hostBuild?: { version: string | null; gitCommit: string | null };
   assistantOptions?: import("./assistant-options.mjs").AssistantOptions;
+  /** The host can open its shared component-aware feedback form. */
+  feedback?: boolean;
   assistant: boolean;
   assistantDraft?: boolean;
   context: boolean;
@@ -18,6 +20,7 @@ export interface AgenticAppBridgeCapabilities {
 export interface AgenticAppBridge {
   getCapabilities(): AgenticAppBridgeCapabilities | null;
   configureAssistant(configuration: import("./assistant-options.mjs").AssistantConfiguration): void;
+  openFeedback(options?: { feature?: string }): void;
   closeAssistant(): void;
   openAssistant(context?: AppAssistantContext, draft?: AssistantDraft): void;
   setContext(context: AppAssistantContext): void;

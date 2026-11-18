@@ -1,5 +1,6 @@
-import { interruptedAuthReason,interruptedTurnFallbackText } from "@/lib/chat-interrupt";
+import { interruptedAuthReason,interruptedTurnFallbackText,isAgentReadinessError } from "@/lib/chat-interrupt";
 import { StreamError } from "@/lib/streaming";
+import { APIClientError } from "@/lib/api-client";
 
 describe("interruptedTurnFallbackText", () => {
   it.each(["not_signed_in", "session_expired", "bearer_invalid"])(
@@ -27,6 +28,16 @@ describe("interruptedTurnFallbackText", () => {
 
 describe("interruptedAuthReason", () => {
   it.each(["not_signed_in", "session_expired", "bearer_invalid"] as const)(
+    "persists the sign-in hint for a message-save failure with reason %s", reason => {
+      expect(interruptedAuthReason(new APIClientError("Save failed", 401, undefined, reason, "sign_in"))).toBe(reason);
+    },
+  );
+
+  it("does not turn a message-save access denial into a sign-in interruption", () => {
+    expect(interruptedAuthReason(new APIClientError("Denied", 403, undefined, "missing_role", "contact_admin"))).toBeUndefined();
+  });
+
+  it.each(["not_signed_in", "session_expired", "bearer_invalid"] as const)(
     "persists structured sign-in auth reason %s",
     (reason) => {
       expect(
@@ -46,4 +57,10 @@ describe("interruptedAuthReason", () => {
       interruptedAuthReason(new StreamError("denied", 403, undefined, "missing_role", "contact_admin")),
     ).toBeUndefined();
   });
+});
+
+it("distinguishes a blocked admission from auth/network interruptions", () => {
+  expect(isAgentReadinessError(new StreamError("Not ready", 409, "HARNESS_AGENT_NOT_READY"))).toBe(true);
+  expect(isAgentReadinessError(new StreamError("Unavailable", 503))).toBe(false);
+  expect(isAgentReadinessError(new Error("HARNESS_AGENT_NOT_READY"))).toBe(false);
 });

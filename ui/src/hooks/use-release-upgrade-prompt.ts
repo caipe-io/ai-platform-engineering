@@ -91,7 +91,7 @@ function baseVersion(value: string): string {
   return value.trim().replace(/^v/i, "").split(/[-+]/)[0];
 }
 
-function resolvePromptVersion(versionInfo: { version?: string; packageVersion?: string } | null): string | null {
+export function resolvePromptVersion(versionInfo: { version?: string; packageVersion?: string } | null): string | null {
   const candidates = [versionInfo?.version, versionInfo?.packageVersion].map(normalizeVersion);
   return (
     candidates.find(
@@ -129,6 +129,28 @@ export function releaseNotesRequestUrl(
     params.set("compare", "platform");
   }
   return `/api/release-notes?${params.toString()}`;
+}
+
+/** Keep the preview and login prompt on the same version and source policy. */
+export function hasMatchingReleaseNotes(
+  version: string,
+  notes: ReleaseNotesResponse | null,
+  config?: Partial<ReleaseNotesNotificationConfig> | null,
+): notes is ReleaseNotesResponse & { body: string } {
+  const curatedOverride = hasReleaseNotesOverride(config, version);
+  const expectedSource = curatedOverride
+    ? config?.override?.source === "manual" ? "manual" : "repository-markdown"
+    : hasConfiguredReleaseNotesCompare(config) ? "github-compare" : null;
+  const sourceMatches = expectedSource
+    ? notes?.source === expectedSource
+    : ["github", "local", "generated"].includes(notes?.source ?? "");
+  const deployedBase = baseVersion(version);
+  const matchedVersion = normalizeVersion(notes?.matchedVersion);
+  const hasSeriesBlog =
+    (notes?.source === "github" || notes?.source === "local") &&
+    matchedVersion === deployedBase.replace(/\.\d+$/, ".0");
+  return sourceMatches && Boolean(notes?.body) &&
+    (matchedVersion === normalizeVersion(version) || matchedVersion === deployedBase || hasSeriesBlog);
 }
 
 function notificationsEnabledFromSettings(settings: SettingsResponse | null): boolean {
@@ -257,18 +279,8 @@ export function useReleaseUpgradePrompt(): ReleaseUpgradePromptState {
             ? await notesResponse.json()
             : null;
           if (!cancelled) {
-            const hasExactChangelog = Boolean(matchingRelease);
-            const expectedSource = curatedOverride ? unavailableNotes?.source : customCompareConfigured ? "github-compare" : null;
-            const sourceMatches = expectedSource ? notesPayload?.source === expectedSource : ["github", "local", "generated"].includes(notesPayload?.source ?? "");
-            const hasConfiguredCompareNotes =
-              (customCompareConfigured && notesPayload?.source === "github-compare") ||
-              (curatedOverride && ["manual", "repository-markdown"].includes(notesPayload?.source ?? ""));
-            const hasExactCuratedNotes =
-              Boolean(notesPayload?.body) &&
-              (normalizeVersion(notesPayload?.matchedVersion) === activeReleaseVersion ||
-                normalizeVersion(notesPayload?.matchedVersion) === baseVersion(activeReleaseVersion));
             setReleaseMarkdown(
-              sourceMatches && (hasConfiguredCompareNotes || !hasExactChangelog) && hasExactCuratedNotes
+              hasMatchingReleaseNotes(activeReleaseVersion, notesPayload, releaseNotesConfig)
                 ? {
                     matchedVersion: notesPayload.matchedVersion ?? null,
                     title: notesPayload.title ?? null,

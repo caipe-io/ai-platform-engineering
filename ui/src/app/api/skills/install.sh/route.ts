@@ -1064,6 +1064,7 @@ def may_write(path):
 data = json.load(open(src))
 skills = data.get("skills", []) or []
 new_entries = []  # one entry per (skill name) — paths is multi-target
+seen_names = set()  # Only the first eligible entry may claim an install path.
 # Counters for the trailing summary line. "skipped" is the legacy name
 # used by the summary print and the test fixtures; it counts file
 # targets that already exist and were refused by may_write (no
@@ -1091,6 +1092,10 @@ for s in skills:
         reserved += 1
         continue
     safe_name = NAME_RE.sub("_", name)
+    if safe_name in seen_names:
+        print(f"==> skipped {name} (duplicate install name)")
+        continue
+    seen_names.add(safe_name)
     body = s.get("content") or ""
 
     # Build the per-root file map. SKILL.md goes at root/<name>/SKILL.md;

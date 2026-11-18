@@ -261,8 +261,13 @@ def test_warn_if_agent_gateway_missing_hmac_logs_when_gateway_set_without_secret
     monkeypatch.setenv("AGENT_GATEWAY_URL", "http://agentgateway:4000")
     monkeypatch.delenv("CAIPE_AGENT_CONTEXT_HMAC_SECRET", raising=False)
 
-    with caplog.at_level("WARNING"):
-        warn_if_agent_gateway_missing_hmac()
+    # App initialization configures a service logger independent of pytest's root.
+    mcp_client.logger.addHandler(caplog.handler)
+    try:
+        with caplog.at_level("WARNING"):
+            warn_if_agent_gateway_missing_hmac()
+    finally:
+        mcp_client.logger.removeHandler(caplog.handler)
 
     assert "CAIPE_AGENT_CONTEXT_HMAC_SECRET is unset" in caplog.text
 
@@ -272,6 +277,8 @@ def test_warn_if_agent_gateway_missing_hmac_is_quiet_without_gateway(monkeypatch
     monkeypatch.delenv("AGENTGATEWAY_URL", raising=False)
     monkeypatch.delenv("CAIPE_AGENT_CONTEXT_HMAC_SECRET", raising=False)
 
+    # The service logger may have its own handler after app initialization.
+    monkeypatch.setattr(mcp_client.logger, "propagate", True)
     with caplog.at_level("WARNING"):
         warn_if_agent_gateway_missing_hmac()
 

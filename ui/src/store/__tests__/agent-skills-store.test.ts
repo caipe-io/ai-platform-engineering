@@ -822,6 +822,34 @@ describe("agent-skills-store", () => {
       expect(useAgentSkillsStore.getState().favorites).toContain("fav-1");
     });
 
+    describe("informational logging", () => {
+      type WithConfig = { __APP_CONFIG__?: { uiDebugLogging?: boolean } };
+      let logSpy: jest.SpyInstance;
+      beforeEach(() => { logSpy = jest.spyOn(console, "log").mockImplementation(() => {}); });
+      afterEach(() => {
+        logSpy.mockRestore();
+        delete (window as unknown as WithConfig).__APP_CONFIG__;
+      });
+
+      const toggle = async () => {
+        mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) } as Response);
+        await act(async () => {
+          await useAgentSkillsStore.getState().toggleFavorite("fav-1");
+        });
+      };
+
+      it("is silent by default", async () => {
+        await toggle();
+        expect(logSpy).not.toHaveBeenCalled();
+      });
+
+      it("logs when uiDebugLogging is on", async () => {
+        (window as unknown as WithConfig).__APP_CONFIG__ = { uiDebugLogging: true };
+        await toggle();
+        expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[AgentSkillsStore]"));
+      });
+    });
+
     it("toggleFavorite removes existing favorite", async () => {
       useAgentSkillsStore.setState({ favorites: ["fav-1", "fav-2"] });
       mockFetch.mockResolvedValue({

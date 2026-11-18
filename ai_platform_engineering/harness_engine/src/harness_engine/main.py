@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import hmac
 import json
 import logging
@@ -17,6 +19,8 @@ from pymongo.errors import PyMongoError
 
 from harness_engine.adapters import AgentCoreAdapter, ClaudeSDKAdapter
 from harness_engine.adapters.base import HarnessAdapter
+from harness_engine.adapters.claude_remote import RemoteClaudeSDKAdapter
+from harness_engine.adapters.deep_agents import DeepAgentsAdapter
 from harness_engine.brokers import DefaultPromptCompiler
 from harness_engine.config import Settings
 from harness_engine.coordinator import AgentNotRunnableError, RunCoordinator
@@ -25,9 +29,14 @@ from harness_engine.models import (
     CancelActiveRunRequest,
     ClearAgentSessionRequest,
     ConnectAgentCoreRequest,
+    CreateClaudeProfileRequest,
     CreateRunRequest,
     EventPage,
+    ExecutionIdentity,
+    HarnessDescriptor,
+    LookupRunRequest,
     RegisteredAgentCoreProfile,
+    RegisteredClaudeProfile,
     RunRecord,
     SaveAgentRequest,
     ValidateAgentDraftRequest,
@@ -72,7 +81,12 @@ def create_app(
             resolved_settings, resource_repository=resolved_repository
         ),
         ClaudeSDKAdapter(resolved_settings),
+        RemoteClaudeSDKAdapter(resolved_settings),
+        RemoteClaudeSDKAdapter(resolved_settings, claude_acp=True),
+        RemoteClaudeSDKAdapter(resolved_settings, claude_cli_acp=True),
     ]
+    if adapters is None and resolved_settings.deep_agents_enabled:
+        resolved_adapters.append(DeepAgentsAdapter())
     resolved_agentcore_provisioner = (
         agentcore_provisioner or AgentCoreHarnessProvisioner(resolved_settings)
     )
@@ -88,21 +102,37 @@ def create_app(
         session_manager,
         DefaultPromptCompiler(),
     )
+    for adapter in resolved_adapters:
+        if isinstance(adapter, DeepAgentsAdapter):
+            adapter.runtime.configure_subagent_dispatch(coordinator, resolved_repository)
 
-    async def refresh_agentcore_profiles() -> None:
-        profiles = await resolved_repository.list_agentcore_profiles()
-        targets = {profile.profile_id: profile.target for profile in profiles}
-        for adapter in resolved_adapters:
-            if isinstance(adapter, AgentCoreAdapter):
-                adapter.set_registered_profiles(targets)
-        resolved_agentcore_provisioner.set_registered_profiles(targets)
+    profile_refresh_lock = asyncio.Lock()
+
+    async def refresh_operator_profiles() -> None:
+        # Keep the read inside the lock so an older snapshot cannot replace a
+        # newer profile catalog after concurrent publication.
+        async with profile_refresh_lock:
+            claude_profiles = await resolved_repository.list_claude_profiles()
+            for adapter in resolved_adapters:
+                if isinstance(adapter, (ClaudeSDKAdapter, RemoteClaudeSDKAdapter)):
+                    adapter.set_registered_profiles(claude_profiles)
+            profiles = await resolved_repository.list_agentcore_profiles()
+            targets = {profile.profile_id: profile.target for profile in profiles}
+            for adapter in resolved_adapters:
+                if isinstance(adapter, AgentCoreAdapter):
+                    adapter.set_registered_profiles(targets)
+            resolved_agentcore_provisioner.set_registered_profiles(targets)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        resolved_settings.require_private_token()
         await resolved_repository.initialize()
-        await refresh_agentcore_profiles()
+        await refresh_operator_profiles()
         yield
         await coordinator.shutdown()
+        for adapter in resolved_adapters:
+            if isinstance(adapter, DeepAgentsAdapter):
+                await adapter.close()
         await resolved_repository.close()
 
     app = FastAPI(title="CAIPE Harness Engine", version="0.2.0", lifespan=lifespan)
@@ -119,24 +149,87 @@ def create_app(
         x_harness_engine_subject: Annotated[str | None, Header()] = None,
     ) -> str:
         expected = f"Bearer {resolved_settings.internal_token}"
-        if not authorization or not hmac.compare_digest(authorization, expected):
+        if resolved_settings.internal_token == "local-development-only" or not authorization or not hmac.compare_digest(authorization, expected):
             raise HTTPException(
                 status.HTTP_401_UNAUTHORIZED, "Invalid internal service credential"
             )
         if not x_harness_engine_subject:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing caller subject")
+        read_conversation = request.headers.get("x-harness-read-conversation")
+        read_agent = request.headers.get("x-harness-read-agent")
+        if read_conversation is not None or read_agent is not None:
+            permitted = (request.method == "GET" and request.url.path.startswith("/api/v1/runs/")) or (
+                request.method == "POST" and request.url.path == "/api/v1/sessions/lookup"
+            )
+            if not read_conversation or not read_agent or not permitted:
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "Conversation read scope cannot mutate execution")
         # Each replica reads immutable connections before accepting new work.
         # Event replay does not depend on refreshing the provider catalog.
         if request.url.path in {
             "/api/v1/harnesses", "/api/v1/agent-drafts/validate",
-            "/api/v1/runs", "/api/v1/admin/agentcore-connections",
+            "/api/v1/runs", "/api/v1/admin/agentcore-connections", "/api/v1/admin/operator-profiles",
         } or (request.method == "PUT" and request.url.path.startswith("/api/v1/agents/")):
             try:
-                await refresh_agentcore_profiles()
+                await refresh_operator_profiles()
             except (PyMongoError, ValueError) as exc:
-                logger.error("AgentCore connection registry could not be loaded (%s)", type(exc).__name__)
-                raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "AgentCore connections could not be loaded") from exc
+                logger.error("Operator profile catalog could not be loaded (%s)", type(exc).__name__)
+                raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Operator profiles could not be loaded") from exc
         return x_harness_engine_subject
+
+    @app.get("/api/v1/admin/operator-profiles")
+    async def operator_profiles(
+        subject: str = Depends(caller_subject),
+        x_harness_engine_admin: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        if x_harness_engine_admin != "true":
+            raise HTTPException(403, "Platform administrator required")
+        async def describe(adapter: ClaudeSDKAdapter | RemoteClaudeSDKAdapter) -> HarnessDescriptor:
+            descriptor = adapter.descriptor
+            if isinstance(adapter, RemoteClaudeSDKAdapter):
+                models = await adapter.deployment_models(subject)
+                descriptor = descriptor.model_copy(update={"profiles": [
+                    p.model_copy(update={"model": models[p.id]}) if p.id in models else p
+                    for p in descriptor.profiles
+                ]})
+            return descriptor
+
+        descriptors = await asyncio.gather(*(describe(adapter) for adapter in resolved_adapters
+                                            if isinstance(adapter, (ClaudeSDKAdapter, RemoteClaudeSDKAdapter))))
+        return {"success": True, "data": {
+            "profiles": await resolved_repository.list_claude_profiles(), "harnesses": descriptors,
+        }}
+
+    @app.post("/api/v1/admin/operator-profiles", status_code=201)
+    async def create_operator_profile(
+        body: CreateClaudeProfileRequest,
+        subject: str = Depends(caller_subject),
+        x_harness_engine_admin: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        if x_harness_engine_admin != "true":
+            raise HTTPException(403, "Platform administrator required")
+        try:
+            base = registry.profile(body.harness_id, body.base_profile_id)
+            existing = registry.profile(body.harness_id, body.profile_id)
+        except HarnessNotFoundError as exc:
+            raise HTTPException(400, "Claude runtime is unavailable") from exc
+        if not base or not base.available or base.source != "deployment":
+            raise HTTPException(400, "Select an available deployment-owned base profile")
+        if existing:
+            raise HTTPException(409, "Profile IDs are immutable; choose a new ID")
+        profile = RegisteredClaudeProfile(**body.model_dump(), created_by=subject)
+        try:
+            await resolved_repository.create_claude_profile(profile)
+        except RevisionConflictError as exc:
+            raise HTTPException(409, "Profile IDs are immutable; choose a new ID") from exc
+        except PyMongoError as exc:
+            raise HTTPException(503, "Profile could not be saved") from exc
+        try:
+            await refresh_operator_profiles()
+        except Exception as exc:
+            # Publication is committed; an optional read must not suppress its
+            # success response and the BFF's corresponding audit event.
+            logger.warning("Operator profile saved but catalog refresh failed (%s)", type(exc).__name__)
+        return {"success": True, "data": profile}
 
     @app.post("/api/v1/admin/agentcore-connections", status_code=status.HTTP_201_CREATED)
     async def connect_agentcore(
@@ -160,13 +253,29 @@ def create_app(
         except PyMongoError as exc:
             logger.error("AgentCore connection %s could not be saved (%s)", body.profile_id, type(exc).__name__)
             raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Connection could not be saved; retry with the same connection ID") from exc
-        await refresh_agentcore_profiles()
+        await refresh_operator_profiles()
         return {"success": True, "data": {"profile_id": profile.profile_id, "provisioning": "shared", "persistence": resolved_settings.storage_backend}}
 
     def ensure_owner(run: RunRecord | None, subject: str) -> RunRecord:
         if run is None or run.owner_subject != subject:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
         return run
+
+    def has_conversation_read_scope(request: Request, agent_id: str, conversation_id: str) -> bool:
+        # The authenticated internal BFF sets this bounded read scope only after
+        # checking the viewer's current conversation permission. Mutation routes
+        # continue to use the real caller subject and never consume this scope.
+        return (request.headers.get("x-harness-read-conversation") == conversation_id
+                and request.headers.get("x-harness-read-agent") == agent_id)
+
+    def ensure_reader(run: RunRecord | None, subject: str, request: Request) -> RunRecord:
+        if run is not None:
+            if request.headers.get("x-harness-read-conversation"):
+                if has_conversation_read_scope(request, run.agent_id, run.conversation_id):
+                    return run
+            elif run.owner_subject == subject:
+                return run
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
 
     @app.get("/healthz")
     async def health() -> dict[str, object]:
@@ -177,7 +286,7 @@ def create_app(
         return {
             "success": True,
             "data": {
-                "contract_version": 1,
+                "contract_version": 2,
                 "catalog_revision": registry.catalog_revision,
                 "harnesses": registry.catalog(),
             },
@@ -195,12 +304,12 @@ def create_app(
         return {"success": True, "data": validation}
 
     @app.get("/api/v1/agents/{agent_id}")
-    async def get_agent(agent_id: str, _: str = Depends(caller_subject)) -> dict[str, object]:
+    async def get_agent(agent_id: str, version: int | None = None, _: str = Depends(caller_subject)) -> dict[str, object]:
         record = await resolved_repository.get_agent(agent_id)
-        version = await resolved_repository.get_agent_version(agent_id)
-        if record is None or version is None:
+        selected = await resolved_repository.get_agent_version(agent_id, version)
+        if record is None or selected is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Harness agent not found")
-        return {"success": True, "data": {"record": record, "version": version}}
+        return {"success": True, "data": {"record": record, "version": selected}}
 
     @app.put("/api/v1/agents/{agent_id}")
     async def put_agent(
@@ -219,7 +328,7 @@ def create_app(
         if not validation.valid:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
-                {"message": "Agent blueprint is invalid", "issues": validation.issues},
+                {"message": "Agent blueprint is invalid", "issues": validation.model_dump(mode="json")["issues"]},
             )
         if body.config_fingerprint and body.config_fingerprint != validation.config_fingerprint:
             raise HTTPException(
@@ -315,8 +424,45 @@ def create_app(
             )
             else None
         )
+        identity = None
+        caller_token = request.headers.get("x-harness-caller-token")
+        if caller_token:
+            try:
+                user_context = json.loads(base64.b64decode(request.headers.get("x-harness-caller-context", "e30="), validate=True))
+                if not isinstance(user_context, dict):
+                    raise ValueError("Invalid caller context")
+                identity = ExecutionIdentity(
+                    subject=subject, email=request.headers.get("x-harness-caller-email"),
+                    principal_type="service_account" if request.headers.get("x-harness-caller-type") == "service_account" else "user",
+                    bearer=caller_token, user_context=user_context,
+                )
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(400, "Invalid delegated caller context") from exc
         try:
-            run = await coordinator.start_run(body, subject, traceparent)
+            record = await resolved_repository.get_agent(body.agent_id)
+            if record is None and resolved_settings.deep_agents_enabled:
+                if identity is None:
+                    raise HTTPException(401, "Deep Agents requires delegated caller credentials")
+                deep = registry.adapter("dynamic_agents")
+                blueprint = await deep.runtime.snapshot(body.agent_id)
+                validation = registry.validate(blueprint)
+                if not validation.valid:
+                    raise HTTPException(409, "Native configuration cannot be adopted")
+                await resolved_repository.save_agent(validation.normalized_blueprint, validation.config_fingerprint,
+                                                      validation.catalog_revision, None)
+            pinned = await session_manager.current(subject, body.agent_id, body.conversation_id)
+            version = await resolved_repository.get_agent_version(body.agent_id, pinned.agent_version if pinned and pinned.status == "active" else body.agent_version)
+            if version:
+                descriptor = registry.adapter(version.blueprint.harness.id).descriptor
+                for capability, required in (("human_input.resume", body.command == "resume"), ("thread.rewind", body.command == "rewind"), ("attachments", bool(body.attachments))):
+                    support = descriptor.capabilities.get(capability)
+                    if required and (support is None or support.level not in {"native", "emulated"}):
+                        raise HTTPException(409, f"Harness does not support {capability}")
+                if descriptor.id == "dynamic_agents" and identity is None:
+                    raise HTTPException(401, "Deep Agents requires delegated caller credentials")
+                if descriptor.id in {"claude_agent_sdk", "claude_agent_sdk_remote", "claude_code_acp", "claude_code_cli_acp"} and version.blueprint.tools.bindings and identity is None:
+                    raise HTTPException(401, "Claude MCP tools require delegated caller credentials")
+            run = await coordinator.start_run(body, subject, traceparent, identity)
         except AgentNotRunnableError as exc:
             raise HTTPException(
                 status.HTTP_409_CONFLICT, "Agent has no runnable harness version"
@@ -325,16 +471,43 @@ def create_app(
             raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
         return {"success": True, "data": run}
 
+    @app.post("/api/v1/run-requests/lookup")
+    async def lookup_run_request(body: LookupRunRequest, subject: str = Depends(caller_subject)) -> dict[str, object]:
+        if not body.client_request_id:
+            raise HTTPException(400, "client_request_id is required")
+        run = await resolved_repository.find_run_request(subject, body.agent_id, body.conversation_id, body.client_request_id)
+        return {"success": True, "data": run}
+
     @app.post("/api/v1/sessions/lookup")
     async def lookup_session(
-        body: ClearAgentSessionRequest, subject: str = Depends(caller_subject)
+        body: ClearAgentSessionRequest, request: Request, subject: str = Depends(caller_subject)
     ) -> dict[str, object]:
+        if request.headers.get("x-harness-read-conversation") and not has_conversation_read_scope(request, body.agent_id, body.conversation_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Session not found")
+        if has_conversation_read_scope(request, body.agent_id, body.conversation_id):
+            latest = await resolved_repository.get_latest_conversation_run(body.agent_id, body.conversation_id)
+            binding = await resolved_repository.get_session(latest.binding_id) if latest else None
+            return {"success": True, "data": {
+                "harness_id": latest.harness_id if latest else None,
+                "active_run": latest if latest and latest.status not in TERMINAL_RUN_STATUSES else None,
+                "last_run": latest,
+                "pending_interrupt": binding.pending_interrupt if binding else None,
+            }}
         run = await resolved_repository.get_active_run(subject, body.agent_id, body.conversation_id)
         binding = await session_manager.current(subject, body.agent_id, body.conversation_id)
         harness_id = run.harness_id if run else (
             binding.harness_id if binding and binding.status == "active" else None
         )
-        return {"success": True, "data": {"harness_id": harness_id}}
+        return {"success": True, "data": {
+            "harness_id": harness_id,
+            "binding_id": binding.binding_id if binding else None,
+            "native_thread_id": binding.provider_session_id if binding else None,
+            "agent_version": binding.agent_version if binding else None,
+            "pending_interrupt": binding.pending_interrupt if binding else None,
+            "status": binding.status if binding else None,
+            "active_run": run,
+            "last_run": await resolved_repository.get_run(binding.last_run_id) if binding and binding.last_run_id else None,
+        }}
 
     @app.post("/api/v1/sessions/clear")
     async def clear_session(
@@ -346,11 +519,21 @@ def create_app(
         )
         return {"success": True, "data": result}
 
+    @app.post("/api/v1/sessions/restart-runtime")
+    async def restart_runtime(body: ClearAgentSessionRequest, subject: str = Depends(caller_subject)) -> dict[str, object]:
+        binding = await session_manager.current(subject, body.agent_id, body.conversation_id)
+        if not binding or binding.harness_id != "dynamic_agents":
+            raise HTTPException(409, "This session does not support runtime reconnect")
+        if binding.active_run:
+            raise HTTPException(409, "Stop the active run before reconnecting tools")
+        await registry.adapter(binding.harness_id).runtime.restart_session(binding)
+        return {"success": True, "invalidated": True}
+
     @app.get("/api/v1/runs/{run_id}")
-    async def get_run(run_id: str, subject: str = Depends(caller_subject)) -> dict[str, object]:
+    async def get_run(run_id: str, request: Request, subject: str = Depends(caller_subject)) -> dict[str, object]:
         return {
             "success": True,
-            "data": ensure_owner(await resolved_repository.get_run(run_id), subject),
+            "data": ensure_reader(await resolved_repository.get_run(run_id), subject, request),
         }
 
     @app.exception_handler(ReplayGapError)
@@ -362,17 +545,18 @@ def create_app(
     @app.get("/api/v1/runs/{run_id}/events")
     async def get_events(
         run_id: str,
+        request: Request,
         subject: str = Depends(caller_subject),
         after: int = Query(0, ge=0),
         wait: float = Query(0.0, ge=0.0, le=30.0),
     ) -> dict[str, object]:
-        ensure_owner(await resolved_repository.get_run(run_id), subject)
+        ensure_reader(await resolved_repository.get_run(run_id), subject, request)
         events = await (
             resolved_repository.wait_for_events(run_id, after, wait)
             if wait > 0
             else resolved_repository.list_events(run_id, after)
         )
-        refreshed = ensure_owner(await resolved_repository.get_run(run_id), subject)
+        refreshed = ensure_reader(await resolved_repository.get_run(run_id), subject, request)
         page = EventPage(
             run=refreshed,
             events=events,
@@ -387,7 +571,7 @@ def create_app(
         subject: str = Depends(caller_subject),
         after: int = Query(0, ge=0),
     ) -> StreamingResponse:
-        ensure_owner(await resolved_repository.get_run(run_id), subject)
+        ensure_reader(await resolved_repository.get_run(run_id), subject, request)
 
         await resolved_repository.list_events(run_id, after)
 

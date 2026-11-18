@@ -1,87 +1,192 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-
-// assisted-by Codex Codex-sonnet-4-6
-
 import { LLMProvidersTab } from "../LLMProvidersTab";
 
-describe("LLMProvidersTab", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    global.fetch = jest.fn(async (url, init) => {
-      const href = String(url);
-      if (href.includes("/api/llm-models")) {
-        return {
-          ok: true,
-          json: async () => ({
-            success: true,
-            data: {
-              items: [
-                { _id: "gpt-4o", model_id: "gpt-4o", name: "GPT-4o", provider: "openai" },
-                {
-                  _id: "global.anthropic.claude-sonnet-4-6",
-                  model_id: "global.anthropic.claude-sonnet-4-6",
-                  name: "Claude Sonnet",
-                  provider: "aws-bedrock",
-                },
-              ],
-            },
-          }),
-        } as Response;
-      }
-      if (href.includes("/api/credentials/secrets") && (!init || init.method === "GET")) {
-        return {
-          ok: true,
-          json: async () => ({
-            data: [
-              {
-                id: "secret-1",
-                name: "llm:openai:api_key",
-                type: "api_key",
-                maskedPreview: "sk-...1234",
-              },
-            ],
-          }),
-        } as Response;
-      }
-      if (href.includes("/api/credentials/secrets") && init?.method === "POST") {
-        return {
-          ok: true,
-          json: async () => ({ data: { id: "secret-2", name: "llm:aws-bedrock:secret_access_key" } }),
-        } as Response;
-      }
-      return { ok: false, json: async () => ({ error: "unexpected request" }) } as Response;
-    }) as jest.Mock;
+function response(data: unknown, status = 200) {
+  return {
+    ok: status < 400,
+    status,
+    json: async () =>
+      status < 400 ? { success: true, data } : { error: data },
+  } as Response;
+}
+const secrets = [
+  {
+    id: "example-key",
+    name: "Primary key",
+    type: "api_key",
+    maskedPreview: "protected",
+  },
+  { id: "example-endpoint", name: "Primary endpoint", type: "custom" },
+];
+let ready = true;
+let requests: { path: string; body: Record<string, unknown> }[];
+beforeEach(() => {
+  ready = true;
+  requests = [];
+  global.fetch = jest.fn(async (url, init) => {
+    const path = String(url);
+    if (init?.body)
+      requests.push({ path, body: JSON.parse(String(init.body)) });
+    if (path === "/api/credentials/secrets") return response(secrets);
+    if (path === "/api/credentials/llm-providers")
+      return response({ bindings: {} });
+    if (path === "/api/llm-models/connections")
+      return response({
+        connections: [],
+        models: [],
+        can_manage: true,
+        runtime_supported: ready,
+      });
+    if (path === "/api/llm-models/test")
+      return response({
+        success: true,
+        category: "success",
+        message: "Connected",
+        elapsed_ms: 15,
+      });
+    return response("Unexpected request", 404);
+  }) as jest.Mock;
+});
+async function open() {
+  const user = userEvent.setup();
+  render(<LLMProvidersTab />);
+  const connect = await screen.findByRole("button", {
+    name: "Connect OpenAI / Compatible",
   });
-
-  it("shows provider status cards without mixing in the model registry", async () => {
-    render(<LLMProvidersTab />);
-
-    expect(await screen.findByText("OpenAI")).toBeInTheDocument();
-    expect(screen.getByText("AWS Bedrock")).toBeInTheDocument();
-    expect(await screen.findByText("Ready")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Refresh" })).toBeInTheDocument();
-    expect(screen.queryByText("LLM models content")).not.toBeInTheDocument();
+  await waitFor(() => expect(connect).toBeEnabled());
+  await user.click(connect);
+  await user.type(screen.getByLabelText("Connection name"), "Primary gateway");
+  await user.type(
+    screen.getByLabelText("Model IDs"),
+    "example-model\nsecondary-model",
+  );
+  return user;
+}
+it("creates a named connection and multiple model registrations in one request using saved references", async () => {
+  const user = await open();
+  for (const [label, name] of [
+    ["API Key", "Primary key"],
+    ["OpenAI Endpoint URL", "Primary endpoint"],
+  ]) {
+    await user.click(
+      screen.getByRole("combobox", { name: label, exact: true }),
+    );
+    await user.click(screen.getByRole("option", { name: new RegExp(name) }));
+  }
+  await user.click(screen.getByRole("button", { name: "Save Connection" }));
+  await waitFor(() =>
+    expect(
+      requests.some((entry) => entry.path === "/api/llm-models/connections"),
+    ).toBe(true),
+  );
+  expect(
+    requests.find((entry) => entry.path === "/api/llm-models/connections")
+      ?.body,
+  ).toEqual(
+    expect.objectContaining({
+      name: "Primary gateway",
+      models: ["example-model", "secondary-model"],
+      fields: { api_key: "example-key", endpoint: "example-endpoint" },
+      values: {},
+    }),
+  );
+  expect(requests.some((entry) => entry.path.includes("/retrieve"))).toBe(
+    false,
+  );
+});
+it("tests new values before saving and does not create secrets or models", async () => {
+  const user = await open();
+  await user.selectOptions(
+    screen.getByLabelText("Provider type"),
+    "openai-compatible",
+  );
+  await user.selectOptions(screen.getByLabelText("API Key source"), "new");
+  await user.type(
+    screen.getByLabelText("API Key", { exact: true }),
+    "example-private-key",
+  );
+  await user.selectOptions(
+    screen.getByLabelText("OpenAI Endpoint URL source"),
+    "new",
+  );
+  await user.type(
+    screen.getByLabelText("OpenAI Endpoint URL", { exact: true }),
+    "https://example.test/v1",
+  );
+  await user.click(screen.getByRole("button", { name: "Test Connection" }));
+  expect(await screen.findByText(/Connected ·/)).toBeInTheDocument();
+  expect(requests).toHaveLength(1);
+  expect(requests[0]).toEqual({
+    path: "/api/llm-models/test",
+    body: {
+      upstream_model_id: "example-model",
+      draft: {
+        provider: "openai-compatible",
+        auth_mode: "secrets",
+        fields: {},
+        values: {
+          api_key: "example-private-key",
+          endpoint: "https://example.test/v1",
+        },
+      },
+    },
   });
+  expect(
+    screen.getByText("Saved securely in Saved Secrets"),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("link", { name: /Manage Saved Secrets/ }),
+  ).toBeInTheDocument();
+});
+it("disables creation when the runtime cannot resolve saved model connections", async () => {
+  ready = false;
+  render(<LLMProvidersTab />);
+  await screen.findByText(/Creating saved connections requires/);
+  expect(
+    screen.getByRole("button", { name: "Connect OpenAI / Compatible" }),
+  ).toBeDisabled();
+});
+it("shows a failure diagnostic with details instead of losing the provider explanation", async () => {
+  const user = await open();
+  (global.fetch as jest.Mock).mockImplementationOnce(async () => ({
+    ok: true,
+    json: async () => ({
+      success: false,
+      category: "authentication",
+      message: "Provider rejected credentials",
+      status_code: 401,
+      elapsed_ms: 12,
+    }),
+  }));
+  await user.click(screen.getByRole("button", { name: "Test Connection" }));
+  expect(await screen.findByText(/Connection failed/)).toBeInTheDocument();
+  expect(screen.getByText("Provider rejected credentials")).toBeInTheDocument();
+});
 
-  it("creates provider credential secrets using the shared credential store", async () => {
-    const user = userEvent.setup();
-    render(<LLMProvidersTab />);
 
-    await user.click(await screen.findByRole("button", { name: /connect aws bedrock/i }));
-    await user.type(screen.getByLabelText(/access key id/i), "aws-access-key-test");
-    await user.type(screen.getByLabelText(/secret access key/i), "secret-value");
-    await user.type(screen.getByLabelText(/region/i), "us-east-1");
-    await user.click(screen.getByRole("button", { name: /save connection/i }));
-
-    await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith(
-        "/api/credentials/secrets",
-        expect.objectContaining({
-          method: "POST",
-          body: expect.stringContaining("llm:aws-bedrock:secret_access_key"),
-        }),
-      );
-    });
+it.each(["terminal", "network", "uncertain"])("uses safe operation identity recovery after a %s save failure", async failure => {
+  const user = await open();
+  for (const [label, name] of [["API Key", "Primary key"], ["OpenAI Endpoint URL", "Primary endpoint"]]) {
+    await user.click(screen.getByRole("combobox", { name: label, exact: true }));
+    await user.click(screen.getByRole("option", { name: new RegExp(name) }));
+  }
+  const fallback = (global.fetch as jest.Mock).getMockImplementation()!;
+  const attempts: Record<string, unknown>[] = [];
+  (global.fetch as jest.Mock).mockImplementation(async (url, init) => {
+    if (String(url) === "/api/llm-models/connections" && init?.method === "POST") {
+      attempts.push(JSON.parse(String(init.body)));
+      if (attempts.length === 1) {
+        if (failure === "network") throw new Error("Network unavailable");
+        return { ok: false, json: async () => ({ success: false, code: failure === "uncertain" ? "MODEL_CONNECTION_RECOVERY_PENDING" : "MODEL_CONNECTION_OPERATION_FAILED", error: "Previous operation failed" }) };
+      }
+      return response({ connection: {}, models: [] });
+    }
+    return fallback(url, init);
   });
+  await user.click(screen.getByRole("button", { name: "Save Connection" }));
+  await screen.findByText(failure === "network" ? "Network unavailable" : "Previous operation failed");
+  await user.click(screen.getByRole("button", { name: "Save Connection" }));
+  await waitFor(() => expect(attempts).toHaveLength(2));
+  expect(Boolean(attempts[0].operation_id === attempts[1].operation_id)).toBe(failure !== "terminal");
 });

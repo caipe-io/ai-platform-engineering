@@ -59,16 +59,14 @@ Create chart name and version as used by the chart label.
 {{- end }}
 
 {{/*
-Get externalSecrets API version with fallback to v1 (most clusters have v1 installed)
+Resolve an explicit API version, the legacy setting, or the compatibility default.
 */}}
 {{- define "ai-platform-engineering.externalSecrets.apiVersion" -}}
-    {{- if and (hasKey .Values "global") (hasKey .Values.global "externalSecrets") (hasKey .Values.global.externalSecrets "apiVersion") }}
-        {{- .Values.global.externalSecrets.apiVersion }}
-    {{- else if and (hasKey .Values "global") (hasKey .Values.global "llmSecrets") (hasKey .Values.global.llmSecrets "externalSecrets") (hasKey .Values.global.llmSecrets.externalSecrets "apiVersion") }}
-        {{- .Values.global.llmSecrets.externalSecrets.apiVersion }}
-    {{- else }}
-        {{- "v1" }}
-    {{- end }}
+    {{- $global := .Values.global | default dict -}}
+    {{- $externalSecrets := $global.externalSecrets | default dict -}}
+    {{- $llmSecrets := $global.llmSecrets | default dict -}}
+    {{- $llmExternalSecrets := $llmSecrets.externalSecrets | default dict -}}
+    {{- coalesce $externalSecrets.apiVersion $llmExternalSecrets.apiVersion "v1beta1" -}}
 {{- end }}
 
 {{/*
@@ -272,5 +270,50 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- else -}}
 {{- $secret := $values.secret | default dict -}}
 {{- default (include "ai-platform-engineering.litellmMcp.fullname" .) $secret.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ai-platform-engineering.cloudabilityMcp.name" -}}
+{{- $values := .Values.cloudabilityMcp | default dict -}}
+{{- default "cloudability-mcp" $values.nameOverride | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "ai-platform-engineering.cloudabilityMcp.fullname" -}}
+{{- $values := .Values.cloudabilityMcp | default dict -}}
+{{- if $values.fullnameOverride -}}
+{{- $values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- $name := default "cloudability-mcp" $values.nameOverride -}}
+{{- if contains $name .Release.Name -}}
+{{- .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ai-platform-engineering.cloudabilityMcp.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "ai-platform-engineering.cloudabilityMcp.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: mcp
+{{- end -}}
+
+{{- define "ai-platform-engineering.cloudabilityMcp.labels" -}}
+helm.sh/chart: {{ include "ai-platform-engineering.chart" . }}
+{{ include "ai-platform-engineering.cloudabilityMcp.selectorLabels" . }}
+app.kubernetes.io/part-of: {{ include "ai-platform-engineering.name" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "ai-platform-engineering.cloudabilityMcp.secretName" -}}
+{{- $values := .Values.cloudabilityMcp | default dict -}}
+{{- if $values.existingSecret -}}
+{{- $values.existingSecret -}}
+{{- else -}}
+{{- $secret := $values.secret | default dict -}}
+{{- default (include "ai-platform-engineering.cloudabilityMcp.fullname" .) $secret.name -}}
 {{- end -}}
 {{- end -}}

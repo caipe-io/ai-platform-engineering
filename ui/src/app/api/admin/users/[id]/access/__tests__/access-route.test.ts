@@ -340,7 +340,7 @@ describe("GET /api/admin/users/[id]/access", () => {
     );
   });
 
-  it("surfaces the tool:* wildcard sentinel as an all-tools item", async () => {
+  it("surfaces the tool:__all_mcp_servers_intent__ wildcard sentinel as an all-tools item", async () => {
     mockMembershipFind.mockResolvedValue([
       { team_slug: "platform", relationship: "member" },
     ]);
@@ -348,7 +348,7 @@ describe("GET /api/admin/users/[id]/access", () => {
       { _id: "t1", slug: "platform", name: "Platform" },
     ]);
     grantTable = {
-      [grantKey("team:platform#member", "caller", "tool")]: ["tool:*"],
+      [grantKey("team:platform#member", "caller", "tool")]: ["tool:__all_mcp_servers_intent__"],
     };
 
     const { GET } = await import("../route");
@@ -357,7 +357,7 @@ describe("GET /api/admin/users/[id]/access", () => {
     const body = await res.json();
 
     expect(body.data.access.tools[0]).toMatchObject({
-      id: "*",
+      id: "__all_mcp_servers_intent__",
       name: "All MCP tools",
     });
   });

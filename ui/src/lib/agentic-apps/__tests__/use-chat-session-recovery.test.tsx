@@ -26,6 +26,14 @@ describe("app chat session recovery", () => {
     global.fetch = jest.fn(); mockLoad.mockResolvedValue(undefined);
   });
   afterEach(() => { jest.useRealTimers(); });
+  it("leaves Engine journal replay to the chat panel", async () => {
+    (fetch as jest.Mock).mockResolvedValue({ ok: true, json: async () => ({ success: true, data: { runtime: "harness_engine", status: "running" } }) });
+    const view = renderHook(useChatSessionRecovery); await tick(); await tick(30_000);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(mockLoad).not.toHaveBeenCalled();
+    expect(mockSetActivity).toHaveBeenLastCalledWith("example-conversation", null);
+    view.unmount();
+  });
   it("observes an active turn and reconciles its completed saved answer without invoking it", async () => {
     (fetch as jest.Mock).mockResolvedValueOnce({ ok: true, json: async () => ({ running: true, turnId: "example-turn" }) })
       .mockResolvedValueOnce({ ok: true, json: async () => ({ running: false }) });

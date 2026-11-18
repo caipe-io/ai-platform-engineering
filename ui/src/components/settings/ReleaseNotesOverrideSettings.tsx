@@ -8,9 +8,13 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { ReleaseUpgradeDialog } from "@/components/release/ReleaseUpgradeDialog";
-import { MAX_RELEASE_NOTES_LENGTH, normalizeReleaseNotesOverride, validateReleaseNotesOverride, type ReleaseNotesOverride } from "@/lib/release-notes-override";
+import { resolvePromptVersion } from "@/hooks/use-release-upgrade-prompt";
+import { useVersion } from "@/hooks/use-version";
+import { hasReleaseNotesOverride, MAX_RELEASE_NOTES_LENGTH, normalizeReleaseNotesOverride, validateReleaseNotesOverride, type ReleaseNotesOverride } from "@/lib/release-notes-override";
 
 export function ReleaseNotesOverrideSettings({ readOnly = false }: { readOnly?: boolean }) {
+  const { versionInfo } = useVersion();
+  const currentHostVersion = resolvePromptVersion(versionInfo);
   const [config, setConfig] = useState<ReleaseNotesOverride>(() => normalizeReleaseNotesOverride(null));
   const [saved, setSaved] = useState("");
   const [repositories, setRepositories] = useState<string[]>([]);
@@ -19,6 +23,9 @@ export function ReleaseNotesOverrideSettings({ readOnly = false }: { readOnly?: 
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [preview, setPreview] = useState(false);
+  const normalizedConfig = normalizeReleaseNotesOverride(config);
+  const versionMismatch = currentHostVersion && normalizedConfig.source !== "automatic" &&
+    normalizedConfig.release_version && !hasReleaseNotesOverride({ override: normalizedConfig }, currentHostVersion);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -36,7 +43,12 @@ export function ReleaseNotesOverrideSettings({ readOnly = false }: { readOnly?: 
     return () => { cancelled = true; };
   }, []);
   const update = (key: keyof ReleaseNotesOverride, value: string) => {
-    setConfig((current) => ({ ...current, [key]: value })); setMessage("");
+    setConfig((current) => ({
+      ...current,
+      ...(key === "source" && value !== "automatic" && !current.release_version && currentHostVersion
+        ? { release_version: currentHostVersion } : {}),
+      [key]: value,
+    })); setMessage("");
   };
   const save = async () => {
     const snapshot = normalizeReleaseNotesOverride(config);
@@ -47,7 +59,10 @@ export function ReleaseNotesOverrideSettings({ readOnly = false }: { readOnly?: 
       const response = await fetch("/api/admin/platform-config", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ release_notes: { override: snapshot } }) });
       const payload = await response.json();
       if (!response.ok || !payload.success) throw new Error(payload.error?.message || payload.error || "Could not save curated notes.");
-      setSaved(JSON.stringify(snapshot)); setMessage("Curated notes saved. Use the current release preview below to check the published source.");
+      setSaved(JSON.stringify(snapshot));
+      setMessage(currentHostVersion && snapshot.source !== "automatic" && !hasReleaseNotesOverride({ override: snapshot }, currentHostVersion)
+        ? `Curated notes saved for ${snapshot.release_version}. They will not appear for the current host release (${currentHostVersion}).`
+        : "Curated notes saved. Use the current release preview below to check the published source.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save curated notes."); }
     finally { setSaving(false); }
   };
@@ -58,7 +73,15 @@ export function ReleaseNotesOverrideSettings({ readOnly = false }: { readOnly?: 
       <label className="block text-sm">Content source<Select value={config.source} onChange={(event) => update("source", event.target.value)}>
         <option value="automatic">Automatic</option><option value="manual">Enter Markdown</option><option value="repository">Repository Markdown</option>
       </Select></label>
-      {config.source !== "automatic" && <label className="block text-sm">Deployed release version<Input value={config.release_version} onChange={(event) => update("release_version", event.target.value)} placeholder="1.3.2" /></label>}
+      {config.source !== "automatic" && <>
+        <label className="block text-sm">Deployed release version<Input aria-describedby="curated-release-version-hint" value={config.release_version} onChange={(event) => update("release_version", event.target.value)} placeholder={currentHostVersion ?? "1.3.2"} /></label>
+        <p id="curated-release-version-hint" className="text-xs text-muted-foreground">Use the host platform release version. Hosted apps can have separate versions.</p>
+        {currentHostVersion && <>
+          <p className="text-xs text-muted-foreground">Current host release: {currentHostVersion}</p>
+          {versionMismatch && <p role="alert" className="text-sm text-destructive">These notes target {normalizedConfig.release_version} and will not appear for the current host release ({currentHostVersion}).</p>}
+          {!hasReleaseNotesOverride({ override: normalizedConfig }, currentHostVersion) && <Button type="button" size="sm" variant="outline" onClick={() => update("release_version", currentHostVersion)}>Use current host release</Button>}
+        </>}
+      </>}
       {config.source === "manual" && <>
         <label className="block text-sm">Release notes Markdown<Textarea value={config.markdown} maxLength={MAX_RELEASE_NOTES_LENGTH} rows={12} onChange={(event) => update("markdown", event.target.value)} /></label>
         <label className="block text-sm">Full changelog URL (optional)<Input value={config.changelog_url} onChange={(event) => update("changelog_url", event.target.value)} placeholder="https://example.com/releases" /></label>

@@ -52,6 +52,30 @@ Each component has its own environment variables - see `env.example` in `ui/` an
 - **Configuration & code details** - Document in component READMEs
 - **Agent instructions** - Keep this file (`AGENTS.md`) up-to-date
 
+## E2E Regression and Release Readiness
+
+- For "run E2E regression", "regression test", "test backward compatibility", or
+  "check release readiness", use `.agents/skills/caipe-regression-suite/SKILL.md`
+  and the canonical matrix at `docs/docs/development/caipe-regression-suite.md`.
+- Keep matrix IDs stable. Product changes and bug fixes must add or update the
+  affected acceptance cases in the same PR; identify the case IDs in validation.
+- Maintain numbered assertions and screen/API mappings in the linked coverage
+  inventory. Run `node scripts/validate-regression-inventory.mjs` to check source
+  drift; inventory validation does not establish live test coverage.
+- External apps own their feature matrices. For integrated requests, compose
+  authorized app-owned suites through environment-owned run configuration; keep
+  private definitions/results outside public source and report suite gaps.
+- Record every applicable case, runtime, and integration as PASS, FAIL, BLOCKED,
+  or NOT_RUN. Explain exclusions. CI, catalog loading, and healthy pods do not
+  establish live functional or backward-compatibility coverage.
+- Release readiness reviews existing evidence first; it does not authorize a
+  deployment or new test writes. Reuse target/scope authorization already given.
+- Finish every run/review with the schema-1 manifest and consistent HTML/Markdown
+  artifacts from `scripts/render-regression-report.mjs --input RUN/report.json
+  --output RUN/report.html` (invoke with `node`). Follow
+  `docs/docs/development/regression-report-artifacts.md`; rendering is not testing
+  or publication. Restricted combined reports stay in protected run storage.
+
 ## Docs & Spec Rules
 
 - Reading is as hard as writing.
@@ -141,8 +165,9 @@ Do not add Slack/Webex bots to that default path.
 - Python + Slack Bolt, Slack SDK, httpx (SSE streaming), Pydantic (config models), requests, loguru, PyYAML — no new dependencies (100-slack-agui-migration)
 - MongoDB (LangGraph checkpointer on dynamic agents side; Slack bot is stateless beyond in-memory TTL caches) (100-slack-agui-migration)
 - Service accounts: dynamic Keycloak confidential clients + OpenFGA `service_account` tuples + Mongo `service_accounts` collection; BFF (Next.js) orchestrates create/rotate/revoke/scope; caller-keyed tool authz added to the OpenFGA ext_authz bridge (2026-06-05-service-accounts)
-- Independent Python 3.13 Harness Engine with a managed AgentCore adapter; Dynamic Agents remains unchanged and additional local/sandbox harnesses are future adapters (2026-08-17-harness-engine)
-- Separate MongoDB `harness_agent_configs`, `harness_runs`, and `harness_events` collections provide overlays and cursor replay; stable AgentCore session IDs preserve thread context while scoped long-term memory remains future work (2026-08-17-harness-engine)
+- Python 3.13 Harness Engine supports provider adapters; the optional Python 3.14 Deep Agents integration reuses the Dynamic Agents runtime. Compatibility-service execution remains the default unless explicitly enabled.
+- MongoDB `harness_agents`, `harness_agent_versions`, `harness_sessions`, `harness_runs`, and `harness_events` preserve execution versions, native session bindings and cursor replay. Native checkpoints stay in the application database, with a shared `execution_thread_leases` producer fence.
+- Slack and Webex independently opt into detached Gateway run admission and cursor replay with `SLACK_HARNESS_GATEWAY_ENABLED` and `WEBEX_HARNESS_GATEWAY_ENABLED` (both default off). Their shared HTTP transport is `integrations/slack_bot/utils/harness_gateway.py`; cross-bot contract tests live in `tests/test_bot_harness_gateway.py`.
 
 ## Recent Changes
 - 2026-08-17-harness-engine: Added an independent AgentCore Harness Engine with detached runs, replayable sessions, and W3C trace propagation

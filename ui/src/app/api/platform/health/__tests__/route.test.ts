@@ -157,6 +157,17 @@ describe("/api/platform/health", () => {
     });
   });
 
+  it("keeps failed readiness visible when the runtime diagnostic succeeds", async () => {
+    (global.fetch as jest.Mock) = jest.fn(async (url: string) => {
+      if (String(url).endsWith("/healthz") && String(url).includes("dynamic-agents")) return jsonResponse({ status: "unhealthy" });
+      if (String(url).includes("/v1/audit/status")) return jsonResponse(healthyAuditServiceStatus);
+      return jsonResponse({});
+    });
+    const { GET } = await import("../route");
+    const body = await (await GET(new Request("http://localhost/api/platform/health?diagnostics=1") as never)).json();
+    expect(body.components.find((item: { id: string }) => item.id === "caipe-agent-harness")).toMatchObject({ status: "down" });
+  });
+
   it("returns 503 when the enabled dynamic agents capability fails", async () => {
     process.env.RAG_ENABLED = "false";
     (global.fetch as jest.Mock) = jest.fn(async (url: string) => {

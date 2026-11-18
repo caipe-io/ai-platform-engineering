@@ -1,0 +1,34 @@
+{{- if .Values.a2aDiscovery.enabled }}
+{{- $root := . -}}
+{{- $name := printf "%s-%s-a2a-discovery" (include "dynamic-agents.fullname" .) .Release.Namespace | trunc 253 | trimSuffix "-" -}}
+{{- range .Values.a2aDiscovery.namespaces | default (list .Release.Namespace) | uniq }}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" .) }}{{ fail "A2A discovery namespaces must be DNS labels" }}{{ end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ . | quote }}
+rules:
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [list]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ . | quote }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dynamic-agents.serviceAccountName" $root }}
+    namespace: {{ $root.Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+{{- end }}
+{{- end }}

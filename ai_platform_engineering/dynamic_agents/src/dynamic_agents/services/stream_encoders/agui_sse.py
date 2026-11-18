@@ -23,17 +23,19 @@ No dependency on ``ai_platform_engineering.utils.agui``.
 import json
 import logging
 import time
-from typing import Any
+from collections.abc import Callable
+from typing import Any, cast
 from uuid import uuid4
 
 from dynamic_agents.services.context_usage import CONTEXT_USAGE_EVENT
-from dynamic_agents.services.stream_encoders import StreamEncoder
+from dynamic_agents.services.stream_encoders import FrameT, StreamEncoder
 from dynamic_agents.services.stream_encoders.langgraph_helpers import (
     LangGraphStreamHelper,
     normalize_tool_message_content,
     truncate_tool_result,
 )
 from dynamic_agents.services.structured_response import STRUCTURED_OUTPUT_EVENT
+from dynamic_agents.services.subagent_dispatch import child_tool_update
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +78,7 @@ def _namespace_key(namespace: tuple[str, ...]) -> str:
 # ═══════════════════════════════════════════════════════════════
 
 
-class AGUIStreamEncoder(StreamEncoder):
+class AGUIStreamEncoder(StreamEncoder[FrameT]):
     """Encodes LangGraph stream chunks to AG-UI protocol SSE format.
 
     Builds AG-UI events as plain dicts and serializes them directly.
@@ -89,7 +91,8 @@ class AGUIStreamEncoder(StreamEncoder):
       attribution when concurrent subagent events interleave.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, frame_builder: Callable[[str, dict[str, Any]], FrameT] | None = None) -> None:
+        self._frame = frame_builder or cast(Callable[[str, dict[str, Any]], FrameT], _sse_frame)
         self._helper = LangGraphStreamHelper()
         self._active_message_ids: dict[str, str | None] = {}
         self._last_emitted_namespace: tuple[str, ...] = ()
@@ -98,11 +101,11 @@ class AGUIStreamEncoder(StreamEncoder):
 
     # ── Core lifecycle ────────────────────────────────────
 
-    def on_run_start(self, run_id: str, thread_id: str) -> list[str]:
+    def on_run_start(self, run_id: str, thread_id: str) -> list[FrameT]:
         self._run_id = run_id
         self._thread_id = thread_id
         return [
-            _sse_frame(
+            self._frame(
                 "RUN_STARTED",
                 {
                     "type": "RUN_STARTED",
@@ -113,7 +116,7 @@ class AGUIStreamEncoder(StreamEncoder):
             )
         ]
 
-    def on_chunk(self, chunk: tuple) -> list[str]:
+    def on_chunk(self, chunk: tuple) -> list[FrameT]:
         namespace, mode, data = self._helper.parse_chunk(chunk)
         if mode == "tasks":
             return []
@@ -132,14 +135,20 @@ class AGUIStreamEncoder(StreamEncoder):
         self,
         data: Any,
         namespace: tuple[str, ...],
-    ) -> list[str]:
+    ) -> list[FrameT]:
         """Encode transport-neutral runtime signals as AG-UI custom events."""
+        data, namespace = self._helper.normalize_remote_output(data, namespace)
+        if isinstance(data, dict) and data.get("type") == "harness_subagent":
+            update = child_tool_update(data)
+            return self._handle_updates(update, namespace) if update else [self._frame("CUSTOM", {
+                "type": "CUSTOM", "name": "HARNESS_SUBAGENT", "value": data, "timestamp": _ts(),
+            })]
         if isinstance(data, dict) and data.get("type") == STRUCTURED_OUTPUT_EVENT:
             if isinstance(data.get("payload"), dict):
                 return self.on_structured_output(data["payload"], data.get("schema_id"))
             return []
         if isinstance(data, dict) and data.get("type") == "tool_output":
-            return [_sse_frame("CUSTOM", {
+            return [self._frame("CUSTOM", {
                 "type": "CUSTOM", "name": "TOOL_OUTPUT",
                 "value": {**data, "namespace": list(namespace)}, "timestamp": _ts(),
             })]
@@ -149,7 +158,7 @@ class AGUIStreamEncoder(StreamEncoder):
         value = {key: item for key, item in data.items() if key != "type"}
         value["namespace"] = list(namespace)
         return [
-            _sse_frame(
+            self._frame(
                 "CUSTOM",
                 {
                     "type": "CUSTOM",
@@ -160,13 +169,13 @@ class AGUIStreamEncoder(StreamEncoder):
             )
         ]
 
-    def on_stream_end(self) -> list[str]:
+    def on_stream_end(self) -> list[FrameT]:
         """Close any still-open text messages."""
-        frames: list[str] = []
+        frames: list[FrameT] = []
         for ns_key, msg_id in self._active_message_ids.items():
             if msg_id is not None:
                 frames.append(
-                    _sse_frame(
+                    self._frame(
                         "TEXT_MESSAGE_END",
                         {
                             "type": "TEXT_MESSAGE_END",
@@ -178,9 +187,9 @@ class AGUIStreamEncoder(StreamEncoder):
                 self._active_message_ids[ns_key] = None
         return frames
 
-    def on_run_finish(self, run_id: str, thread_id: str) -> list[str]:
+    def on_run_finish(self, run_id: str, thread_id: str) -> list[FrameT]:
         return [
-            _sse_frame(
+            self._frame(
                 "RUN_FINISHED",
                 {
                     "type": "RUN_FINISHED",
@@ -192,7 +201,7 @@ class AGUIStreamEncoder(StreamEncoder):
             )
         ]
 
-    def on_run_error(self, message: str, code: str | None = None) -> list[str]:
+    def on_run_error(self, message: str, code: str | None = None) -> list[FrameT]:
         data: dict[str, Any] = {
             "type": "RUN_ERROR",
             "message": message,
@@ -200,11 +209,11 @@ class AGUIStreamEncoder(StreamEncoder):
         }
         if code is not None:
             data["code"] = code
-        return [_sse_frame("RUN_ERROR", data)]
+        return [self._frame("RUN_ERROR", data)]
 
-    def on_warning(self, message: str) -> list[str]:
+    def on_warning(self, message: str) -> list[FrameT]:
         return [
-            _sse_frame(
+            self._frame(
                 "CUSTOM",
                 {
                     "type": "CUSTOM",
@@ -215,10 +224,10 @@ class AGUIStreamEncoder(StreamEncoder):
             )
         ]
 
-    def on_structured_output(self, payload: dict[str, Any], schema_id: str | None = None) -> list[str]:
+    def on_structured_output(self, payload: dict[str, Any], schema_id: str | None = None) -> list[FrameT]:
         """Emit the same domain payload through the AG-UI custom event contract."""
         super().on_structured_output(payload, schema_id)
-        return [_sse_frame("CUSTOM", {
+        return [self._frame("CUSTOM", {
             "type": "CUSTOM",
             "name": "STRUCTURED_OUTPUT",
             "value": {"payload": payload, "schema_id": schema_id},
@@ -236,7 +245,7 @@ class AGUIStreamEncoder(StreamEncoder):
         tool_args: dict[str, Any] | None = None,
         allowed_decisions: list[str] | None = None,
         tool_approvals: list[dict[str, Any]] | None = None,
-    ) -> list[str]:
+    ) -> list[FrameT]:
         """Emit RUN_FINISHED with outcome ``"interrupt"`` per the AG-UI spec.
 
         The interrupt payload carries metadata so the UI can render the
@@ -262,7 +271,7 @@ class AGUIStreamEncoder(StreamEncoder):
             reason = "human_input"
 
         return [
-            _sse_frame(
+            self._frame(
                 "RUN_FINISHED",
                 {
                     "type": "RUN_FINISHED",
@@ -289,7 +298,7 @@ class AGUIStreamEncoder(StreamEncoder):
 
     # ── Namespace tracking ────────────────────────────────
 
-    def _emit_namespace_if_changed(self, namespace: tuple[str, ...]) -> list[str]:
+    def _emit_namespace_if_changed(self, namespace: tuple[str, ...]) -> list[FrameT]:
         """Emit NAMESPACE_CONTEXT only when the namespace has changed.
 
         Tracks ``_last_emitted_namespace`` to avoid redundant emissions.
@@ -301,7 +310,7 @@ class AGUIStreamEncoder(StreamEncoder):
             return []
         self._last_emitted_namespace = namespace
         return [
-            _sse_frame(
+            self._frame(
                 "CUSTOM",
                 {
                     "type": "CUSTOM",
@@ -318,7 +327,7 @@ class AGUIStreamEncoder(StreamEncoder):
         self,
         data: Any,
         namespace: tuple[str, ...],
-    ) -> list[str]:
+    ) -> list[FrameT]:
         """Handle 'messages' mode chunks -> AG-UI text content events.
 
         Emits TEXT_MESSAGE_START on the first content chunk for each
@@ -343,10 +352,10 @@ class AGUIStreamEncoder(StreamEncoder):
         if not content:
             return []
 
-        self._helper.accumulate_content(content)
+        self._helper.accumulate_content(content, namespace)
 
         ns_key = _namespace_key(namespace)
-        frames: list[str] = []
+        frames: list[FrameT] = []
 
         # Emit TEXT_MESSAGE_START the first time we see content for this namespace
         if self._active_message_ids.get(ns_key) is None:
@@ -354,7 +363,7 @@ class AGUIStreamEncoder(StreamEncoder):
             self._active_message_ids[ns_key] = message_id
             frames.extend(self._emit_namespace_if_changed(namespace))
             frames.append(
-                _sse_frame(
+                self._frame(
                     "TEXT_MESSAGE_START",
                     {
                         "type": "TEXT_MESSAGE_START",
@@ -368,7 +377,7 @@ class AGUIStreamEncoder(StreamEncoder):
         message_id = self._active_message_ids[ns_key]  # type: ignore[assignment]
         frames.extend(self._emit_namespace_if_changed(namespace))
         frames.append(
-            _sse_frame(
+            self._frame(
                 "TEXT_MESSAGE_CONTENT",
                 {
                     "type": "TEXT_MESSAGE_CONTENT",
@@ -386,13 +395,13 @@ class AGUIStreamEncoder(StreamEncoder):
         self,
         data: Any,
         namespace: tuple[str, ...],
-    ) -> list[str]:
+    ) -> list[FrameT]:
         """Handle 'updates' mode chunks -> AG-UI tool events.
 
         Also closes any open TEXT_MESSAGE for this namespace when an
         updates chunk arrives (tool invocations interrupt the text stream).
         """
-        results: list[str] = []
+        results: list[FrameT] = []
 
         if not isinstance(data, dict):
             return results
@@ -402,7 +411,7 @@ class AGUIStreamEncoder(StreamEncoder):
         # Close any open text message for this namespace before tool events
         if self._active_message_ids.get(ns_key) is not None:
             results.append(
-                _sse_frame(
+                self._frame(
                     "TEXT_MESSAGE_END",
                     {
                         "type": "TEXT_MESSAGE_END",
@@ -440,7 +449,7 @@ class AGUIStreamEncoder(StreamEncoder):
                 tc_id = getattr(msg, "tool_call_id", None)
                 if tc_id:
                     content = normalize_tool_message_content(getattr(msg, "content", ""))
-                    if "rejected" in content.lower():
+                    if "rejected" in content.lower() and not getattr(msg, "additional_kwargs", {}).get("harness_tool_completed"):
                         rejected_tool_call_ids.add(tc_id)
 
             for msg in messages:
@@ -461,10 +470,10 @@ class AGUIStreamEncoder(StreamEncoder):
                             continue
 
                         logger.debug(f"[sse:TOOL_CALL_START] {tool_name} id={tool_call_id[:8]}... ns={namespace}")
-                        self._helper.reset_accumulated_content()
+                        self._helper.reset_accumulated_content(namespace)
                         results.extend(self._emit_namespace_if_changed(namespace))
                         results.append(
-                            _sse_frame(
+                            self._frame(
                                 "TOOL_CALL_START",
                                 {
                                     "type": "TOOL_CALL_START",
@@ -475,7 +484,7 @@ class AGUIStreamEncoder(StreamEncoder):
                             )
                         )
                         results.append(
-                            _sse_frame(
+                            self._frame(
                                 "TOOL_CALL_ARGS",
                                 {
                                     "type": "TOOL_CALL_ARGS",
@@ -511,7 +520,7 @@ class AGUIStreamEncoder(StreamEncoder):
                     # Emit TOOL_CALL_RESULT with the content (errors have "ERROR:" prefix)
                     if content:
                         results.append(
-                            _sse_frame(
+                            self._frame(
                                 "TOOL_CALL_RESULT",
                                 {
                                     "type": "TOOL_CALL_RESULT",
@@ -525,7 +534,7 @@ class AGUIStreamEncoder(StreamEncoder):
                         )
 
                     results.append(
-                        _sse_frame(
+                        self._frame(
                             "TOOL_CALL_END",
                             {
                                 "type": "TOOL_CALL_END",

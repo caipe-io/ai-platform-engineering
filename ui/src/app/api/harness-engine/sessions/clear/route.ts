@@ -1,5 +1,5 @@
 import { authorizeConversationWriteAccess, resolveConversationRuntimeId } from "@/app/api/v1/chat/_conversation-authz";
-import { clearHarnessGatewayBinding } from "@/lib/harness-gateway";
+import { clearHarnessGatewayBinding, resolveHarnessGatewayTarget } from "@/lib/harness-gateway";
 import { authenticateRequest } from "@/lib/da-proxy";
 import { getHarnessEngineConfig, proxyHarnessEngine } from "@/lib/harness-engine-proxy";
 import { createAuthzTraceContext } from "@/lib/rbac/authz-tracing";
@@ -45,6 +45,9 @@ export async function POST(request: NextRequest): Promise<Response> {
   const config = getHarnessEngineConfig();
   if (config instanceof NextResponse) return config;
   const conversationId = await resolveConversationRuntimeId(conversationAuthz.conversation);
+  const target = await resolveHarnessGatewayTarget(String(body.agent_id), { subject: auth.subject, conversationId });
+  if (target instanceof NextResponse) return target;
+  if (target.kind !== "harness_engine") return NextResponse.json({ error: "Adopt this session before clearing its Engine binding" }, { status: 409 });
   const response = await proxyHarnessEngine(config, auth, "/api/v1/sessions/clear", {
     method: "POST",
     body: JSON.stringify({

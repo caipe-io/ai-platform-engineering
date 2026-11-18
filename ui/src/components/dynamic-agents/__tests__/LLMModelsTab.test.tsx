@@ -73,3 +73,23 @@ describe("LLMModelsTab deep links", () => {
     expect(screen.getByLabelText("Model ID")).toHaveValue("openai/gpt-4o");
   });
 });
+
+
+it.each([false, true])("tests the edited provider when changed=%s", async changed => {
+  global.fetch = jest.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+    if (init?.method === "POST") return { ok: true, json: async () => ({ success: true, data: { success: true, category: "success", message: "Example", elapsed_ms: 1 } }) } as Response;
+    if (String(url).includes("connections")) return { json: async () => ({ success: true, data: { connections: [] } }) } as Response;
+    if (String(url).includes("?id=")) return { json: async () => ({ success: true, data: model }) } as Response;
+    return { json: async () => ({ success: true, data: { items: [model] } }) } as Response;
+  }) as jest.Mock;
+  render(<LLMModelsTab selectedModelId={model._id} />);
+  await screen.findByText("Edit Model");
+  if (changed) fireEvent.change(screen.getByLabelText("Provider"), { target: { value: "groq" } });
+  fireEvent.click(screen.getByRole("button", { name: "Test Connection" }));
+  await screen.findByText(/Connected ·/);
+  const calls = jest.mocked(global.fetch).mock.calls;
+  const tested = calls.find(([, init]) => init?.method === "POST")!;
+  expect(JSON.parse(String(tested[1]?.body))).toEqual(changed
+    ? { draft: { provider: "groq", auth_mode: "deployment", fields: {} }, upstream_model_id: model.model_id }
+    : { model_id: model._id });
+});

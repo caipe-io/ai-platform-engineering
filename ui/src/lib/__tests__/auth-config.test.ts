@@ -36,9 +36,19 @@ jest.mock('next-auth/jwt', () => ({
   decode: jest.fn(async () => ({})),
 }))
 
+const mockBackfillMissingUserNamesFromClaims = jest.fn()
+jest.mock('@/lib/rbac/keycloak-admin', () => ({
+  backfillMissingUserNamesFromClaims: (...args: unknown[]) => mockBackfillMissingUserNamesFromClaims(...args),
+}))
+
 const mockReconcileOidcClaimGroupsForUser = jest.fn()
 jest.mock('@/lib/rbac/oidc-claim-reconciler', () => ({
   reconcileOidcClaimGroupsForUser: (...args: unknown[]) => mockReconcileOidcClaimGroupsForUser(...args),
+}))
+
+const mockReconcileLoginOpenFgaAccess = jest.fn()
+jest.mock('@/lib/rbac/login-openfga-bootstrap', () => ({
+  reconcileLoginOpenFgaAccess: (...args: unknown[]) => mockReconcileLoginOpenFgaAccess(...args),
 }))
 
 import {
@@ -136,6 +146,8 @@ function makeRefreshFetchMock(opts: {
 describe('auth-config', () => {
   beforeEach(() => {
     mockReconcileOidcClaimGroupsForUser.mockReset()
+    mockReconcileLoginOpenFgaAccess.mockReset()
+    mockReconcileLoginOpenFgaAccess.mockResolvedValue({ status: 'completed', tuple_write_count: 0 })
     _resetServerTokenStore()
   })
 
@@ -311,6 +323,44 @@ describe('auth-config', () => {
         expect(scope).toContain('email')
         expect(scope).toContain('profile')
         expect(scope).toContain('groups')
+      })
+    })
+  })
+
+  describe('split OIDC endpoints', () => {
+    const originalEnv = process.env
+
+    beforeEach(() => {
+      process.env = { ...originalEnv }
+    })
+
+    afterAll(() => {
+      process.env = originalEnv
+    })
+
+    it('uses the browser issuer for authorization and the server issuer for token/profile calls', () => {
+      process.env.OIDC_ISSUER = 'http://localhost:7080/realms/caipe'
+      process.env.OIDC_DISCOVERY_URL = 'http://caipe-keycloak:8080/realms/caipe'
+
+      jest.isolateModules(() => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { authOptions } = require('../auth-config')
+        const provider = authOptions.providers[0]
+
+        expect(provider.authorization.url).toBe(
+          'http://localhost:7080/realms/caipe/protocol/openid-connect/auth',
+        )
+        expect(provider.issuer).toBe('http://localhost:7080/realms/caipe')
+        expect(provider.wellKnown).toBeUndefined()
+        expect(provider.jwks_endpoint).toBe(
+          'http://caipe-keycloak:8080/realms/caipe/protocol/openid-connect/certs',
+        )
+        expect(provider.token).toEqual({
+          url: 'http://caipe-keycloak:8080/realms/caipe/protocol/openid-connect/token',
+        })
+        expect(provider.userinfo).toEqual({
+          url: 'http://caipe-keycloak:8080/realms/caipe/protocol/openid-connect/userinfo',
+        })
       })
     })
   })
@@ -807,6 +857,40 @@ describe('auth-config', () => {
       // in beforeEach arrive too late. Role promotion is covered in isAdminUser unit tests.
     })
 
+    it('should demote a stale admin role and reconcile durable grants from refreshed claims', async () => {
+      const now = Math.floor(Date.now() / 1000)
+
+      mockDecodeJwt.mockReturnValue({
+        sub: 'sub-former-admin',
+        email: 'former-admin@example.com',
+        groups: ['caipe-users'],
+      })
+
+      const result = await runJwt({
+        token: {
+          sub: 'sub-former-admin',
+          email: 'former-admin@example.com',
+          accessToken: 'at',
+          idToken: 'old-idt',
+          refreshToken: 'rt',
+          expiresAt: now + 60,
+          groupsCheckedAt: now - 5 * 60 * 60,
+          isAuthorized: true,
+          role: 'admin',
+        },
+      })
+
+      expect(result.role).toBe('user')
+      expect(mockReconcileLoginOpenFgaAccess).toHaveBeenCalledWith(expect.objectContaining({
+        subject: 'sub-former-admin',
+        email: 'former-admin@example.com',
+        isAuthorized: true,
+        isAdmin: false,
+        isBootstrapAdmin: false,
+        isOidcAdmin: false,
+      }))
+    })
+
     it('should NOT re-evaluate groups when less than 4 hours have passed', async () => {
       const now = Math.floor(Date.now() / 1000)
 
@@ -1271,4 +1355,55 @@ describe('auth-config', () => {
   })
 
 
+})
+
+
+describe('login profile name repair', () => {
+  beforeEach(() => mockBackfillMissingUserNamesFromClaims.mockReset())
+
+  it('uses the authenticated subject and updates the session display name after repair', async () => {
+    mockBackfillMissingUserNamesFromClaims.mockResolvedValue('Test Person')
+    const profile = { sub: 'test-user', email: 'test-user@example.test', given_name: 'Test', family_name: 'Person' }
+    const token = await runJwt({ token: { name: 'test-user@example.test' }, profile })
+    expect(mockBackfillMissingUserNamesFromClaims).toHaveBeenCalledWith('test-user', profile)
+    expect(token.name).toBe('Test Person')
+  })
+
+  it.each(['Error', 'TimeoutError'])('keeps sign-in successful if profile repair fails with %s', async (name) => {
+    const error = new Error('profile unavailable')
+    error.name = name
+    mockBackfillMissingUserNamesFromClaims.mockRejectedValue(error)
+    const token = await runJwt({ token: { name: 'Existing' }, profile: { sub: 'test-user', email: 'test-user@example.test' } })
+    expect(mockBackfillMissingUserNamesFromClaims).toHaveBeenCalled()
+    expect(token.name).toBe('Existing')
+    expect(token.isAuthorized).toBe(true)
+  })
+})
+
+
+it('repairs bootstrap-admin profiles even when group admission is false', async () => {
+  const previous = process.env.BOOTSTRAP_ADMIN_EMAILS
+  process.env.BOOTSTRAP_ADMIN_EMAILS = 'bootstrap@example.test'
+  mockBackfillMissingUserNamesFromClaims.mockReset().mockResolvedValue('Test Person')
+  try {
+    await withRequiredGroup('required-group', async ({ authOptions }) => (
+      authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>
+    )({ token: { sub: 'bootstrap-subject', sessionId: 'test-session' }, profile: {
+      sub: 'bootstrap-subject', email: 'bootstrap@example.test', given_name: 'Test', groups: [],
+    } }))
+    expect(mockBackfillMissingUserNamesFromClaims).toHaveBeenCalledWith('bootstrap-subject', expect.any(Object))
+  } finally {
+    if (previous === undefined) delete process.env.BOOTSTRAP_ADMIN_EMAILS
+    else process.env.BOOTSTRAP_ADMIN_EMAILS = previous
+  }
+})
+
+it('does not repair a profile for a denied non-bootstrap login', async () => {
+  mockBackfillMissingUserNamesFromClaims.mockReset()
+  await withRequiredGroup('required-group', async ({ authOptions }) => (
+    authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>
+  )({ token: { sub: 'denied-subject', sessionId: 'test-session' }, profile: {
+    sub: 'denied-subject', email: 'denied@example.test', given_name: 'Test', groups: [],
+  } }))
+  expect(mockBackfillMissingUserNamesFromClaims).not.toHaveBeenCalled()
 })

@@ -8,6 +8,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { signOut, useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { AuthGuard } from '../auth-guard'
+import { LOGIN_RETURN_TO_KEY, rememberLoginReturnTo } from '@/lib/auth/callback-url'
 
 // Mock Next Auth
 jest.mock('next-auth/react', () => ({
@@ -52,6 +53,7 @@ describe('AuthGuard', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     mockPathname = '/chat/test-uuid'
+    window.history.replaceState(null, '', '/')
 
     mockUseRouter.mockReturnValue({
       push: mockPush,
@@ -95,6 +97,63 @@ describe('AuthGuard', () => {
       getConfig.mockImplementation((key: string) => {
         if (key === 'ssoEnabled') return true
         return undefined
+      })
+    })
+
+    it('preserves the browser query and fragment when reauthenticating', async () => {
+      mockPathname = '/chat/example'
+      window.history.replaceState({}, '', '/chat/example?tab=activity#details')
+      mockUseSession.mockReturnValue({ data: null, status: 'unauthenticated' } as unknown)
+      try {
+        render(<AuthGuard><div>Protected Content</div></AuthGuard>)
+        await waitFor(() => expect(mockPush).toHaveBeenCalledWith(
+          '/login?callbackUrl=%2Fchat%2Fexample%3Ftab%3Dactivity%23details',
+        ))
+      } finally {
+        window.history.replaceState({}, '', '/')
+      }
+    })
+
+    it('clears the retry destination after successful application admission', async () => {
+      rememberLoginReturnTo('/chat/example')
+      mockUseSession.mockReturnValue({
+        data: { user: { email: 'test-user@example.com' }, isAuthorized: true },
+        status: 'authenticated',
+      } as unknown)
+      render(<AuthGuard><div>Protected Content</div></AuthGuard>)
+      await waitFor(() => expect(sessionStorage.getItem(LOGIN_RETURN_TO_KEY)).toBeNull())
+      expect(mockPush).not.toHaveBeenCalled()
+    })
+
+    describe('informational logging', () => {
+      let logSpy: jest.SpyInstance
+      beforeEach(() => { logSpy = jest.spyOn(console, 'log').mockImplementation(() => {}) })
+      afterEach(() => { logSpy.mockRestore() })
+
+      const renderAuthorized = async (debug: boolean) => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { getConfig } = require('@/lib/config')
+        getConfig.mockImplementation((key: string) => {
+          if (key === 'ssoEnabled') return true
+          if (key === 'uiDebugLogging') return debug
+          return undefined
+        })
+        mockUseSession.mockReturnValue({
+          data: { user: { email: 'test-user@example.com' }, isAuthorized: true },
+          status: 'authenticated',
+        } as unknown)
+        render(<AuthGuard><div>Protected Content</div></AuthGuard>)
+        await screen.findByText('Protected Content')
+      }
+
+      it('is silent by default', async () => {
+        await renderAuthorized(false)
+        expect(logSpy).not.toHaveBeenCalled()
+      })
+
+      it('logs when uiDebugLogging is on', async () => {
+        await renderAuthorized(true)
+        expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[AuthGuard]'))
       })
     })
 
@@ -151,6 +210,14 @@ describe('AuthGuard', () => {
 
       expect(screen.queryByTestId('protected-content')).not.toBeInTheDocument()
     })
+
+    it('preserves app query state and the section anchor through sign-in', async () => {
+      mockPathname = '/apps';
+      window.history.replaceState(null, '', '/apps?q=finance#catalog');
+      mockUseSession.mockReturnValue({ data: null, status: 'unauthenticated' } as unknown);
+      render(<AuthGuard><div>Apps</div></AuthGuard>);
+      await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/login?callbackUrl=%2Fapps%3Fq%3Dfinance%23catalog'));
+    });
 
     it('should redirect to /login without callbackUrl when on root path', async () => {
       mockPathname = '/'

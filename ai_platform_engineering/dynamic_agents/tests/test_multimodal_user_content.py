@@ -169,7 +169,7 @@ def test_anthropic_text_block_survives_real_langchain_pipeline():
     content, _ = _build_user_content("read", files, model_id=_ANTHROPIC_MODEL)
 
     normalized = _normalize_messages([HumanMessage(content=content)])
-    _system, formatted = _format_messages(normalized)
+    _system, formatted = _format_messages(normalized, model=_ANTHROPIC_MODEL)
 
     # The text doc lands as an Anthropic document/text source, not a base64 doc
     # (which Bedrock rejects with "Input should be 'application/pdf'").

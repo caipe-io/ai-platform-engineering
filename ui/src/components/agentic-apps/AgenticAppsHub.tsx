@@ -1,13 +1,22 @@
 "use client";
 
-import { ArrowUpRight, LayoutGrid, LoaderCircle, Search, X } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { ArrowUpRight, CheckCircle2, ExternalLink, CloudSun, LayoutGrid, LoaderCircle, Search, X } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AgenticAppCard } from "./AgenticAppCard";
 import { apiClient } from "@/lib/api-client";
 import { matchesAgenticAppSearch } from "@/lib/agentic-apps/hub-search";
 import { normalizeFavoriteAppIds } from "@/lib/agentic-apps/favorites";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import type { PublicAgenticApp } from "@/types/agentic-app";
 
 type LoadState =
@@ -18,11 +27,40 @@ type LoadState =
 export function AgenticAppsHub(): React.ReactElement {
   const router = useRouter();
   const [state, setState] = useState<LoadState>({ status: "loading" });
-  const [query, setQuery] = useState("");
+  const searchParams = useSearchParams();
+  const urlQuery = (searchParams.get("q") ?? "").slice(0, 256);
+  const [query, setQuery] = useState(urlQuery);
+  const editingSearch = useRef(false);
+  const lastEditedHref = useRef<string | null>(null);
+
+  useEffect(() => { setQuery(urlQuery); }, [urlQuery]);
+  useEffect(() => {
+    const resetEdit = () => { editingSearch.current = false; };
+    window.addEventListener("popstate", resetEdit);
+    return () => window.removeEventListener("popstate", resetEdit);
+  }, []);
+
+  function updateQuery(value: string, newEntry = false): void {
+    const next = value.slice(0, 256);
+    setQuery(next);
+    const currentHref = window.location.pathname + window.location.search + window.location.hash;
+    if (lastEditedHref.current !== currentHref) editingSearch.current = false;
+    const url = new URL(window.location.href);
+    if (next) url.searchParams.set("q", next);
+    else url.searchParams.delete("q");
+    const href = url.pathname + url.search + url.hash;
+    if (href === window.location.pathname + window.location.search + window.location.hash) return;
+    // One Back entry per editing session, rather than one per keystroke.
+    if (newEntry || !editingSearch.current) window.history.pushState(null, "", href);
+    else window.history.replaceState(null, "", href);
+    editingSearch.current = true;
+    lastEditedHref.current = href;
+  }
   const [favoriteAppIds, setFavoriteAppIds] = useState<string[]>([]);
   const [favoritesReady, setFavoritesReady] = useState(false);
   const [favoritePending, setFavoritePending] = useState(false);
   const [favoriteError, setFavoriteError] = useState<string | null>(null);
+  const [weatherPromptOpen, setWeatherPromptOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,7 +68,7 @@ export function AgenticAppsHub(): React.ReactElement {
       .then(async (response) => {
         if (response.status === 401) {
           router.push(
-            `/login?callbackUrl=${encodeURIComponent(window.location.pathname)}`,
+            `/login?callbackUrl=${encodeURIComponent(window.location.pathname + window.location.search + window.location.hash)}`,
           );
           return null;
         }
@@ -88,6 +126,8 @@ export function AgenticAppsHub(): React.ReactElement {
       setFavoritePending(false);
     }
   }
+  const weatherAppConfigured = state.status === "ready"
+    && state.apps.some((app) => app.appId === "weather");
 
   return (
     <main className="flex-1 overflow-y-auto bg-background px-5 py-5 text-foreground">
@@ -131,14 +171,35 @@ export function AgenticAppsHub(): React.ReactElement {
 
         {state.status === "ready" ? (
           <>
+            {!weatherAppConfigured ? (
+              <section className="rounded-xl border border-primary/30 bg-gradient-to-br from-primary/10 via-background to-sky-500/5 p-5 shadow-sm">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-start gap-3">
+                    <span className="rounded-lg bg-primary/15 p-2 text-primary">
+                      <CloudSun className="h-5 w-5" aria-hidden />
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold">Try the Weather App</p>
+                      <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                        Would you like to install a small starter app to see how CAIPE connects users to an external application?
+                      </p>
+                    </div>
+                  </div>
+                  <Button type="button" onClick={() => setWeatherPromptOpen(true)}>
+                    Ask to install
+                  </Button>
+                </div>
+              </section>
+            ) : null}
+
             {state.apps.length > 0 ? (
               <section aria-label="Search Apps" className="flex items-center gap-3 rounded-2xl border border-border bg-card p-3">
                 <label className="relative min-w-0 flex-1">
                   <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
                   <input className="h-11 w-full appearance-none rounded-xl border border-border bg-background py-2 pl-10 pr-11 text-sm text-foreground outline-none transition placeholder:text-muted-foreground hover:border-primary/40 focus:border-primary/60 focus:ring-2 focus:ring-primary/15"
                     type="search" placeholder="Search by app, capability, or category" aria-label="Search apps"
-                    value={query} onChange={(event) => setQuery(event.target.value)} />
-                  {query ? <button type="button" onClick={() => setQuery("")} aria-label="Clear search"
+                    value={query} maxLength={256} onFocus={() => { editingSearch.current = false; }} onChange={(event) => updateQuery(event.target.value)} />
+                  {query ? <button type="button" onClick={() => updateQuery("", true)} aria-label="Clear search"
                     className="absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground">
                     <X className="h-4 w-4" aria-hidden />
                   </button> : null}
@@ -173,6 +234,41 @@ export function AgenticAppsHub(): React.ReactElement {
           </>
         ) : null}
       </div>
+
+      <Dialog open={weatherPromptOpen} onOpenChange={setWeatherPromptOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Install the Weather App?</DialogTitle>
+            <DialogDescription>
+              The Weather App is a safe starter example for trying the Apps experience. It shows a forecast in the CAIPE shell and uses the app-bound identity flow.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
+            <div className="flex items-start gap-2">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
+              <p>
+                Apps are installed by the platform administrator through the deployment-owned catalog. This browser action will not change your deployment automatically.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setWeatherPromptOpen(false)}>
+              Not now
+            </Button>
+            <Button asChild>
+              <a
+                href="https://caipe.io/docs/features/agentic-apps/"
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setWeatherPromptOpen(false)}
+              >
+                Open install guide
+                <ExternalLink className="h-4 w-4" aria-hidden />
+              </a>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

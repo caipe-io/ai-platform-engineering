@@ -145,15 +145,16 @@ Finalization checks the link recorded in the draft body before publication,
 retrying for about nine minutes while the independent docs deployment finishes.
 A missing, ambiguous, or unavailable link fails the step and leaves the release
 as a draft. After repairing or deploying the post, re-run the failed finalize
-job to retry publication. RC cleanup and post-release scans only follow an
-actual publication.
+job to retry publication. RC cleanup also retries when the release is already
+published. Post-release scans only follow a new publication.
 
 A stable release requires a single, non-draft post with a valid slug. An RC
 without a matching post omits the link instead of publishing a guessed URL.
-Run the resolver and release-body wiring tests with:
+The Release Blog Links workflow runs the resolver and publication regression
+tests when their source or workflows change. Run them locally with:
 
 ```bash
-uv run --no-project --with pytest pytest -q tests/test_release_blog_links.py
+uv run --no-project --with pytest==9.1.1 pytest -q tests/test_release_blog_links.py tests/test_release_finalization.py
 ```
 
 
@@ -161,3 +162,9 @@ uv run --no-project --with pytest pytest -q tests/test_release_blog_links.py
 
 **Last Updated:** October 30, 2025  
 **Maintainer:** Platform Engineering Team
+
+
+## Size-label workflow policy
+
+See the [scoped policy and administrator rollout](../actions-policies/README.md).
+The policy JSON requires administrator application; merging it does not change repository settings.

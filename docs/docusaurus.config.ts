@@ -253,50 +253,64 @@ const config: Config = {
           title: 'Project',
           items: [
             {
+              label: 'GitHub Organization',
+              href: 'https://github.com/caipe-io',
+            },
+            {
               label: 'GitHub Repository',
               href: 'https://github.com/caipe-io/ai-platform-engineering',
             },
             {
-              label: 'Project Roadmap',
-              href: 'https://github.com/orgs/cnoe-io/projects/9',
+              label: 'caipe-cli',
+              href: 'https://github.com/caipe-io/caipe-cli',
             },
             {
-              label: 'Github Issue Tracker',
+              label: 'caipe-sandbox',
+              href: 'https://github.com/caipe-io/caipe-sandbox',
+            },
+            {
+              label: 'Project Roadmap',
+              href: 'https://github.com/orgs/caipe-io/projects/1',
+            },
+            {
+              label: 'GitHub Issue Tracker',
               href: 'https://github.com/caipe-io/ai-platform-engineering/issues',
             },
             {
+              label: 'Governance',
+              href: 'https://github.com/caipe-io/governance',
+            },
+          ],
+        },
+        {
+          title: 'Community',
+          items: [
+            {
               label: 'Community Meeting',
-              href: 'https://caipe.io/community',
+              to: '/community',
             },
             {
-              label: 'Slack Channel',
+              label: 'CNCF Slack',
               href: 'https://cloud-native.slack.com/archives/C08N0AKR52S',
             },
             {
               label: 'Meeting Recordings',
               href: 'https://www.youtube.com/@caipe-io',
             },
-            {
-              label: 'Governance',
-              href: 'https://github.com/caipe-io/governance',
-            }
-          ],
-        },
-        {
-          title: 'More',
-          items: [
-            {
-              label: 'openapi-mcp-generator',
-              href: 'https://github.com/cnoe-io/openapi-mcp-codegen',
-            },
-            {
-              label: 'CAIPE.io',
-              href: 'https://caipe.io',
-            },
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} CAIPE.io OSS Contributors. Built with Docusaurus.`,
+      logo: {
+        alt: 'The Linux Foundation',
+        src: 'img/foundation/lf-stacked-white.svg',
+        href: 'https://www.linuxfoundation.org/',
+        width: 160,
+      },
+      copyright: `Copyright © ${new Date().getFullYear()} CAIPE a Series of LF Projects, LLC.<br />
+        For website terms of use, trademark policy and other project policies please see
+        <a href="https://lfprojects.org/policies/">lfprojects.org/policies/</a>.<br />
+        The Linux Foundation and The Linux Foundation logo design are registered trademarks of The Linux Foundation.
+        Linux is a registered trademark of Linus Torvalds.`,
     },
     prism: {
       theme: prismThemes.github,
