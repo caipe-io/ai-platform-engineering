@@ -150,9 +150,26 @@ describe('POST /api/feedback — Web: 2 Langfuse scores + insertOne', () => {
     const scoreNames = mockScore.mock.calls.map((c: unknown[]) => c[0].name);
     expect(scoreNames).toEqual(['all web', 'all']);
 
-    // Both use the conversation ID as traceId (priority: conversationId > traceId > messageId)
-    expect(mockScore.mock.calls[0][0].traceId).toBe('conv-1');
-    expect(mockScore.mock.calls[1][0].traceId).toBe('conv-1');
+    // The conversation is the Langfuse session, so scores target it rather than a trace
+    for (const call of mockScore.mock.calls) {
+      expect(call[0].sessionId).toBe('conv-1');
+      expect(call[0].traceId).toBeUndefined();
+    }
+  });
+
+  it('scores the given trace when no conversation ID is provided', async () => {
+    mockGetServerSession.mockResolvedValue(webSession());
+
+    const res = await POST(
+      makePostRequest({ traceId: 'trace-1', messageId: 'msg-1', feedbackType: 'like' }),
+    );
+    expect(res.status).toBe(200);
+
+    expect(mockScore).toHaveBeenCalledTimes(2);
+    for (const call of mockScore.mock.calls) {
+      expect(call[0].traceId).toBe('trace-1');
+      expect(call[0].sessionId).toBeUndefined();
+    }
   });
 
   it('writes to MongoDB via insertOne with correct fields', async () => {
@@ -209,10 +226,10 @@ describe('POST /api/feedback — Slack with channel: 3 Langfuse scores + upsert'
     const scoreNames = mockScore.mock.calls.map((c: unknown[]) => c[0].name);
     expect(scoreNames).toEqual(['ask-platform', 'all slack channels', 'all']);
 
-    // All scores use the granular value and the same traceId
+    // All scores use the granular value and the same session
     for (const call of mockScore.mock.calls) {
       expect(call[0].value).toBe('wrong_answer');
-      expect(call[0].traceId).toBe('slack-thread-123');
+      expect(call[0].sessionId).toBe('slack-thread-123');
       expect(call[0].dataType).toBe('CATEGORICAL');
     }
   });
