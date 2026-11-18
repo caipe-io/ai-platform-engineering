@@ -60,7 +60,8 @@ describe("RemoteAgentRegistry", () => {
 
     await screen.findByText("No A2A or configured ACP agents are available.");
     expect(container.querySelectorAll("form")).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Connect Remote Agent", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect existing agent", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Enter connection details manually", exact: true }));
 
     fireEvent.change(screen.getByLabelText("Agent URL"), {
       target: { value: "https://agent.example.test/" },
@@ -68,10 +69,11 @@ describe("RemoteAgentRegistry", () => {
     fireEvent.click(screen.getByRole("button", { name: "Discover Agent Card" }));
 
     expect(await screen.findByDisplayValue("Example Agent")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Advanced settings", { selector: "summary" }));
     expect(screen.getByRole("checkbox", { name: "Stream responses" })).not.toBeChecked();
     fireEvent.click(screen.getByRole("checkbox", { name: "Stream responses" }));
     fireEvent.change(screen.getByLabelText("Framework"), { target: { value: "google_adk" } });
-    fireEvent.click(screen.getByRole("button", { name: "Register agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect agent" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -102,7 +104,8 @@ describe("RemoteAgentRegistry", () => {
     global.fetch = fetchMock;
     render(<form onSubmit={onParentSubmit}><RemoteAgentRegistry /></form>);
     await screen.findByText("No A2A or configured ACP agents are available.");
-    fireEvent.click(screen.getByRole("button", { name: "Connect Remote Agent", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect existing agent", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Enter connection details manually", exact: true }));
     fireEvent.change(screen.getByLabelText("Credential source"), { target: { value: kind } });
     fireEvent.change(screen.getByLabelText("Header name"), { target: { value: "X-Agent-Token" } });
     if (kind === "secret_ref") {
@@ -115,7 +118,7 @@ describe("RemoteAgentRegistry", () => {
     fireEvent.change(screen.getByLabelText("Agent URL"), { target: { value: "https://agent.example.test/" } });
     fireEvent.click(screen.getByRole("button", { name: "Discover Agent Card" }));
     await screen.findByDisplayValue("Example Agent");
-    fireEvent.click(screen.getByRole("button", { name: "Register agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect agent" }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/remote-agents", expect.objectContaining({ method: "POST" })));
     const source = { kind, target: "header", name: "X-Agent-Token", ...(kind === "secret_ref" ? { secret_ref: "secret-example" } : { provider: "example" }) };
     for (const [, init] of fetchMock.mock.calls) {
@@ -141,7 +144,8 @@ describe("RemoteAgentRegistry", () => {
       input = screen.getAllByLabelText("Name")[0];
     } else {
       await screen.findByText("No A2A or configured ACP agents are available.");
-      fireEvent.click(screen.getByRole("button", { name: "Connect Remote Agent", exact: true }));
+      fireEvent.click(screen.getByRole("button", { name: "Connect existing agent", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Enter connection details manually", exact: true }));
       input = screen.getByLabelText("Name");
       fireEvent.change(input, { target: { value: item.name } });
       fireEvent.change(screen.getByLabelText("Agent URL"), { target: { value: item.endpoint } });
@@ -163,7 +167,8 @@ describe("RemoteAgentRegistry", () => {
     global.fetch = fetcher;
     render(<RemoteAgentRegistry />);
     await screen.findByText("No A2A or configured ACP agents are available.");
-    fireEvent.click(screen.getByRole("button", { name: "Connect Remote Agent", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect existing agent", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Enter connection details manually", exact: true }));
     fireEvent.change(screen.getByLabelText("Credential source"), { target: { value: "caller_token" } });
     fireEvent.change(screen.getByLabelText("Header name"), { target: { value: "" } });
     fireEvent.change(screen.getByLabelText("Credential source"), { target: { value: "none" } });
@@ -171,7 +176,7 @@ describe("RemoteAgentRegistry", () => {
     expect(screen.getByLabelText("Header name")).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Public agent" } });
     fireEvent.change(screen.getByLabelText("Agent URL"), { target: { value: "https://agent.example.test" } });
-    fireEvent.click(screen.getByRole("button", { name: "Register agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "Connect agent" }));
     await waitFor(() => expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
     const posted = fetcher.mock.calls.find(([, init]) => init?.method === "POST")!;
     expect(JSON.parse(posted[1]!.body as string).credential_source).toEqual({ kind: "none", target: "header", name: "Authorization" });
@@ -204,12 +209,13 @@ describe("RemoteAgentRegistry", () => {
       expect(reads).toBe(1);
       await act(async () => { finish(jsonResponse({})); });
     } else {
-      fireEvent.click(screen.getByRole("button", { name: "Connect Remote Agent", exact: true }));
+      fireEvent.click(screen.getByRole("button", { name: "Connect existing agent", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Enter connection details manually", exact: true }));
       fireEvent.change(screen.getByLabelText("Name"), { target: { value: "New agent" } });
       fireEvent.change(screen.getByLabelText("Agent URL"), { target: { value: "https://new.example.test" } });
       fireEvent.click(refresh);
       expect(screen.queryByRole("button", { name: "Remove Race agent" })).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Register agent" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Connect agent" })).toBeDisabled();
       fireEvent.keyDown(screen.getByLabelText("Name"), { key: "Enter" });
       expect(fetcher.mock.calls.some(([, init]) => init?.method === "POST" || init?.method === "DELETE")).toBe(false);
       await act(async () => { finish(jsonResponse({ items: [item], can_manage_registry: true })); });

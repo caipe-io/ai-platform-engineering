@@ -11,8 +11,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/toast";
 import type { AvailableSubagent, RemoteAgentCredentialSource, RemoteAgentRegistryEntry } from "@/types/dynamic-agent";
-import { Check, Loader2, Plus, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Plus, Trash2, Unplug, X } from "lucide-react";
 import React from "react";
+import { AddAgentChoices } from "./AddAgentChoices";
 import { RemoteAgentDiscovery, type DiscoveredAgent } from "./RemoteAgentDiscovery";
 import { RemoteAgentSelection } from "./RemoteAgentSelection";
 import { RemoteAgentCatalogCard } from "./RemoteAgentCatalogCard";
@@ -29,11 +30,12 @@ export interface RemoteAgentsPickerProps {
 
 export interface RemoteCatalogControls {
   toolbar: React.ReactNode;
+  openAddAgent: (trigger: HTMLButtonElement) => void;
   renderAgent: (item: RemoteAgentRegistryEntry, view: "grid" | "list") => React.ReactNode;
   refresh: () => void;
 }
 
-export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange }: { selection?: RemoteAgentsPickerProps; renderCatalog?: (controls: RemoteCatalogControls) => React.ReactNode; onRegistryChange?: () => void }) {
+export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange, onCreateAgent }: { selection?: RemoteAgentsPickerProps; renderCatalog?: (controls: RemoteCatalogControls) => React.ReactNode; onRegistryChange?: () => void; onCreateAgent?: () => void }) {
   const { disabled } = selection ?? {};
   const { toast } = useToast();
   const includeAcp = !selection && !renderCatalog;
@@ -42,9 +44,9 @@ export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange
   const [acpError, setAcpError] = React.useState<string | null>(null);
   const cardTrigger = React.useRef<HTMLButtonElement>(null);
   const addTrigger = React.useRef<HTMLButtonElement>(null);
-  const discoverTrigger = React.useRef<HTMLButtonElement>(null);
+  const connectionTitle = React.useRef<HTMLHeadingElement>(null);
   const [addOpen, setAddOpen] = React.useState(false);
-  const [discoverOpen, setDiscoverOpen] = React.useState(false);
+  const [connectionStep, setConnectionStep] = React.useState<"choose" | "find" | "review">("find");
   const [detailsId, setDetailsId] = React.useState<string | null>(null);
   const [protocol, setProtocol] = React.useState("all");
   const [checks, setChecks] = React.useState<Record<string, { card?: Record<string, unknown>; error?: string; elapsed?: number }>>({});
@@ -68,6 +70,27 @@ export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange
   const [probedCard, setProbedCard] = React.useState<{ protocol_version?: string; protocol_bindings?: string[]; supports_streaming?: boolean } | null>(null);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editValues, setEditValues] = React.useState({ framework: "unspecified" as AgentFramework, name: "", endpoint: "", description: "", timeout_seconds: 120, streaming: false, credential_source: defaultRemoteAgentAuth() });
+
+  React.useEffect(() => {
+    if (addOpen) connectionTitle.current?.focus();
+  }, [addOpen, connectionStep]);
+
+  const openAddAgent = (trigger: HTMLButtonElement) => {
+    addTrigger.current = trigger;
+    setFramework("unspecified"); setName(""); setEndpoint(""); setDescription("");
+    setTimeoutSeconds(120); setStreaming(false); setProbedCard(null); setCardPreview(null);
+    setCredentialSource(selection ? defaultRemoteAgentAuth() : { kind: "none", target: "header", name: "Authorization" });
+    setConnectionStep(onCreateAgent ? "choose" : "find");
+    setAddOpen(true);
+  };
+
+  const chooseDiscoveredAgent = (agent: DiscoveredAgent) => {
+    setFramework("unspecified"); setEndpoint(agent.endpoint); setName(agent.error ? "" : agent.name || "");
+    setDescription(agent.description || ""); setStreaming(agent.supports_streaming === true); setTimeoutSeconds(120);
+    setCredentialSource({ kind: "none", target: "header", name: "Authorization" });
+    setProbedCard(agent.error ? null : { protocol_version: agent.protocol_version, protocol_bindings: agent.protocol_bindings, supports_streaming: agent.supports_streaming });
+    setCardPreview(null); setConnectionStep("review");
+  };
 
   const loadItems = React.useCallback(async () => {
     if (mutationPending.current || catalogPending.current) return;
@@ -232,17 +255,21 @@ export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange
     onDetails={button => { cardTrigger.current = button; setDetailsId(item._id); }}
     onTest={button => { cardTrigger.current = button; setDetailsId(item._id); void probeEndpoint(false, item); }}
     onEdit={button => { cardTrigger.current = button; beginEdit(item); }} />;
-  const toolbar = canManage && <div className="contents"><Button type="button" variant="outline" className="h-10 px-2 text-xs sm:h-9 sm:px-3 sm:text-sm" ref={discoverTrigger} onClick={() => setDiscoverOpen(true)}><Search className="mr-2 hidden h-4 w-4 sm:block" />Discover agents</Button><Button type="button" variant="outline" className="h-auto min-h-10 whitespace-normal px-2 py-2 text-xs leading-tight sm:h-9 sm:min-h-0 sm:whitespace-nowrap sm:px-3 sm:text-sm" ref={addTrigger} onClick={() => { setCardPreview(null); setAddOpen(true); }}><Plus className="mr-2 hidden h-4 w-4 sm:block" />Connect Remote Agent</Button></div>;
+  const toolbar = (onCreateAgent || canManage) && (
+    <Button type="button" data-tour={onCreateAgent ? "add-agent" : undefined} size="sm"
+      className="h-10 sm:h-9" disabled={disabled || saving || probing}
+      onClick={event => openAddAgent(event.currentTarget)}>
+      {onCreateAgent ? <Plus aria-hidden="true" className="h-4 w-4" /> : <Unplug aria-hidden="true" className="h-4 w-4" />}
+      {onCreateAgent ? "Add agent" : "Connect existing agent"}
+    </Button>
+  );
 
   return (
     <>
-      {renderCatalog ? renderCatalog({ toolbar, renderAgent, refresh: () => void loadItems() }) : <div className="space-y-6">
+      {renderCatalog ? renderCatalog({ toolbar, openAddAgent, renderAgent, refresh: () => void loadItems() }) : <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-xl text-sm text-muted-foreground">Explore remote specialists, inspect their capabilities, and test a connection before adding them as subagents.</p>
-        {canManage && <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" ref={discoverTrigger} onClick={() => setDiscoverOpen(true)}><Search className="mr-2 h-4 w-4" />Discover agents</Button>
-          <Button type="button" ref={addTrigger} onClick={() => { setCardPreview(null); setAddOpen(true); }}><Plus className="mr-2 h-4 w-4" />Connect Remote Agent</Button>
-        </div>}
+        {toolbar}
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <Input className="min-w-48 flex-1" aria-label="Search remote agents" placeholder="Search agents or capabilities…" value={search} onChange={event => setSearch(event.target.value)} />
@@ -311,16 +338,37 @@ export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange
           {cardPreview && <AgentCardDetails card={cardPreview} />}
         </DialogContent>
       </Dialog>
-      <Dialog open={discoverOpen} onOpenChange={setDiscoverOpen}><DialogContent onCloseAutoFocus={event => { event.preventDefault(); if (!addOpen) discoverTrigger.current?.focus(); }} className="max-h-[calc(100dvh-2rem)] w-[min(42rem,calc(100%-2rem))] min-w-0 max-w-2xl overflow-y-auto p-4 [overflow-wrap:anywhere] sm:p-6"><DialogHeader><DialogTitle>Discover remote agents</DialogTitle><DialogDescription>Find public Agent Cards or configured Kubernetes Services.</DialogDescription></DialogHeader>
-        {canManage && <RemoteAgentDiscovery disabled={saving || probing} onChoose={(agent: DiscoveredAgent) => {
-          setFramework("unspecified"); setEndpoint(agent.endpoint); setName(agent.error ? "" : agent.name || ""); setDescription(agent.description || ""); setStreaming(agent.supports_streaming === true);
-          setCredentialSource({ kind: "none", target: "header", name: "Authorization" });
-          setProbedCard(agent.error ? null : { protocol_version: agent.protocol_version, protocol_bindings: agent.protocol_bindings, supports_streaming: agent.supports_streaming }); setCardPreview(null); setDiscoverOpen(false); setAddOpen(true);
-        }} />}
-      </DialogContent></Dialog>
       <Dialog open={addOpen} onOpenChange={open => { if (!open && !saving && !probing) setAddOpen(false); }}>
-        <DialogContent onCloseAutoFocus={event => { event.preventDefault(); addTrigger.current?.focus(); }} className="max-h-[calc(100dvh-2rem)] w-[min(42rem,calc(100%-2rem))] min-w-0 max-w-2xl overflow-y-auto p-4 [overflow-wrap:anywhere] sm:p-6"><DialogHeader><DialogTitle>Connect Remote Agent</DialogTitle><DialogDescription>Read an Agent Card to fill in its details, then review and register it.</DialogDescription></DialogHeader>
-          {canManage && !disabled && (        <div
+        <DialogContent onCloseAutoFocus={event => { event.preventDefault(); addTrigger.current?.focus(); }} className="max-h-[calc(100dvh-2rem)] w-[min(42rem,calc(100%-2rem))] min-w-0 max-w-2xl overflow-y-auto p-4 [overflow-wrap:anywhere] sm:p-6">
+          <DialogHeader>
+            <DialogTitle ref={connectionTitle} tabIndex={-1} className="pr-6 leading-snug">
+              {connectionStep === "choose" ? "Add agent" : "Connect existing agent"}
+            </DialogTitle>
+            <DialogDescription>
+              {connectionStep === "choose" ? "Build something new, or bring an agent you already run."
+                : connectionStep === "find" ? "Find public A2A Agent Cards or configured Kubernetes Services, or enter connection details manually."
+                  : "Review the agent details and authentication, then connect it to the catalog."}
+            </DialogDescription>
+          </DialogHeader>
+          {connectionStep === "choose" && onCreateAgent && <AddAgentChoices
+            canConnect={canManage && !disabled && !loading}
+            onCreate={() => { setAddOpen(false); onCreateAgent(); }}
+            onConnect={() => setConnectionStep("find")}
+          />}
+          {connectionStep !== "choose" && canManage && !disabled && <>
+            <ol aria-label="Connection progress" className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+              <li aria-current={connectionStep === "find" ? "step" : undefined} className={connectionStep === "find" ? "font-medium text-primary" : undefined}>1 · Find agent</li>
+              <li aria-current={connectionStep === "review" ? "step" : undefined} className={connectionStep === "review" ? "font-medium text-primary" : undefined}>2 · Review &amp; connect</li>
+            </ol>
+            <div hidden={connectionStep !== "find"} className="space-y-3">
+              <RemoteAgentDiscovery showHeader={false} disabled={loading || saving || probing} onChoose={chooseDiscoveredAgent} />
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                {onCreateAgent && <Button type="button" variant="ghost" onClick={() => setConnectionStep("choose")}><ArrowLeft aria-hidden="true" />Back to choices</Button>}
+                <Button type="button" variant="outline" disabled={loading || saving || probing} onClick={() => setConnectionStep("review")}>Enter connection details manually</Button>
+              </div>
+            </div>
+          </>}
+          {connectionStep === "review" && canManage && !disabled && (        <div
           className="space-y-3"
           onKeyDown={(event) => {
             if (event.defaultPrevented || !event.currentTarget.contains(event.target as Node)) return;
@@ -332,25 +380,31 @@ export function RemoteAgentRegistry({ selection, renderCatalog, onRegistryChange
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1"><Label htmlFor="remote-agent-name">Name</Label><Input disabled={loading || saving || probing} id="remote-agent-name" required value={name} onChange={(event) => setName(event.target.value)} /></div>
             <div className="space-y-1"><Label htmlFor="remote-agent-endpoint">Agent URL</Label><Input disabled={loading || saving || probing} id="remote-agent-endpoint" type="url" required placeholder="https://agent.example.com" value={endpoint} onChange={(event) => { setEndpoint(event.target.value); setProbedCard(null); setCardPreview(null); }} /></div>
-            <div className="space-y-1"><Label htmlFor="remote-agent-description">Description</Label><Input disabled={loading || saving || probing} id="remote-agent-description" value={description} onChange={(event) => setDescription(event.target.value)} /></div>
-            <div className="space-y-1"><Label htmlFor="remote-agent-timeout">Timeout (seconds, 1–600)</Label><Input disabled={loading || saving || probing} id="remote-agent-timeout" type="number" min={1} max={600} value={timeoutSeconds} onChange={(event) => setTimeoutSeconds(Number(event.target.value))} /></div>
+            <div className="space-y-1 sm:col-span-2"><Label htmlFor="remote-agent-description">Description</Label><Input disabled={loading || saving || probing} id="remote-agent-description" value={description} onChange={(event) => setDescription(event.target.value)} /></div>
           </div>
-          <AgentFrameworkField id="new-remote-agent-framework" value={framework} onChange={setFramework} disabled={loading || saving || probing} />
-          <label className="flex items-center gap-2 text-sm"><input id="remote-agent-streaming" type="checkbox" className="h-4 w-4 accent-primary" checked={streaming} disabled={loading || saving} onChange={(event) => setStreaming(event.target.checked)} />Stream responses</label>
-          <p className="text-xs text-muted-foreground">Show remote output as it arrives. Agents without streaming support return a complete response.</p>
           <RemoteAgentAuthFields
             value={credentialSource}
             onChange={(source) => { setCredentialSource(source); setProbedCard(null); setCardPreview(null); }}
             idPrefix="new-remote-agent"
             disabled={loading || saving || probing}
           />
+          <details className="rounded-md border p-3">
+            <summary className="cursor-pointer text-sm font-medium">Advanced settings</summary>
+            <div className="mt-3 space-y-3">
+              <div className="space-y-1"><Label htmlFor="remote-agent-timeout">Timeout (seconds, 1–600)</Label><Input disabled={loading || saving || probing} id="remote-agent-timeout" type="number" min={1} max={600} value={timeoutSeconds} onChange={(event) => setTimeoutSeconds(Number(event.target.value))} /></div>
+              <AgentFrameworkField id="new-remote-agent-framework" value={framework} onChange={setFramework} disabled={loading || saving || probing} />
+              <label className="flex items-center gap-2 text-sm"><input id="remote-agent-streaming" type="checkbox" className="h-4 w-4 accent-primary" checked={streaming} disabled={loading || saving || probing} onChange={(event) => setStreaming(event.target.checked)} />Stream responses</label>
+              <p className="text-xs text-muted-foreground">Show remote output as it arrives. Agents without streaming support return a complete response.</p>
+            </div>
+          </details>
           <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" size="sm" variant="ghost" disabled={saving || probing} onClick={() => setConnectionStep("find")}><ArrowLeft aria-hidden="true" />Back to discovery</Button>
             <Button type="button" size="sm" variant="outline" disabled={loading || saving || probing || !endpoint.trim() || !isRemoteAgentAuthConfigured(credentialSource)} onClick={() => void probeEndpoint()}>{probing ? "Probing…" : "Discover Agent Card"}</Button>
-            <Button type="button" size="sm" disabled={loading || saving || probing || !name.trim() || !endpoint.trim() || !isRemoteAgentAuthConfigured(credentialSource)} onClick={() => void addRemoteAgent()}><Plus className="mr-2 h-4 w-4" />{saving ? "Adding…" : "Register agent"}</Button>
+            <Button type="button" size="sm" disabled={loading || saving || probing || !name.trim() || !endpoint.trim() || !isRemoteAgentAuthConfigured(credentialSource)} onClick={() => void addRemoteAgent()}><Unplug className="mr-2 h-4 w-4" />{saving ? "Connecting…" : "Connect agent"}</Button>
             {probedCard?.protocol_bindings?.length ? <span className="text-xs text-muted-foreground">A2A {probedCard.protocol_version || ""} · {probedCard.protocol_bindings.join(", ")} · {probedCard.supports_streaming ? "Streaming available" : "Complete responses only"}</span> : null}
           </div>
         </div>)}
-          {cardPreview && <AgentCardDetails card={cardPreview} />}
+          {connectionStep === "review" && cardPreview && <AgentCardDetails card={cardPreview} />}
         </DialogContent>
       </Dialog>
     </>

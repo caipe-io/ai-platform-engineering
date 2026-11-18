@@ -52,6 +52,22 @@ management rows. The browser remembers the view separately for each signed-in
 account. Source and runtime/connection filters apply before shared pagination.
 Existing `?tab=remote-agents` links open the unified catalog.
 
+Choose **Add agent** to:
+
+- **Create CAIPE agent**: open Agent Builder to configure a new assistant.
+- **Connect existing agent**: discover public A2A Agent Cards from up to eight
+  agent or Agent Card URLs, or find agents in configured Kubernetes namespaces.
+  Public discovery sends no caller credentials. Review a candidate before connecting.
+- Use **Enter connection details manually** for a known endpoint, including agents
+  that need authentication. **Discover Agent Card** reads metadata with the selected
+  credential source and fills the name and description without registering the agent.
+
+Connection review keeps the name, URL, description, credential source, and header
+name visible. **Advanced settings** contains the timeout (1–600 seconds), optional
+framework display label, and streaming preference. **Connect agent** saves the
+registration; discovery alone does not register it. Connecting requires registry
+management access.
+
 The avatar retains the agent's saved gradient, with a stable per-agent fallback.
 Its small badge identifies the known harness first: Claude Agent SDK / Claude
 Code use Claude, Deep Agents uses Deep Agents, and AgentCore uses AgentCore.
@@ -63,7 +79,7 @@ reuse the same badge resolver.
 For registered A2A services, admins can set optional **Framework** display
 metadata (Claude Code, Claude Agent SDK, Google ADK, Deep Agents, or AgentCore).
 That label never changes execution, credentials, or tool permissions.
-**Connect agent**, discovery, registration, and editing reuse the registry dialogs.
+Connection discovery, registration, and editing reuse the registry dialogs.
 
 - **A2A:** registry managers can run **Test connection** with the saved authentication.
   The result shows latency, advertised capabilities, skills, and the full Agent Card.
