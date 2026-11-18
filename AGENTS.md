@@ -52,6 +52,30 @@ Each component has its own environment variables - see `env.example` in `ui/` an
 - **Configuration & code details** - Document in component READMEs
 - **Agent instructions** - Keep this file (`AGENTS.md`) up-to-date
 
+## E2E Regression and Release Readiness
+
+- For "run E2E regression", "regression test", "test backward compatibility", or
+  "check release readiness", use `.agents/skills/caipe-regression-suite/SKILL.md`
+  and the canonical matrix at `docs/docs/development/caipe-regression-suite.md`.
+- Keep matrix IDs stable. Product changes and bug fixes must add or update the
+  affected acceptance cases in the same PR; identify the case IDs in validation.
+- Maintain numbered assertions and screen/API mappings in the linked coverage
+  inventory. Run `node scripts/validate-regression-inventory.mjs` to check source
+  drift; inventory validation does not establish live test coverage.
+- External apps own their feature matrices. For integrated requests, compose
+  authorized app-owned suites through environment-owned run configuration; keep
+  private definitions/results outside public source and report suite gaps.
+- Record every applicable case, runtime, and integration as PASS, FAIL, BLOCKED,
+  or NOT_RUN. Explain exclusions. CI, catalog loading, and healthy pods do not
+  establish live functional or backward-compatibility coverage.
+- Release readiness reviews existing evidence first; it does not authorize a
+  deployment or new test writes. Reuse target/scope authorization already given.
+- Finish every run/review with the schema-1 manifest and consistent HTML/Markdown
+  artifacts from `scripts/render-regression-report.mjs --input RUN/report.json
+  --output RUN/report.html` (invoke with `node`). Follow
+  `docs/docs/development/regression-report-artifacts.md`; rendering is not testing
+  or publication. Restricted combined reports stay in protected run storage.
+
 ## Docs & Spec Rules
 
 - Reading is as hard as writing.

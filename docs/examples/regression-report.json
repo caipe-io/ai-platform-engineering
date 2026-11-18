@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "run_id": "example-only",
+  "title": "EXAMPLE \u2014 report layout, not a real test run",
+  "target": "https://example.test",
+  "scope": "smoke",
+  "visibility": "private",
+  "started_at": "2026-01-01T00:00:00Z",
+  "finished_at": "2026-01-01T00:05:00Z",
+  "suites": [
+    {
+      "id": "host",
+      "name": "Example host",
+      "visibility": "public",
+      "repository": "example/platform",
+      "baseline_ref": "example-baseline",
+      "source_ref": "example-candidate",
+      "plan_ref": "example-plan",
+      "versions": [
+        "example-ui:1",
+        "example-worker:1"
+      ]
+    }
+  ],
+  "plan": [
+    {
+      "id": "host:SEC-01",
+      "suite": "host",
+      "capability": "Session lifecycle",
+      "live": true,
+      "cleanup_required": false,
+      "assertions": [
+        {
+          "id": "host:SEC-01.01",
+          "label": "Login"
+        },
+        {
+          "id": "host:SEC-01.02",
+          "label": "Session renewal"
+        }
+      ]
+    },
+    {
+      "id": "host:WF-02",
+      "suite": "host",
+      "capability": "Workflow execution",
+      "live": true,
+      "cleanup_required": false,
+      "assertions": [
+        {
+          "id": "host:WF-02.01",
+          "label": "Run both steps"
+        }
+      ]
+    },
+    {
+      "id": "host:REL-01",
+      "suite": "host",
+      "capability": "Release commit mapping",
+      "live": false,
+      "cleanup_required": false,
+      "assertions": [
+        {
+          "id": "host:REL-01.01",
+          "label": "Map full history"
+        }
+      ]
+    },
+    {
+      "id": "host:CLEAN-01",
+      "suite": "host",
+      "capability": "Fixture deletion and grant cleanup",
+      "live": true,
+      "cleanup_required": true,
+      "assertions": [
+        {
+          "id": "host:CLEAN-01.01",
+          "label": "Delete fixture resource"
+        }
+      ]
+    },
+    {
+      "id": "host:APP-01",
+      "suite": "host",
+      "capability": "Optional application profile",
+      "live": true,
+      "cleanup_required": false,
+      "assertions": [
+        {
+          "id": "host:APP-01.01",
+          "label": "Launch app"
+        }
+      ]
+    }
+  ],
+  "results": [
+    {
+      "id": "host:SEC-01",
+      "detail": "Illustrative partial coverage; renewal could not run.",
+      "assertions": [
+        {
+          "id": "host:SEC-01.01",
+          "status": "PASS",
+          "detail": "Illustrative login check only.",
+          "evidence_kind": "live-browser",
+          "evidence": [
+            {
+              "label": "Illustrative evidence (example only)",
+              "href": "https://example.test/artifacts/evidence.json",
+              "visibility": "public"
+            }
+          ]
+        },
+        {
+          "id": "host:SEC-01.02",
+          "status": "BLOCKED",
+          "detail": "Illustrative missing session-renewal prerequisite."
+        }
+      ]
+    },
+    {
+      "id": "host:REL-01",
+      "assertions": [
+        {
+          "id": "host:REL-01.01",
+          "status": "PASS",
+          "detail": "Illustrative ledger check only.",
+          "evidence_kind": "source-review",
+          "evidence": [
+            {
+              "label": "Illustrative evidence (example only)",
+              "href": "https://example.test/artifacts/evidence.json",
+              "visibility": "public"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "host:CLEAN-01",
+      "detail": "Illustrative automatic cleanup failure, retained after manual repair.",
+      "assertions": [
+        {
+          "id": "host:CLEAN-01.01",
+          "status": "PASS",
+          "detail": "Illustrative resource deletion only.",
+          "evidence_kind": "live-api",
+          "evidence": [
+            {
+              "label": "Illustrative evidence (example only)",
+              "href": "https://example.test/artifacts/evidence.json",
+              "visibility": "public"
+            }
+          ]
+        }
+      ],
+      "cleanup": {
+        "status": "FAIL",
+        "detail": "Illustrative stale grant; manual repair left zero residue.",
+        "evidence": [
+          {
+            "label": "Illustrative evidence (example only)",
+            "href": "https://example.test/artifacts/evidence.json",
+            "visibility": "public"
+          }
+        ]
+      }
+    },
+    {
+      "id": "host:APP-01",
+      "assertions": [
+        {
+          "id": "host:APP-01.01",
+          "status": "NOT_APPLICABLE",
+          "detail": "Illustrative disabled feature; excluded in the declared plan."
+        }
+      ]
+    }
+  ]
+}
