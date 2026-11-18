@@ -19,8 +19,10 @@ const guard = Object.assign(jest.fn(async () => {}), {
 const access = new Map<string, unknown>();
 const tuples = new Set<string>();
 const persistConversation = jest.fn();
+const findConversation = jest.fn();
 const insertJournal = jest.fn();
 const persistAccess = jest.fn();
+const updateAccess = jest.fn();
 const deleteJournal = jest.fn();
 const reconcile = jest.fn();
 
@@ -41,8 +43,11 @@ jest.mock('@/lib/mongodb', () => ({ getCollection: async (name: string) => {
     findOne: async ({ _id }: { _id: string }) => journal.get(_id),
     deleteOne: (...args: unknown[]) => deleteJournal(...args),
   };
-  if (name === 'sharing_access') return { updateOne: (...args: unknown[]) => persistAccess(...args), updateMany: jest.fn() };
-  if (name === 'conversations') return { updateOne: (...args: unknown[]) => persistConversation(...args) };
+  if (name === 'sharing_access') return { updateOne: (...args: unknown[]) => persistAccess(...args), updateMany: (...args: unknown[]) => updateAccess(...args) };
+  if (name === 'conversations') return {
+    updateOne: (...args: unknown[]) => persistConversation(...args),
+    findOne: (...args: unknown[]) => findConversation(...args),
+  };
   throw new Error(`Unexpected collection ${name}`);
 } }));
 
@@ -67,6 +72,7 @@ beforeEach(() => {
   insertJournal.mockImplementation(async (value: ConversationSharingMutation) => { journal.set(value._id, value); });
   deleteJournal.mockImplementation(async ({ _id }: { _id: string }) => { journal.delete(_id); });
   persistConversation.mockResolvedValue({ matchedCount: 1 });
+  findConversation.mockResolvedValue({ _id: 'example-chat' });
   persistAccess.mockImplementation(async ({ _id }, { $setOnInsert }) => {
     if (!access.has(String(_id))) access.set(String(_id), $setOnInsert);
   });
@@ -75,6 +81,42 @@ beforeEach(() => {
     for (const t of diff.writes) tuples.add(key(t));
     for (const t of diff.deletes) tuples.delete(key(t));
   });
+});
+
+it.each(['commit', 'resume'])('completes a user-only permission change without an empty database update (%s)', async (mode) => {
+  const mutation = intent();
+  mutation.conversationUpdate = { $set: {} };
+  mutation.accessUpdates = [{
+    filter: { conversation_id: 'example-chat', granted_to: 'reader@example.com', revoked_at: null },
+    update: { $set: { permission: 'view' } },
+  }];
+  // DocumentDB rejects the empty operator even after grants and access rows save.
+  persistConversation.mockRejectedValue(new Error('Update document requires atomic operators'));
+  if (mode === 'resume') journal.set(mutation._id, mutation);
+
+  await withConversationSharingLock('example-chat', () => mode === 'commit'
+    ? commitConversationSharingMutation(mutation, guard)
+    : resumeConversationSharingMutation('example-chat', guard));
+
+  expect(reconcile).toHaveBeenCalledWith(mutation.grants, { source: 'conversation_sharing' });
+  expect(updateAccess).toHaveBeenCalledWith(mutation.accessUpdates[0].filter, mutation.accessUpdates[0].update);
+  expect(persistConversation).not.toHaveBeenCalled();
+  expect(findConversation).toHaveBeenCalledWith({ _id: 'example-chat' }, { projection: { _id: 1 } });
+  expect(journal.size).toBe(0);
+  expect(locks.size).toBe(0);
+});
+
+it('keeps a metadata-free intent pending if its conversation no longer exists', async () => {
+  const mutation = intent();
+  mutation.conversationUpdate = { $set: {} };
+  findConversation.mockResolvedValue(null);
+
+  await expect(commitConversationSharingMutation(mutation, guard))
+    .rejects.toMatchObject({ statusCode: 404 });
+
+  expect(persistConversation).not.toHaveBeenCalled();
+  expect(journal.has('example-chat')).toBe(true);
+  expect(deleteJournal).not.toHaveBeenCalled();
 });
 
 it('journals before grants, then resumes a failed metadata write without removing existing grants', async () => {

@@ -13,6 +13,7 @@ const mockRevoke = jest.fn();
 const mockAudit = jest.fn();
 jest.mock("@/lib/api-middleware", () => ({ getAuthFromBearerOrSession: (...args: unknown[]) => mockAuth(...args) }));
 jest.mock("@/lib/authz", () => ({
+  PolicyWritePendingError: jest.requireActual("@/lib/authz/engine").PolicyWritePendingError,
   authorize: (...args: unknown[]) => mockAuthorize(...args),
   authorizeMany: (...args: unknown[]) => mockMany(...args),
   grant: (...args: unknown[]) => mockGrant(...args),
