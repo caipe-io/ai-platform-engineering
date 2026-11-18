@@ -36,6 +36,11 @@ jest.mock('next-auth/jwt', () => ({
   decode: jest.fn(async () => ({})),
 }))
 
+const mockBackfillMissingUserNamesFromClaims = jest.fn()
+jest.mock('@/lib/rbac/keycloak-admin', () => ({
+  backfillMissingUserNamesFromClaims: (...args: unknown[]) => mockBackfillMissingUserNamesFromClaims(...args),
+}))
+
 const mockReconcileOidcClaimGroupsForUser = jest.fn()
 jest.mock('@/lib/rbac/oidc-claim-reconciler', () => ({
   reconcileOidcClaimGroupsForUser: (...args: unknown[]) => mockReconcileOidcClaimGroupsForUser(...args),
@@ -1309,4 +1314,53 @@ describe('auth-config', () => {
   })
 
 
+})
+
+
+describe('login profile name repair', () => {
+  beforeEach(() => mockBackfillMissingUserNamesFromClaims.mockReset())
+
+  it('uses the authenticated subject and updates the session display name after repair', async () => {
+    mockBackfillMissingUserNamesFromClaims.mockResolvedValue('Test Person')
+    const profile = { sub: 'test-user', email: 'test-user@example.test', given_name: 'Test', family_name: 'Person' }
+    const token = await runJwt({ token: { name: 'test-user@example.test' }, profile })
+    expect(mockBackfillMissingUserNamesFromClaims).toHaveBeenCalledWith('test-user', profile)
+    expect(token.name).toBe('Test Person')
+  })
+
+  it('keeps sign-in successful if profile repair fails', async () => {
+    mockBackfillMissingUserNamesFromClaims.mockRejectedValue(new Error('profile unavailable'))
+    const token = await runJwt({ token: { name: 'Existing' }, profile: { sub: 'test-user', email: 'test-user@example.test' } })
+    expect(mockBackfillMissingUserNamesFromClaims).toHaveBeenCalled()
+    expect(token.name).toBe('Existing')
+    expect(token.isAuthorized).toBe(true)
+  })
+})
+
+
+it('repairs bootstrap-admin profiles even when group admission is false', async () => {
+  const previous = process.env.BOOTSTRAP_ADMIN_EMAILS
+  process.env.BOOTSTRAP_ADMIN_EMAILS = 'bootstrap@example.test'
+  mockBackfillMissingUserNamesFromClaims.mockReset().mockResolvedValue('Test Person')
+  try {
+    await withRequiredGroup('required-group', async ({ authOptions }) => (
+      authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>
+    )({ token: { sub: 'bootstrap-subject', sessionId: 'test-session' }, profile: {
+      sub: 'bootstrap-subject', email: 'bootstrap@example.test', given_name: 'Test', groups: [],
+    } }))
+    expect(mockBackfillMissingUserNamesFromClaims).toHaveBeenCalledWith('bootstrap-subject', expect.any(Object))
+  } finally {
+    if (previous === undefined) delete process.env.BOOTSTRAP_ADMIN_EMAILS
+    else process.env.BOOTSTRAP_ADMIN_EMAILS = previous
+  }
+})
+
+it('does not repair a profile for a denied non-bootstrap login', async () => {
+  mockBackfillMissingUserNamesFromClaims.mockReset()
+  await withRequiredGroup('required-group', async ({ authOptions }) => (
+    authOptions.callbacks!.jwt! as (...args: unknown[]) => Promise<unknown>
+  )({ token: { sub: 'denied-subject', sessionId: 'test-session' }, profile: {
+    sub: 'denied-subject', email: 'denied@example.test', given_name: 'Test', groups: [],
+  } }))
+  expect(mockBackfillMissingUserNamesFromClaims).not.toHaveBeenCalled()
 })

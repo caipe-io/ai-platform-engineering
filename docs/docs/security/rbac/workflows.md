@@ -1125,6 +1125,19 @@ no `_id` / no endpoint), and the customisable AgentGateway base URL.
 
 ---
 
+## Missing names on pre-provisioned accounts
+
+- Email-only bootstrap accounts gain missing first/last names on a fresh SSO
+  login when the upstream provider supplies structured name claims.
+- Broker session notes carry fresh profile values to the UI ID token without
+  changing provider-wide `IMPORT` behavior. Only blank stored fields are filled;
+  existing names and linked identities are preserved.
+- Name repair uses the authenticated subject, never an email lookup. It does
+  not create users or change admission, roles, groups, or grants. Failures do
+  not block sign-in, and a later fresh login retries repair.
+- Existing accounts need both the updated Keycloak initialization and UI.
+  Refreshing an old session alone does not fetch a new upstream profile.
+
 ## 0.5.1 Schema Migration Tab
 
 Admins run release migrations from Admin → System → Migrations. The tab loads the

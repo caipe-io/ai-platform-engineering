@@ -304,3 +304,23 @@ configuration fails the job before writing a profile update. The six protected
 secondary identity attributes retain admin-only permissions even if a custom
 attribute entry requests broader access. The realm's existing unmanaged
 attribute policy is preserved.
+
+### Missing names on bootstrap accounts
+
+Bootstrap accounts can exist before their first SSO login and initially contain
+only an email address. On install/upgrade, `init-idp` configures a broker session-note
+mapper for standard `given_name`/`family_name` and alternate `firstname`/`lastname`
+claims. Private UI ID-token claims carry these fresh names to the sign-in callback.
+The provider-wide `IMPORT` mode and existing attribute mappers stay unchanged.
+
+The UI backfills only blank first/last name fields on the authenticated Keycloak
+subject. It preserves existing names, does not infer names from email or a display
+name, and never creates an account or changes grants during repair. A profile
+update failure is logged and does not block sign-in.
+
+For existing accounts, upgrade Keycloak initialization and the UI, then start a
+fresh upstream SSO login (sign out of the broker session if necessary). Repair
+requires the upstream provider to supply structured name claims; token refresh
+alone does not obtain a new upstream profile. Accounts that never sign in can
+still be repaired by the existing configured directory sync when in its scope.
+The private name claims are excluded from access tokens, userinfo, and introspection.

@@ -811,6 +811,39 @@ export async function createFederatedShellUser(
   throw new Error(`createFederatedShellUser(${emailLower}): could not determine new user id`);
 }
 
+/** Fill absent profile fields from authenticated OIDC claims, using the subject as identity. */
+export async function backfillMissingUserNamesFromClaims(
+  userId: string,
+  claims: Record<string, unknown>,
+): Promise<string | undefined> {
+  const subject = userId.trim();
+  if (!subject) return undefined;
+  const namePart = (keys: string[]): string | undefined => {
+    for (const key of keys) {
+      const raw = claims[key];
+      if (typeof raw !== "string" || raw.length > 255 || raw.includes("@")) continue;
+      const value = sanitizePersonNamePart(raw);
+      if (value) return value;
+    }
+    return undefined;
+  };
+  const firstName = namePart(["caipe_idp_given_name", "caipe_idp_firstname", "given_name", "firstname"]);
+  const lastName = namePart(["caipe_idp_family_name", "caipe_idp_lastname", "family_name", "lastname"]);
+  if (!firstName && !lastName) return undefined;
+
+  // Never resolve by email or provision a new identity from login profile data.
+  const existing = await getRealmUserByIdOrNull(subject);
+  if (!existing) return undefined;
+  const currentFirst = typeof existing.firstName === "string" ? existing.firstName : "";
+  const currentLast = typeof existing.lastName === "string" ? existing.lastName : "";
+  const patch: Record<string, string> = {};
+  if (!currentFirst.trim() && firstName) patch.firstName = firstName;
+  if (!currentLast.trim() && lastName) patch.lastName = lastName;
+  if (Object.keys(patch).length === 0) return undefined;
+  await updateUser(subject, patch);
+  return [patch.firstName ?? currentFirst, patch.lastName ?? currentLast].filter(Boolean).join(" ");
+}
+
 async function maybeUpdateUserName(
   userId: string,
   name: { firstName?: string; lastName?: string }

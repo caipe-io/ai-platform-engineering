@@ -1566,6 +1566,69 @@ else
   echo "[init-idp]   WARNING: profile client scope not found."
 fi
 
+# Forward fresh broker profile claims through session notes. IMPORT stays in
+# place for persistent user attributes; the BFF fills only missing name fields.
+echo "[init-idp] Reconciling broker profile session-note mappers ..."
+PROFILE_KC_URL="${KC_URL}" PROFILE_REALM="${REALM}" PROFILE_IDP_ALIAS="${ALIAS}" \
+PROFILE_AUTH="${AUTH}" PROFILE_UI_CLIENT_ID="${KEYCLOAK_UI_CLIENT_ID:-${OIDC_CLIENT_ID:-caipe-ui}}" \
+python3 - <<'PY_PROFILE_NAMES'
+import json
+import os
+from typing import Any
+from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
+
+base = os.environ["PROFILE_KC_URL"].rstrip("/") + "/admin/realms/" + quote(os.environ["PROFILE_REALM"], safe="")
+auth = os.environ["PROFILE_AUTH"]
+alias = os.environ["PROFILE_IDP_ALIAS"]
+client_id = os.environ["PROFILE_UI_CLIENT_ID"]
+claims = ("given_name", "family_name", "firstname", "lastname")
+
+
+def request(path: str, method: str = "GET", body: object | None = None) -> Any:
+    payload = None if body is None else json.dumps(body).encode()
+    req = Request(base + path, data=payload, method=method,
+                  headers={"Authorization": auth, "Content-Type": "application/json"})
+    with urlopen(req, timeout=10) as response:
+        data = response.read()
+        return json.loads(data) if data else None
+
+
+def reconcile(path: str, desired: dict[str, Any]) -> None:
+    rows = request(path)
+    matches = [row for row in rows if row.get("name") == desired["name"]]
+    if len(matches) > 1:
+        raise RuntimeError("Duplicate profile mapper: " + desired["name"])
+    if not matches:
+        request(path, "POST", desired)
+    elif any(matches[0].get(key) != value for key, value in desired.items()):
+        mapper_id = matches[0]["id"]
+        request(path + "/" + quote(mapper_id, safe=""), "PUT", {**desired, "id": mapper_id})
+
+
+clients = request("/clients?" + urlencode({"clientId": client_id}))
+if len(clients) != 1:
+    raise RuntimeError("Expected one UI client for broker profile mappers")
+reconcile("/identity-provider/instances/" + quote(alias, safe="") + "/mappers", {
+    "name": alias + "-profile-session-notes",
+    "identityProviderAlias": alias,
+    "identityProviderMapper": "oidc-user-session-note-idp-mapper",
+    "config": {"syncMode": "FORCE", "are.claim.values.regex": "true",
+               "claims": json.dumps([{"key": claim, "value": ".+"} for claim in claims])},
+})
+for claim in claims:
+    reconcile("/clients/" + quote(clients[0]["id"], safe="") + "/protocol-mappers/models", {
+        "name": "idp-profile-" + claim,
+        "protocol": "openid-connect",
+        "protocolMapper": "oidc-usersessionmodel-note-mapper",
+        "config": {"user.session.note": claim, "claim.name": "caipe_idp_" + claim,
+                   "jsonType.label": "String", "id.token.claim": "true",
+                   "access.token.claim": "false", "userinfo.token.claim": "false",
+                   "introspection.token.claim": "false"},
+    })
+print("[init-idp] Broker profile session-note mappers reconciled.")
+PY_PROFILE_NAMES
+
 # --- disable "Review Profile" in first broker login flow ---
 # Prevents Keycloak from showing the "Update Account Information" page
 # on first SSO login — username/email/name are already provided by the IdP mappers.
