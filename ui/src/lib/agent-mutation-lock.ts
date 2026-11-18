@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ApiError } from "@/lib/api-middleware";
+import { ApiError } from "@/lib/api-error";
 import { getCollection } from "@/lib/mongodb";
 
 export type MutationLockGuard = (() => Promise<void>) & {
