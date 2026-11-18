@@ -351,7 +351,6 @@ export function ReportProblemDialog({
 
     appendLog("Submitting feedback...");
     appendLog(`Reporter: ${userEmail}`);
-    appendLog(`Context: ${contextUrl}`);
 
     try {
       const request: TicketRequest = previousAttempt?.request ?? (isServiceDesk ? {
@@ -393,6 +392,7 @@ export function ReportProblemDialog({
       });
       const attempt = previousAttempt ?? { request, prepare: onBeforeSubmit };
       submittedAttemptRef.current = attempt;
+      appendLog(`Context: ${attempt.request.contextUrl}`);
       const submittedContext = await attempt.prepare?.(attempt.request);
       if (controller.signal.aborted) return;
       attempt.request = { ...attempt.request, feedbackContext: submittedContext ?? attempt.request.feedbackContext };

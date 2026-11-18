@@ -585,6 +585,31 @@ describe("Request help", () => {
     }
   });
 
+  it("logs the page the retried request was made from, not the current page", async () => {
+    const original = window.location.href;
+    try {
+      window.history.pushState({}, "", "/page-a");
+      const pageA = window.location.href;
+      mockCreateTicketViaAgent.mockRejectedValueOnce(new Error("First attempt failed"));
+      const { rerender } = render(<ReportProblemDialog open onOpenChange={jest.fn()} />);
+      await fillRequiredFields();
+      fireEvent.click(screen.getByText("Submit Report"));
+      await screen.findByText("First attempt failed");
+
+      window.history.pushState({}, "", "/page-b");
+      rerender(<ReportProblemDialog open onOpenChange={jest.fn()} />);
+      mockCreateTicketViaAgent.mockRejectedValueOnce(new Error("Second attempt failed"));
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      await screen.findByText("Second attempt failed");
+      fireEvent.click(screen.getByText(/Show Details/));
+
+      expect(screen.getByText(new RegExp(`Context: ${pageA}$`))).toBeInTheDocument();
+      expect(screen.queryByText(/Context: .*\/page-b/)).not.toBeInTheDocument();
+    } finally {
+      window.history.pushState({}, "", original);
+    }
+  });
+
   it("is not offered in the chat-feedback flow", async () => {
     render(<ReportProblemDialog open onOpenChange={jest.fn()} feedbackContext={{ reason: "Wrong answer", feedbackType: "dislike" }} />);
     await waitFor(() => expect(screen.getByLabelText("Feature")).toBeEnabled());
