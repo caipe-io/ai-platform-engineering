@@ -144,7 +144,9 @@ def test_every_docker_metadata_step_disables_automatic_latest() -> None:
       for step in job.get("steps", []):
         if step.get("uses", "").startswith("docker/metadata-action@"):
           flavor = step.get("with", {}).get("flavor", "").splitlines()
-          assert [line.strip() for line in flavor if line.strip().startswith("latest=")] == ["latest=false"], (path, job_name)
+          fields = [field.strip() for line in flavor for field in line.split(",")]
+          latest_fields = [field for field in fields if field.split("=", 1)[0].strip().lower() == "latest"]
+          assert latest_fields == ["latest=false"], (path, job_name)
 
 
 @pytest.mark.parametrize("head_tag", ["1.1.0-rc.2", "1.0.1-dev.2", "1.0.0-hotfix.2"])

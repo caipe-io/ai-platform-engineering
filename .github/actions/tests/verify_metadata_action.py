@@ -40,6 +40,7 @@ def render(value: str, ref: str, version: str, stable: bool, variant: str) -> st
     r"needs\.[\w-]+\.outputs\.is_final_release == 'true'": str(stable).lower(),
     r"needs\.[\w-]+\.outputs\.tag_version != ''": str(bool(version)).lower(),
     r"needs\.[\w-]+\.outputs\.tag_version": version,
+    r"env\.PREBUILD_TAG": version,
     r"github\.ref != 'refs/heads/main'": str(ref != "refs/heads/main").lower(),
   }
   for expression, replacement in substitutions.items():
@@ -116,9 +117,10 @@ def main() -> None:
           assert step["uses"] == f"docker/metadata-action@{pin}", (path, job_name)
           inputs = step["with"]
           assert "latest=false" in inputs.get("flavor", "").splitlines(), (path, job_name)
-          if not path.name.startswith("ci-"):
-            continue
-          for event, ref, version, stable in cases:
+          workflow_cases = cases if path.name.startswith("ci-") else [
+            ("pull_request", "refs/pull/1/merge", "1.1.0-preview.1", False),
+          ]
+          for event, ref, version, stable in workflow_cases:
             for variant in ("default", "secondary") if "matrix.variant" in inputs["flavor"] else ("default",):
               tags = render(inputs["tags"], ref, version, stable, variant)
               flavor = render(inputs["flavor"], ref, version, stable, variant)
@@ -126,9 +128,12 @@ def main() -> None:
               if key not in cache:
                 cache[key] = action_tags(bundle, api_url, event, ref, tags, flavor)
               actual = cache[key]
-              assert any(tag.split(":")[-1].startswith("latest") for tag in actual) is stable, (path, job_name, key, actual)
+              suffix = "" if variant == "default" else f"-{variant}"
+              latest_aliases = {tag for tag in actual if tag.rsplit(":", 1)[-1] == "latest"
+                                or tag.rsplit(":", 1)[-1].startswith("latest-")}
+              expected_aliases = {f"registry.example.test/example:latest{suffix}"} if stable else set()
+              assert latest_aliases == expected_aliases, (path, job_name, key, actual)
               if version:
-                suffix = "" if variant == "default" else f"-{variant}"
                 assert f"registry.example.test/example:{version}{suffix}" in actual, (path, job_name, actual)
               checked += 1
     print(f"Verified {checked} workflow/channel cases using {len(cache)} distinct action executions; old RC configuration reproduced Latest.")
