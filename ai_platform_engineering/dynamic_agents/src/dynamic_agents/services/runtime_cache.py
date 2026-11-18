@@ -186,7 +186,10 @@ class AgentRuntimeCache:
         while key in self._pending:
             pending = self._pending[key]
             if self._pending_response_formats.get(key) == requested_format:
-                return await asyncio.shield(pending)
+                ready = await asyncio.shield(pending)
+                if await ready.model_credentials_current(user):
+                    return ready
+                continue
             try:
                 await asyncio.shield(pending)
             except RuntimeInitError:
@@ -208,7 +211,7 @@ class AgentRuntimeCache:
                 if runtime._is_streaming:
                     # Do not tear down a graph while another request is using it.
                     raise RuntimeCapacityError(self._max_size)
-                if format_changed or await asyncio.to_thread(runtime.is_stale, agent_config, mcp_servers):
+                if format_changed or not await runtime.model_credentials_current(user) or await asyncio.to_thread(runtime.is_stale, agent_config, mcp_servers):
                     logger.info(
                         "Runtime cache invalidated due to config change for agent %s",
                         agent_config.id,

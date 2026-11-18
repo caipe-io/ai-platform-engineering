@@ -71,6 +71,7 @@ describe('getServerConfig', () => {
         'LOGO_STYLE', 'SPINNER_COLOR', 'TAGLINE', 'DESCRIPTION',
         'APP_NAME', 'LOGO_URL', 'GRADIENT_FROM', 'GRADIENT_TO',
         'SUPPORT_EMAIL', 'FEEDBACK_ENABLED', 'AUDIT_LOGS_ENABLED',
+        'SETUP_WIZARD_ENABLED',
         'ACTION_AUDIT_ENABLED',
         'CAIPE_UNSAFE_RBAC_BYPASS',
         'DEFAULT_FONT_SIZE', 'DEFAULT_FONT_FAMILY',
@@ -149,7 +150,7 @@ describe('getServerConfig', () => {
         'gradientFrom', 'gradientTo', 'logoStyle', 'logoThemed', 'spinnerColor',
         'showPoweredBy', 'supportEmail', 'allowDevAdminWhenSsoDisabled', 'unsafeRbacBypassEnabled',
         'storageMode', 'enabledIntegrationIcons', 'faviconUrl',
-        'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
+        'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'setupWizardEnabled', 'feedbackEnabled',
         'allowBuiltinSkillMutation',
         'auditLogsEnabled',
         'actionAuditEnabled',
@@ -169,6 +170,7 @@ describe('getServerConfig', () => {
         'scheduleEditorAgentId',
         'schedulerAdminOnly',
         'schedulerEnabled',
+        'uiDebugLogging',
       ];
       expect(Object.keys(cfg).sort()).toEqual(expectedKeys.sort());
     });
@@ -489,6 +491,18 @@ describe('getServerConfig', () => {
     });
   });
 
+  // ---------- setupWizardEnabled ----------
+
+  describe('setupWizardEnabled', () => {
+    beforeEach(() => clearEnv('SETUP_WIZARD_ENABLED'));
+
+    it('defaults to enabled and supports an explicit opt-out', () => {
+      expect(getServerConfig().setupWizardEnabled).toBe(true);
+      process.env.SETUP_WIZARD_ENABLED = 'false';
+      expect(getServerConfig().setupWizardEnabled).toBe(false);
+    });
+  });
+
   // ---------- feedbackEnabled ----------
 
   describe('feedbackEnabled', () => {
@@ -735,6 +749,34 @@ describe('getServerConfig', () => {
     });
   });
 
+  describe('uiDebugLogging', () => {
+    beforeEach(() => {
+      clearEnv('UI_DEBUG_LOGGING');
+    });
+
+    it('defaults to false', () => {
+      process.env.NODE_ENV = 'development';
+      expect(getServerConfig().uiDebugLogging).toBe(false);
+    });
+
+    it('is true when UI_DEBUG_LOGGING is enabled outside production', () => {
+      process.env.NODE_ENV = 'development';
+      process.env.UI_DEBUG_LOGGING = 'true';
+      expect(getServerConfig().uiDebugLogging).toBe(true);
+    });
+
+    it('is true in production when UI_DEBUG_LOGGING is enabled', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.UI_DEBUG_LOGGING = 'true';
+      expect(getServerConfig().uiDebugLogging).toBe(true);
+    });
+
+    it('is false in production when UI_DEBUG_LOGGING is unset', () => {
+      process.env.NODE_ENV = 'production';
+      expect(getServerConfig().uiDebugLogging).toBe(false);
+    });
+  });
+
   // ---------- NODE_ENV / isDev / isProd ----------
 
   describe('NODE_ENV detection', () => {
@@ -938,7 +980,7 @@ describe('getClientConfigScript (XSS safety)', () => {
       'gradientFrom', 'gradientTo', 'logoStyle', 'logoThemed', 'spinnerColor',
       'showPoweredBy', 'supportEmail', 'allowDevAdminWhenSsoDisabled', 'unsafeRbacBypassEnabled',
       'storageMode', 'enabledIntegrationIcons', 'faviconUrl',
-      'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'feedbackEnabled',
+      'docsUrl', 'sourceUrl', 'workflowRunnerEnabled', 'workflowsEnabled', 'projectsEnabled', 'dynamicAgentsEnabled', 'setupWizardEnabled', 'feedbackEnabled',
       'allowBuiltinSkillMutation',
       'auditLogsEnabled',
       'actionAuditEnabled',
@@ -958,6 +1000,7 @@ describe('getClientConfigScript (XSS safety)', () => {
       'scheduleEditorAgentId',
       'schedulerAdminOnly',
       'schedulerEnabled',
+        'uiDebugLogging',
     ];
     expect(Object.keys(parsed).sort()).toEqual(expectedKeys.sort());
   });

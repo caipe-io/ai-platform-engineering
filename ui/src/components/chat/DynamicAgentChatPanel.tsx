@@ -22,7 +22,7 @@ import { useAgentTimeline } from "@/hooks/useDynamicAgentTimeline";
 import { apiClient,APIClientError } from "@/lib/api-client";
 import { authErrorToastTitle,type AuthError } from "@/lib/auth-error";
 import { getDeterministicAgentThemeId } from "@/lib/agent-theme";
-import { interruptedAuthReason,interruptedTurnFallbackText } from "@/lib/chat-interrupt";
+import { interruptedAuthReason,interruptedTurnFallbackText,isAgentReadinessError } from "@/lib/chat-interrupt";
 import { getConfig } from "@/lib/config";
 import { captureChatFeedbackContext } from "@/lib/chat-feedback";
 import { fetchEphemeralFileContent } from "@/lib/ephemeral-files";
@@ -370,6 +370,30 @@ export function ChatPanel({
   const autonomousFollowUps = useAutonomousFollowUps(
     isAutonomousHistory && !panelReadOnly ? conversation?.task_id : undefined,
   );
+
+  const [connectedModelDisplay, setConnectedModelDisplay] = useState<{ id: string; name: string } | null>(null);
+  const configuredModelId = agent?.model?.id ?? "";
+  const hasNamedConnection = /^[0-9a-fA-F-]{36}-[0-9a-f]{16}$/.test(configuredModelId);
+  const composerModelLabel = hasNamedConnection
+    ? connectedModelDisplay?.id === configuredModelId ? connectedModelDisplay.name : "Connected model"
+    : configuredModelId || "Model";
+
+  useEffect(() => {
+    if (!hasNamedConnection) return;
+    const controller = new AbortController();
+    void fetch(`/api/llm-models?id=${encodeURIComponent(configuredModelId)}`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Model metadata returned ${response.status}`);
+        const payload = await response.json();
+        if (!controller.signal.aborted && typeof payload.data?.name === "string") {
+          setConnectedModelDisplay({ id: configuredModelId, name: payload.data.name });
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) console.warn("Connected model display metadata is unavailable");
+      });
+    return () => controller.abort();
+  }, [configuredModelId, hasNamedConnection]);
 
   const configuredReasoningEffort = agent?.model?.reasoning_effort ?? "medium";
   const requestReasoningEffort = supportedReasoningEfforts?.includes(reasoningEffort)
@@ -1610,6 +1634,7 @@ export function ChatPanel({
       updateMessage(convId!, assistantMsgId, {
         turnStatus: "interrupted" as TurnStatus,
         ...(authInterruptedReason ? { error: authInterruptedReason } : {}),
+        ...(isAgentReadinessError(error) ? { error: "HARNESS_AGENT_NOT_READY", isFinal: true } : {}),
       });
       setConversationStreaming(convId, null);
     }
@@ -2468,11 +2493,12 @@ export function ChatPanel({
   );
 
   return (
-    <div className="h-full w-full flex flex-col bg-background relative">
+    <div data-tour="chat-response" className="h-full w-full flex flex-col bg-background relative">
       {showAgentHeader && <div
         className="flex min-h-14 shrink-0 flex-wrap items-center gap-3 bg-gradient-to-r from-primary/[0.06] via-background/70 to-background px-4 py-2"
         aria-label={`Chat: ${conversationTitle}`}
       >
+        <div className="relative shrink-0">
         <AgentAvatar
           agent={agent}
           agentId={agentId}
@@ -2481,6 +2507,8 @@ export function ChatPanel({
           iconSize="h-4 w-4"
           isLoading={!agent && !readOnly}
         />
+          {agent && <AgentHarnessBadge compact harnessId={observedRuntime?.conversationId === activeConversationId ? observedRuntime.harnessId : agent.execution_harness_id} presentation={agent.presentation} className="absolute -bottom-1 -right-1 rounded-sm bg-card ring-2 ring-card" />}
+        </div>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-sm font-semibold" title={conversationTitle}>
             {conversationTitle}
@@ -2603,7 +2631,12 @@ export function ChatPanel({
 
                       // Queued user bubbles share one turnId and produce one response.
                       // Regenerate the whole batch; older messages may lack that binding.
+                      const turnResponse = msg.role === "assistant" ? msg
+                        : (msg.turnId ? arr.findLast(message => message.role === "assistant" && message.turnId === msg.turnId) : undefined)
+                          ?? (arr[index + 1]?.role === "assistant" ? arr[index + 1] : undefined);
+                      const configurationBlockedTurn = turnResponse?.error === "HARNESS_AGENT_NOT_READY";
                       const canRetryMessage = !panelReadOnly &&
+                        !configurationBlockedTurn &&
                         !isAutonomousHistory &&
                         !isThisConversationStreaming &&
                         !isRemoteResponse &&
@@ -3191,10 +3224,10 @@ export function ChatPanel({
               <div className="relative z-20 flex min-h-9 items-center justify-end gap-2">
                 <span
                   className="flex min-w-0 max-w-56 items-center gap-1 whitespace-nowrap text-xs text-muted-foreground max-sm:max-w-40"
-                  title={`${agent?.model?.id || "Model"} · ${reasoningEffort}`}
+                  title={`${composerModelLabel} · ${reasoningEffort}`}
                   data-testid="composer-model-effort"
                 >
-                  <span className="truncate">{agent?.model?.id || "Model"}</span>
+                  <span className="truncate">{composerModelLabel}</span>
                   <span aria-hidden="true">·</span>
                   <span
                     className={cn("text-foreground/80", reasoningEffort === "max" && "font-bold")}
@@ -3424,6 +3457,7 @@ const ChatMessage = React.memo(function ChatMessage({
   autonomousFollowUp,
 }: ChatMessageProps) {
   const isUser = message.role === "user";
+  const configurationBlocked = message.error === "HARNESS_AGENT_NOT_READY";
   const [isHovered, setIsHovered] = useState(false);
   const displayContent = message.content;
 
@@ -3686,9 +3720,10 @@ const ChatMessage = React.memo(function ChatMessage({
                   <>
                     <Activity className="h-4 w-4 shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">Response was interrupted</p>
+                      <p className="text-sm font-medium">{configurationBlocked ? "Agent configuration needs attention" : "Response was interrupted"}</p>
+                      {configurationBlocked && agentId && <a className="text-sm underline" href={`/dynamic-agents?tab=agents&agent=${encodeURIComponent(agentId)}`}>Open agent settings</a>}
                     </div>
-                    {onRetry && (
+                    {onRetry && !configurationBlocked && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -3739,7 +3774,7 @@ const ChatMessage = React.memo(function ChatMessage({
                 animate={{ opacity: isHovered ? 1 : 0.8 }}
                 className="flex items-center gap-1 mt-2"
               >
-                {onRetry && (
+                {onRetry && !configurationBlocked && (
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>

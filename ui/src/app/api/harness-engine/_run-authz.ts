@@ -21,7 +21,8 @@ export async function authorizeHarnessRunAccess(
   request: NextRequest,
   runId: string,
   permission: "read" | "write",
-): Promise<{ auth: AuthResult; config: HarnessEngineConfig; response: Response; readScope?: HarnessConversationReadScope } | NextResponse> {
+): Promise<{ auth: AuthResult; config: HarnessEngineConfig; response: Response; readScope?: HarnessConversationReadScope;
+  delegationParent?: { status: string; cancellation_requested?: boolean } } | NextResponse> {
   const auth = await authenticateRequest(request);
   if (auth instanceof NextResponse) return auth;
   auth.traceparent = createAuthzTraceContext(request.headers.get("traceparent")).traceparent;
@@ -60,8 +61,26 @@ export async function authorizeHarnessRunAccess(
     tenantId: auth.tenantId, isServiceAccount: auth.isServiceAccount, traceparent: auth.traceparent,
   });
   if (denied) return denied;
+  let delegationParent;
+  if (run.parent_run_id) {
+    const parentResponse = await proxyHarnessEngine(config, auth, `/api/v1/runs/${encodeURIComponent(run.parent_run_id)}`, { method: "GET" });
+    const parentEnvelope = parentResponse.ok ? await parentResponse.json().catch(() => null) : null;
+    delegationParent = parentEnvelope?.data;
+    if (!parentEnvelope?.success || delegationParent?.run_id !== run.parent_run_id || delegationParent.owner_subject !== auth.subject ||
+        delegationParent.harness_id !== "dynamic_agents" || delegationParent.parent_run_id ||
+        typeof delegationParent.conversation_id !== "string" || typeof delegationParent.agent_id !== "string") {
+      return NextResponse.json({ error: "Delegation could not be authorized" }, { status: 403 });
+    }
+    const parentDenied = await requireAgentUsePermission({
+      subject: auth.subject, agentId: delegationParent.agent_id, email: auth.email,
+      tenantId: auth.tenantId, isServiceAccount: auth.isServiceAccount, traceparent: auth.traceparent,
+    });
+    if (parentDenied) return parentDenied;
+  }
   const authorize = permission === "write" ? authorizeConversationWriteAccess : authorizeConversationReadAccess;
-  const access = await authorize(auth, run.conversation_id, run.agent_id);
+  // Child provider sessions have private execution IDs, not UI conversations.
+  // Only Engine-attested lineage can bind them to an authorized parent chat.
+  const access = await authorize(auth, delegationParent?.conversation_id ?? run.conversation_id, delegationParent?.agent_id ?? run.agent_id);
   if (access.denial) return access.denial;
-  return { auth, config, response };
+  return { auth, config, response, ...(delegationParent && { delegationParent }) };
 }

@@ -92,6 +92,29 @@ cp ai-platform-engineering/values-external-secrets.yaml.example values-external-
 # Edit to point at your Vault / AWS Secrets Manager / GCP Secret Manager store
 ```
 
+MCP ExternalSecrets retain `v1beta1` as the default for compatibility. If your
+cluster serves only `external-secrets.io/v1`, set this explicitly in your values file:
+
+```yaml
+global:
+  externalSecrets:
+    apiVersion: v1
+```
+
+- This setting works with both the parent chart and standalone `mcp-server` installs.
+- The primary parameter is empty by default, so the legacy
+  `global.llmSecrets.externalSecrets.apiVersion: v1` setting also works on its own.
+- A nonempty `global.externalSecrets.apiVersion` takes precedence over the legacy
+  setting, including an explicit `v1beta1` override.
+- Keep `apiVersion: v1beta1` for clusters that require that version.
+
+For an existing Helm release, switch to `v1` while the cluster still serves
+`v1beta1`. If `v1beta1` has already been removed and Helm cannot read the previous
+release manifest, follow [Helm's release-manifest migration guidance](https://helm.sh/docs/v3/topics/kubernetes_apis/#updating-api-versions-of-a-release-manifest)
+before retrying the upgrade. Changing values alone does not update the stored
+manifest, and releases migrated to `v1` should not be rolled back to a chart that
+requires the removed API version.
+
 ## Step 3 — Choose agents
 
 MCP integrations are enabled via Helm tags. Common profiles:

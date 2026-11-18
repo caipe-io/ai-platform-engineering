@@ -5,6 +5,12 @@ description: Verify all prerequisites are met before a release by checking PRs, 
 
 # Release Readiness Check
 
+For this repository, use the maintained
+[feature regression matrix](https://github.com/caipe-io/ai-platform-engineering/blob/main/docs/docs/development/caipe-regression-suite.md)
+as the acceptance plan. In a source checkout, `.agents/skills/caipe-regression-suite/SKILL.md`
+provides the execution procedure. Reuse the user's approved target and scope;
+readiness review alone does not authorize deployments or additional test writes.
+
 Orchestrate GitHub, ArgoCD, and Jira agents to perform a comprehensive pre-release verification covering code readiness, environment health, and issue resolution.
 
 ## Instructions
@@ -45,7 +51,8 @@ Orchestrate GitHub, ArgoCD, and Jira agents to perform a comprehensive pre-relea
    - All issues in the release fixVersion resolved?
 2. **Testing status**:
    - QA sign-off tickets completed?
-   - Regression test results?
+   - Matching-candidate matrix results, expanded per enabled runtime, workflow, skill, legacy binding and bot provider/context?
+   - Every assertion marked PASS, FAIL, BLOCKED, NOT_RUN or justified NOT_APPLICABLE, with evidence kind, artifact references and cleanup results?
    - Performance test results?
 3. **Documentation**:
    - Release notes drafted?
@@ -122,6 +129,7 @@ Compile all checks into a Go/No-Go decision with clear justification.
 ## Guidelines
 
 - A single failing critical check makes the verdict NO-GO
+- Missing required live coverage is NO-GO; healthy pods, catalog checks, mocked tests and a first model reply cannot establish full feature or backward-compatibility acceptance
 - Warnings make the verdict CONDITIONAL (can proceed with acknowledgment)
 - Always include a rollback plan in the readiness report
 - Check for breaking changes and verify they have corresponding ADRs in `docs/docs/changes/`

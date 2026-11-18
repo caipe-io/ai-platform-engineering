@@ -114,6 +114,8 @@ export interface Config {
    * Set DYNAMIC_AGENTS_ENABLED=true to enable.
    */
   dynamicAgentsEnabled: boolean;
+  /** Whether first-install admins are automatically offered the guided setup wizard. */
+  setupWizardEnabled: boolean;
   /**
    * Whether the admin Feedback tab and feedback API are enabled.
    * Enabled by default. Set FEEDBACK_ENABLED=false to disable.
@@ -169,6 +171,8 @@ export interface Config {
   schedulerEnabled: boolean;
   /** Whether the Schedules navigation tab is limited to administrators */
   schedulerAdminOnly: boolean;
+  /** Whether verbose browser-console debug logging is enabled (off unless UI_DEBUG_LOGGING is enabled; server-side runtime env) */
+  uiDebugLogging: boolean;
   /** Whether Jira ticket creation from feedback/report is enabled */
   jiraTicketEnabled: boolean;
   /** Jira project key for ticket creation (e.g., "OPENSD") */
@@ -270,6 +274,7 @@ const DEFAULT_CONFIG: Config = {
   workflowsEnabled: false,
   projectsEnabled: false,
   dynamicAgentsEnabled: false,
+  setupWizardEnabled: true,
   feedbackEnabled: true,
   allowBuiltinSkillMutation: false,
   auditLogsEnabled: false,
@@ -285,6 +290,7 @@ const DEFAULT_CONFIG: Config = {
   scheduleEditorAgentId: null,
   schedulerEnabled: false,
   schedulerAdminOnly: false,
+  uiDebugLogging: false,
   agentProtocol: 'agui',
   reportProblemEnabled: true,
   provideFeedbackEnabled: false,
@@ -382,6 +388,7 @@ export function getServerConfig(): Config {
   const workflowsEnabled = env('WORKFLOWS_ENABLED') === 'true';
   const projectsEnabled = env('PROJECTS_ENABLED') === 'true';
   const dynamicAgentsEnabled = env('DYNAMIC_AGENTS_ENABLED') === 'true';
+  const setupWizardEnabled = env('SETUP_WIZARD_ENABLED') !== 'false';
   const feedbackEnabled = env('FEEDBACK_ENABLED') !== 'false';
   // Default `false` (locked). Must mirror the server-side check in
   // `lib/builtin-skill-policy.ts` so the UI never offers an action
@@ -475,6 +482,7 @@ export function getServerConfig(): Config {
     workflowsEnabled,
     projectsEnabled,
     dynamicAgentsEnabled,
+    setupWizardEnabled,
     feedbackEnabled,
     allowBuiltinSkillMutation,
     auditLogsEnabled,
@@ -490,6 +498,7 @@ export function getServerConfig(): Config {
     scheduleEditorAgentId: env('SCHEDULE_EDITOR_AGENT_ID') || null,
     schedulerEnabled: env('SCHEDULER_ENABLED') === 'true',
     schedulerAdminOnly: env('SCHEDULER_ADMIN_ONLY') === 'true',
+    uiDebugLogging: enabledEnv('UI_DEBUG_LOGGING'),
     agentProtocol,
     reportProblemEnabled,
     provideFeedbackEnabled,

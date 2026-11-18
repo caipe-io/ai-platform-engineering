@@ -320,9 +320,12 @@ disposable.
 
 ### Claude SDK execution and MCP tools
 
-- Choose **Claude Agent SDK** for an Engine-local SDK process or **Claude Agent
-  SDK (Remote worker)** for a separately deployed worker. Operator profiles own
-  model credentials, model ID, workspace root and SDK permission mode.
+- Agent Builder offers **Claude Agent SDK** and **Claude Code**. SDK operator
+  profiles select local execution inside Engine or a separate worker.
+  **Show advanced runtimes** exposes the SDK-over-ACP adapter. Existing saved
+  runtime IDs, profiles and conversation bindings remain unchanged.
+- Operator profiles own model credentials, model ID, workspace root and SDK
+  permission mode.
 - SDK built-in shell/filesystem tools and settings discovery are disabled.
   Each binding gets its own working directory. These directories provide
   separation, not an operating-system sandbox.
@@ -446,6 +449,68 @@ inside the remote worker; it does not introduce another browser session manager.
 - No OpenShell or per-session Kubernetes pod allocation is implied. Run a
   non-root worker with only its own credentials and an isolated workspace.
   Directories alone do not provide operating-system sandboxing.
+
+#### Opt-in PR research profile
+
+A `claude_code_cli_acp` worker can opt a local operator profile into
+research through `HARNESS_ENGINE_CLAUDE_SDK_PROFILES_JSON`:
+
+```json
+{"research":{"model":"example-model","cwd":"/workspace","permission_mode":"dontAsk","research":{"max_seconds":900,"max_external_tool_calls":100,"max_budget_usd":5}}}
+```
+
+- Point a parent worker alias at this local profile and select it in Agent
+  Builder. Set the agent's maximum turns to 100 (at least six are required).
+  Choose a provider-supported reasoning model. Existing profiles stay unchanged.
+- The worker performs **Investigate → Challenge → Report** in one native session.
+  Intermediate answers are thought/progress events; only the gated final report
+  becomes an assistant answer. Each later pass resumes the same session.
+  A rejected report receives the exact missing evidence and next unread offsets,
+  with up to `max_report_repairs` corrective attempts (default two) inside the
+  same shared turn, cost, and time budgets. A model's `complete=true` is not
+  sufficient to publish. Confirmed native formatter output is validated even
+  when the CLI result envelope omits its structured-output field.
+- The gate requires successful source inspection in both initial passes, the
+  same PR head fetched in both passes, a fetched diff, a complete changed-file
+  inventory, and a report accounting for that exact inventory and head. A PR
+  URL in the task must match the inspected target. This profile handles one PR
+  per run; it does not certify semantic correctness or exhaustive verification.
+- With `HARNESS_ENGINE_CLAUDE_CLI_ISOLATION=landlock`, native `Read`, `Grep`, and
+  `Glob` operate inside existing OS isolation. On hosts without Landlock ABI 6,
+  an operator can instead select `artifacts`: this mode accepts only research
+  profiles with an empty native-tool allowlist and enables **only the scoped
+  artifact reader**, not native filesystem, shell, or edit tools. It is a tool
+  capability boundary inside the worker container, not a per-session OS sandbox.
+  Do not use it for untrusted executables or generic coding tools.
+  Helm accepts this explicit mode as `harnessEngine.workers.cli-acp.isolation=artifacts`;
+  the worker rejects non-research profiles or any native tools before execution.
+- The read-only `research.read_artifact` MCP tool can access only this workspace's
+  `.claude/projects/**/tool-results` files, up to 16 MiB. It decodes JSON content
+  wrappers and returns bounded character pages, offsets, and a content hash.
+  Anchored directory descriptors refuse symlinks at every component, including
+  directory-swap races; this reader does not depend on Landlock for path safety.
+  Saved large outputs must have contiguous, complete page receipts before a
+  verified report can be released. JSON escaping is decoded, never blindly
+  rewritten in source text.
+- Model turns, CLI-reported dollar cost, and the deadline are shared across all
+  passes. MCP dispatch is capped before broker invocation. A deadline terminates
+  the CLI; already dispatched operations retain the existing drain semantics.
+  The cost setting is a CLI budget, not a billing guarantee.
+  Resumed CLI results include prior session spend: use the highest reported
+  total, never sum pass totals. Earlier chat spend counts conservatively toward
+  the research allowance. A result at or above that allowance is withheld.
+- Budget, evidence, or structured-report failures produce **Research incomplete**,
+  never a verified final report. Cancellation stops later passes. Ordinary CLI
+  chats keep their single-pass behavior and default tool allowlist.
+  Phase usage receipts retain only the phase, model turns, CLI-reported cost,
+  and a whitelisted stop classification; provider error bodies and credentials
+  are not exposed. Turn/cost/schema limits have distinct incomplete notices.
+- Give a review agent only its needed read tools. The profile does not add shell,
+  edit, or repository-write tools. Tests can be inspected; execution requires a
+  separately authorized tool and must not be inferred from reading test code.
+- Engine events and native transcripts retain progress across browser disconnects.
+  Automatic takeover of a running research process after worker loss is not
+  implemented; the existing worker/session recovery rules still apply.
 
 #### Claude Code CLI process isolation
 
@@ -658,3 +723,77 @@ migration so they enforce the same `execution_thread_leases` ownership fence.
   tools, checkpoint persistence and event replay remain real.
 - These tests do not certify model quality or live Slack/Webex delivery. App-owned
   assistants retain their own declared stream and lifecycle.
+
+
+### Manage Claude operator profiles in Agent Builder
+
+Platform administrators can choose **Manage operator profiles** next to the
+operator profile picker for Claude SDK, remote SDK, SDK ACP, and CLI ACP agents.
+Creating a profile requires both `admin_ui:admin` and platform
+`system_config:admin`. Publication is audited by the BFF.
+
+- Choose an existing deployment-owned worker configuration.
+- Enter a unique profile ID suffix (for example `100`) or a full `managed-`
+  ID. The dialog previews the stored ID and adds the prefix once. Set the
+  display name, execution model ID, and default maximum turns (1–100). Use a model ID supported by the worker's
+  existing provider; publication does not probe model availability.
+- Invalid IDs, duplicate IDs, model-ID syntax, and turn limits are checked
+  before submission. Server validation errors identify the field. Reloading
+  the profile list preserves the current draft.
+- Select the new profile and save the agent. New conversations use that
+  configuration; existing conversations retain their pinned agent version.
+- If creation succeeds but selection fails, **Retry selection** selects the
+  saved profile without publishing it again or discarding the agent draft.
+- Changing profiles updates the displayed turn default. Only an explicit author
+  override carries across profile selections.
+- To revise a profile, copy its settings and publish a new ID. Profiles are
+  immutable and cannot retarget an existing conversation.
+
+Profiles persist in `harness_claude_profiles` in the Engine database. Engine
+replicas refresh them before catalog, validation, publication, and run admission.
+Environment profiles remain the default; no migration or Helm change is required.
+Managed profiles inherit the base worker's credentials, endpoint, workspace,
+permission mode, native-tool allowlist, and isolation policy. Those settings
+cannot be changed in the editor. Agent authors may override the profile's turn
+**default**, within the same 1–100 bounds; this is not a mandatory minimum duration.
+
+Upgrade both the Engine/UI and workers before using managed remote profiles.
+Workers advertise support for the authenticated operator-model field; older
+workers still work with deployment profiles but reject managed profiles before
+execution. The Engine derives the model from the persisted admin profile, not
+from an agent author's draft or per-turn override. Worker model discovery is
+read-only and authenticated; unavailable or older workers may not display their
+base model. Model policy updates do not grant any additional MCP permissions.
+
+### Harness-owned subagents
+
+Deep Agents supervisors can select published Claude SDK, remote SDK, SDK ACP,
+Claude Code CLI ACP and AgentCore agents as compiled subagents. Harness Engine
+admits an independent child run using the child's published version, prompt,
+operator profile and session manager. No extra model or new worker is needed.
+This requires Engine execution; the compatibility service rejects these
+references instead of reconstructing a different model.
+
+- Caller agent-use authorization is checked at graph construction and each invocation.
+- Cached graphs resolve caller identity at invocation; credentials never enter graph state.
+- Each delegated task has a separate, deterministic conversation/request identity.
+- Child text and tool start/result events stream inside the delegated task; only
+  its final report returns to the supervisor. Child events remain in the Engine journal.
+  Progress snapshots are cumulative and bounded separately from the final report.
+  A report requires explicit `result.updated.final_content`: SDK workers use the
+  native SDK result, CLI ACP workers use the prompt response's
+  `_meta["caipe.io/harness"].final_content`, and managed AgentCore uses the
+  `messageStop: end_turn` boundary. Custom AgentCore SSE needs a JSON `result` or
+  `response` string; plain deltas remain streamable but cannot certify a final report.
+  Other ACP executables must supply the same optional metadata for delegation.
+  Without it, direct chat is unchanged and the supervisor receives an explicit
+  no-retry error instead of preamble text presented as a completed report.
+- `SubAgentRef.timeout_seconds` defaults to 120 (1–600). Stop/deadline requests
+  child cancellation through the existing adapter; uncertain workers keep their reservations.
+  Caller cleanup waits at most 100 ms; Engine retains an asynchronous reconciliation
+  task to cancel a late admission, including a committed run with a delayed receipt.
+  Reconciliation lasts for the Engine process lifetime; crash recovery is not added.
+- Existing Deep Agents children and A2A settings keep their current execution paths.
+- ACP interactive permissions remain declined. A paused child is reported to the
+  supervisor as requiring attention; parent-driven child approval/resume and
+  automatic recovery of a failed parent are not implemented by this bridge.

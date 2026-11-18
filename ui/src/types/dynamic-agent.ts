@@ -62,6 +62,7 @@ export interface MCPServerConfig {
 }
 
 export interface RemoteAgentRegistryEntry {
+  framework?: import("@/lib/agent-framework").AgentFramework;
   _id: string;
   name: string;
   description?: string;
@@ -74,7 +75,7 @@ export interface RemoteAgentRegistryEntry {
 }
 
 export interface RemoteAgentCredentialSource {
-  kind: "caller_token" | "secret_ref" | "provider_connection";
+  kind: "none" | "caller_token" | "secret_ref" | "provider_connection";
   target: "header";
   name: string;
   secret_ref?: string;
@@ -296,6 +297,7 @@ export interface MiddlewareEntry {
  * are applied with their default params on the server side.
  */
 export interface FeaturesConfig {
+  remote_agents_as_subagents?: boolean;
   middleware: MiddlewareEntry[];
 }
 
@@ -347,6 +349,7 @@ export type ReasoningEffort = "low" | "medium" | "high" | "max";
  * When configured, the parent agent can delegate tasks to this subagent.
  */
 export interface SubAgentRef {
+  timeout_seconds?: number;
   agent_id: string; // MongoDB ObjectId of the subagent
   name: string; // Routing identifier (e.g., 'code-reviewer')
   description: string; // Description for LLM routing decisions
@@ -436,7 +439,14 @@ export interface AgentPresentation {
   available: boolean;
 }
 
+export interface AgentExecutionReadiness {
+  ready: boolean;
+  code?: "HARNESS_AGENT_NOT_READY";
+  message?: string;
+}
+
 export interface DynamicAgentConfig {
+  execution_readiness?: AgentExecutionReadiness;
   /** Deployment-owned, opt-in model-input projection. Not a permission grant. */
   app_context_prompt?: { app_ids: string[]; fields: string[]; max_bytes?: number };
   _id: string;
@@ -519,6 +529,13 @@ export interface DynamicAgentConfigWithPermissions extends DynamicAgentConfig {
   permissions: AgentRowPermissions;
 }
 
+/** Present only in the opt-in unified catalog; never a native agent configuration. */
+export interface ConnectedAgentCatalogEntry extends RemoteAgentRegistryEntry { catalog_source: "a2a" }
+export type AgentCatalogEntry = DynamicAgentConfigWithPermissions | ConnectedAgentCatalogEntry;
+export function isConnectedAgent(entry: AgentCatalogEntry): entry is ConnectedAgentCatalogEntry {
+  return "catalog_source" in entry && entry.catalog_source === "a2a";
+}
+
 export interface DynamicAgentConfigCreate {
   harness_save?: unknown;
   id: string; // Required: User-friendly slug ID derived from name
@@ -584,6 +601,8 @@ export interface DynamicAgentConfigUpdate {
  * Available agent for subagent selection (returned by available-subagents endpoint)
  */
 export interface AvailableSubagent {
+  execution_readiness?: AgentExecutionReadiness;
+  execution_harness_id?: string;
   id: string;
   name: string;
   description?: string;
@@ -597,8 +616,11 @@ export interface AvailableSubagent {
 // =============================================================================
 
 export interface LLMModelConfig {
-  _id: string; // model_id
+  _id: string; // registry ID; distinct from provider model ID for named connections
   model_id: string;
+  upstream_model_id?: string;
+  connection_id?: string;
+  connection_name?: string;
   name: string;
   provider: string;
   description?: string;
@@ -609,6 +631,8 @@ export interface LLMModelConfig {
 }
 
 export interface LLMModelCreate {
+  connection_id?: string;
+  upstream_model_id?: string;
   model_id: string; // Unique model identifier (e.g., "gpt-4o")
   name: string;
   provider: string;

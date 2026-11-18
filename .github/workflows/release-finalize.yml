@@ -23,6 +23,11 @@ permissions:
   contents: read
   actions: read
 
+# Build completions for one tag must not race to create its release entry.
+concurrency:
+  group: release-finalize-${{ github.event.client_payload.tag || github.event.workflow_run.head_branch || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
   check-and-publish:
     name: Check CI Status and Publish
@@ -71,7 +76,7 @@ jobs:
             TAG="$UPSTREAM_BRANCH"
             WORKFLOW="$UPSTREAM_WORKFLOW"
             CONCLUSION="$UPSTREAM_CONCLUSION"
-            if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then exit 0; fi
+            if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]]; then exit 0; fi
             tag_sha=$(gh api "repos/${GH_REPOSITORY}/commits/${TAG}" --jq '.sha')
             if [[ "$tag_sha" != "$UPSTREAM_SHA" ]]; then exit 0; fi
           fi
@@ -85,10 +90,14 @@ jobs:
             exit 0
           fi
 
-          if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || (( ${#TAG} > 128 )); then
-            echo "❌ Tag must match x.y.z and be at most 128 characters"
+          if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]] || (( ${#TAG} > 128 )); then
+            echo "❌ Tag must match x.y.z or x.y.z-rc.N and be at most 128 characters"
             exit 1
           fi
+
+          IS_RC=false
+          if [[ "$TAG" == *-rc.* ]]; then IS_RC=true; fi
+          tag_sha=$(gh api "repos/${GH_REPOSITORY}/commits/${TAG}" --jq '.sha')
 
           if ! [[ "$CONCLUSION" =~ ^(success|failure|cancelled|skipped|timed_out|action_required|neutral)$ ]]; then
             echo "❌ Unexpected workflow conclusion: $CONCLUSION"
@@ -102,6 +111,8 @@ jobs:
 
           {
             echo "tag=$TAG"
+            echo "is_rc=$IS_RC"
+            echo "tag_sha=$tag_sha"
             echo "workflow=$WORKFLOW"
             echo "conclusion=$CONCLUSION"
           } >> "$GITHUB_OUTPUT"
@@ -112,11 +123,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.payload.outputs.tag }}
+          EXPECTED_SHA: ${{ steps.payload.outputs.tag_sha }}
+          IS_RC: ${{ steps.payload.outputs.is_rc }}
         run: |
           echo "🔍 Checking CI statuses for tag: $TAG"
           echo ""
 
-          # Required CI workflows that must pass for release.
+          set -euo pipefail
+          # Required CI workflows that must pass for stable and RC publication.
           # Skill Scanner is gated alongside the other component images so a
           # broken `ghcr.io/<owner>/skill-scanner:<appVersion>` actually blocks
           # the release — the skill-scanner subchart in
@@ -153,8 +167,9 @@ jobs:
               --repo="${{ github.repository }}" \
               --workflow="$WF_NAME" \
               --branch="$TAG" \
+              --event=push \
               --limit=1 \
-              --json status,conclusion,databaseId \
+              --json status,conclusion,databaseId,headSha \
               2>/dev/null || echo "[]")
 
             RUN_COUNT=$(echo "$RUN_DATA" | jq 'length')
@@ -168,12 +183,20 @@ jobs:
             STATUS=$(echo "$RUN_DATA" | jq -r '.[0].status // "unknown"')
             CONCLUSION=$(echo "$RUN_DATA" | jq -r '.[0].conclusion // "null"')
             RUN_ID=$(echo "$RUN_DATA" | jq -r '.[0].databaseId')
+            RUN_SHA=$(echo "$RUN_DATA" | jq -r '.[0].headSha')
+
+            if [[ "$RUN_SHA" != "$EXPECTED_SHA" ]]; then
+              echo "❌ workflow commit does not match the release tag"
+              ALL_PASSED=false
+              ANY_FAILED=true
+              continue
+            fi
 
             if [[ "$STATUS" == "completed" ]]; then
               if [[ "$CONCLUSION" == "success" ]]; then
                 echo "✅ passed"
-              elif [[ "$CONCLUSION" == "skipped" ]]; then
-                echo "⏭️ skipped (OK)"
+              elif [[ "$CONCLUSION" == "skipped" && "$IS_RC" != true ]]; then
+                echo "⏭️ skipped (OK for stable releases)"
               else
                 echo "❌ failed ($CONCLUSION)"
                 ALL_PASSED=false
@@ -212,23 +235,60 @@ jobs:
             echo "⏳ Waiting for CI workflows to start"
           fi
 
+      - name: Checkout trusted RC publisher
+        if: steps.check-cis.outputs.all_passed == 'true' && steps.payload.outputs.is_rc == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Publish RC pre-release
+        id: publish-rc
+        if: steps.check-cis.outputs.all_passed == 'true' && steps.payload.outputs.is_rc == 'true'
+        uses: ./.github/actions/publish-rc-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          tag: ${{ steps.payload.outputs.tag }}
+
       - name: 🚀 Publish release
         id: publish-release
-        if: steps.check-cis.outputs.all_passed == 'true'
+        if: steps.check-cis.outputs.all_passed == 'true' && steps.payload.outputs.is_rc == 'false'
+        timeout-minutes: 12
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.payload.outputs.tag }}
         run: |
+          set -euo pipefail
+
           echo "🚀 Publishing release $TAG..."
 
           # Check if release exists and is a draft
-          RELEASE_INFO=$(gh release view "$TAG" --repo="${{ github.repository }}" --json isDraft,url 2>/dev/null || echo '{"isDraft":false}')
+          RELEASE_INFO=$(gh release view "$TAG" --repo="${{ github.repository }}" --json isDraft,url,body)
           IS_DRAFT=$(echo "$RELEASE_INFO" | jq -r '.isDraft')
 
-          if [[ "$IS_DRAFT" != "true" ]]; then
-            echo "ℹ️ Release $TAG is not a draft (already published or doesn't exist)"
+          if [[ "$IS_DRAFT" == "false" ]]; then
+            echo "ℹ️ Release $TAG is already published"
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
             exit 0
+          elif [[ "$IS_DRAFT" != "true" ]]; then
+            echo "❌ Could not determine draft status for release $TAG"
+            exit 1
           fi
+
+          # Docs deploy independently of image CI. Keep the release as a draft
+          # until the exact link in its body is reachable on the public site.
+          NOTES_URL=$(jq -r '.body // ""' <<< "$RELEASE_INFO" | tr -d '\r' | sed -nE \
+            's@^📖 Release notes: \[[^]]+ release notes\]\((https://caipe\.io/releases/[A-Za-z0-9][A-Za-z0-9._-]*)\)$@\1@p')
+          if ! [[ "$NOTES_URL" =~ ^https://caipe\.io/releases/[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "❌ Expected exactly one release-notes link in the draft body; leaving release as a draft"
+            exit 1
+          fi
+          echo "📰 Waiting for release notes: $NOTES_URL"
+          curl --fail --silent --show-error --location \
+            --retry 10 --retry-delay 30 --retry-all-errors \
+            --connect-timeout 10 --max-time 20 --output /dev/null "$NOTES_URL"
 
           # Publish the release
           gh release edit "$TAG" --repo="${{ github.repository }}" --draft=false
@@ -237,77 +297,8 @@ jobs:
           echo "✅ Release $TAG published!"
           echo "🔗 $(echo "$RELEASE_INFO" | jq -r '.url')"
 
-      - name: 🧹 Clean up old RC tags
-        if: steps.check-cis.outputs.all_passed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.payload.outputs.tag }}
-        run: |
-          echo "🧹 Cleaning up old RC tags..."
-
-          # Parse new version components (e.g., 0.2.9 -> major=0, minor=2, patch=9)
-          if [[ "$TAG" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            NEW_MAJOR="${BASH_REMATCH[1]}"
-            NEW_MINOR="${BASH_REMATCH[2]}"
-            NEW_PATCH="${BASH_REMATCH[3]}"
-          else
-            echo "⚠️ Could not parse version from tag: $TAG"
-            exit 0
-          fi
-
-          echo "📦 New release: $NEW_MAJOR.$NEW_MINOR.$NEW_PATCH"
-
-          # Get all tags via GitHub API and filter for RC tags
-          RC_TAGS=$(gh api "/repos/${{ github.repository }}/tags" --paginate --jq '.[].name' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$' || true)
-
-          if [[ -z "$RC_TAGS" ]]; then
-            echo "ℹ️ No RC tags found"
-            exit 0
-          fi
-
-          DELETED=0
-          SKIPPED=0
-
-          while IFS= read -r RC_TAG; do
-            [[ -z "$RC_TAG" ]] && continue
-
-            # Parse RC tag (e.g., 0.2.8-rc.1 -> base=0.2.8)
-            if [[ "$RC_TAG" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)-rc\.([0-9]+)$ ]]; then
-              RC_MAJOR="${BASH_REMATCH[1]}"
-              RC_MINOR="${BASH_REMATCH[2]}"
-              RC_PATCH="${BASH_REMATCH[3]}"
-
-              # Delete RC if its base version is less than the new release version
-              # Compare: RC_VERSION < NEW_VERSION
-              SHOULD_DELETE=false
-
-              if [[ "$RC_MAJOR" -lt "$NEW_MAJOR" ]]; then
-                SHOULD_DELETE=true
-              elif [[ "$RC_MAJOR" -eq "$NEW_MAJOR" && "$RC_MINOR" -lt "$NEW_MINOR" ]]; then
-                SHOULD_DELETE=true
-              elif [[ "$RC_MAJOR" -eq "$NEW_MAJOR" && "$RC_MINOR" -eq "$NEW_MINOR" && "$RC_PATCH" -lt "$NEW_PATCH" ]]; then
-                SHOULD_DELETE=true
-              fi
-
-              if [[ "$SHOULD_DELETE" == "true" ]]; then
-                echo "  🗑️ Deleting $RC_TAG (base $RC_MAJOR.$RC_MINOR.$RC_PATCH < $TAG)"
-                if gh api -X DELETE "/repos/${{ github.repository }}/git/refs/tags/$RC_TAG" 2>/dev/null; then
-                  ((DELETED++)) || true
-                else
-                  echo "    ⚠️ Failed to delete $RC_TAG"
-                fi
-              else
-                echo "  ⏭️ Keeping $RC_TAG (base $RC_MAJOR.$RC_MINOR.$RC_PATCH >= $TAG)"
-                ((SKIPPED++)) || true
-              fi
-            fi
-          done <<< "$RC_TAGS"
-
-          echo ""
-          echo "✅ RC cleanup complete: $DELETED deleted, $SKIPPED kept"
-
       - name: ❌ Mark release as failed
-        if: steps.check-cis.outputs.any_failed == 'true'
+        if: steps.check-cis.outputs.any_failed == 'true' && steps.payload.outputs.is_rc == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.payload.outputs.tag }}
@@ -387,23 +378,36 @@ jobs:
           ALL_PASSED: ${{ steps.check-cis.outputs.all_passed }}
           ANY_FAILED: ${{ steps.check-cis.outputs.any_failed }}
           ANY_RUNNING: ${{ steps.check-cis.outputs.any_running }}
+          TRIGGER_WORKFLOW: ${{ steps.payload.outputs.workflow }}
+          PUBLISHED: ${{ steps.publish-release.outputs.published }}
+          ALREADY_PUBLISHED: ${{ steps.publish-release.outputs.already_published }}
+          RC_RESULT: ${{ steps.publish-rc.outcome }}
         run: |
           echo "## Release Finalize Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Tag | \`$TAG\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Triggered by | \`${{ steps.payload.outputs.workflow }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered by | \`$TRIGGER_WORKFLOW\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [[ "$ALL_PASSED" == "true" ]]; then
+          if [[ "$RC_RESULT" == "success" ]]; then
+            echo "### ✅ RC Pre-release Available" >> "$GITHUB_STEP_SUMMARY"
+            echo "Required builds passed. The RC entry includes changes and installation commands." >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$PUBLISHED" == "true" ]]; then
             echo "### ✅ Release Published" >> $GITHUB_STEP_SUMMARY
             echo "All CI builds passed. Release has been published." >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "🧹 Old RC tags (for versions < \`$TAG\`) have been cleaned up." >> $GITHUB_STEP_SUMMARY
+            echo "Existing RC Git tags are retained." >> $GITHUB_STEP_SUMMARY
+          elif [[ "$ALREADY_PUBLISHED" == "true" ]]; then
+            echo "### ✅ Release Already Published" >> $GITHUB_STEP_SUMMARY
+            echo "This release was already published; its RC Git tags are retained." >> $GITHUB_STEP_SUMMARY
+          elif [[ "$ALL_PASSED" == "true" ]]; then
+            echo "### ⚠️ Release Not Published" >> $GITHUB_STEP_SUMMARY
+            echo "CI passed, but this run did not publish the release. Check the publication step, including release-notes availability." >> $GITHUB_STEP_SUMMARY
           elif [[ "$ANY_FAILED" == "true" ]]; then
             echo "### ❌ Release Failed" >> $GITHUB_STEP_SUMMARY
-            echo "One or more CI builds failed. Release remains as draft." >> $GITHUB_STEP_SUMMARY
+            echo "One or more CI builds failed. Publication is blocked; any existing draft remains unpublished." >> $GITHUB_STEP_SUMMARY
           elif [[ "$ANY_RUNNING" == "true" ]]; then
             echo "### ⏳ Waiting for CI" >> $GITHUB_STEP_SUMMARY
             echo "Some CI builds are still running. Will check again when they complete." >> $GITHUB_STEP_SUMMARY

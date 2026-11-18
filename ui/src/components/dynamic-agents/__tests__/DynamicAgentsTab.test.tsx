@@ -1,10 +1,19 @@
 import React from "react";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, act, within } from "@testing-library/react";
 
 // assisted-by Codex Codex-sonnet-4-6
 
 const mockPush = jest.fn();
 const mockCreateConversation = jest.fn();
+let mockOnRegistryChange: (() => void) | undefined;
+
+jest.mock("next-auth/react", () => ({ useSession: () => ({ data: { sub: "test-user" } }) }));
+jest.mock("../RemoteAgentRegistry", () => ({
+  RemoteAgentRegistry: ({ renderCatalog, onRegistryChange, onCreateAgent }: { renderCatalog: (controls: unknown) => React.ReactNode; onRegistryChange?: () => void; onCreateAgent?: () => void }) => {
+    mockOnRegistryChange = onRegistryChange;
+    return renderCatalog({ toolbar: <button type="button" data-tour="add-agent" onClick={onCreateAgent}>Add agent</button>, openAddAgent: jest.fn(), refresh: jest.fn(), renderAgent: (item: { _id: string; name: string }) => <div key={item._id}>{item.name}</div> });
+  },
+}));
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
@@ -79,6 +88,8 @@ describe("DynamicAgentsTab search + pagination", () => {
   let fetchMock: jest.Mock;
 
   beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem("caipe:agent-catalog-view:test-user", "list");
     jest.useFakeTimers();
     mockPush.mockReset();
     mockCreateConversation.mockReset();
@@ -132,7 +143,7 @@ describe("DynamicAgentsTab search + pagination", () => {
     });
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?page=1&page_size=20");
+      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=20");
     });
   });
 
@@ -174,7 +185,7 @@ describe("DynamicAgentsTab search + pagination", () => {
     });
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?page=1&page_size=20&search=ops");
+      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=20&search=ops");
     });
   });
 
@@ -198,7 +209,7 @@ describe("DynamicAgentsTab search + pagination", () => {
     fireEvent.click(screen.getByText("2"));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?page=2&page_size=20");
+      expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?catalog=true&source=all&page=2&page_size=20");
     });
 
     fetchMock.mockClear();
@@ -213,7 +224,7 @@ describe("DynamicAgentsTab search + pagination", () => {
     });
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?page=1&page_size=20&search=ops");
+      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=20&search=ops");
     });
   });
 
@@ -237,7 +248,7 @@ describe("DynamicAgentsTab search + pagination", () => {
     fireEvent.click(screen.getByText("2"));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?page=2&page_size=20");
+      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?catalog=true&source=all&page=2&page_size=20");
     });
   });
 
@@ -260,17 +271,30 @@ describe("DynamicAgentsTab search + pagination", () => {
     // Move to page 2 first so we can assert the reset-to-1 behavior.
     fireEvent.click(screen.getByText("2"));
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?page=2&page_size=20");
+      expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?catalog=true&source=all&page=2&page_size=20");
     });
-    const pageSizeSelect = await screen.findByRole("combobox");
+    const pageSizeSelect = await screen.findByRole("combobox", { name: "Agents per page" });
 
     fetchMock.mockClear();
 
     fireEvent.change(pageSizeSelect, { target: { value: "50" } });
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?page=1&page_size=50");
+      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=50");
     });
+  });
+
+  it("keeps the page-size selector available when all agents fit on one page", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ success: true, data: { items: [makeAgent()], total: 46 } }));
+    render(<DynamicAgentsTab />);
+    const pageSizeSelect = await screen.findByRole("combobox", { name: "Agents per page" });
+    fireEvent.change(pageSizeSelect, { target: { value: "50" } });
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=50"));
+    const updated = await screen.findByRole("combobox", { name: "Agents per page" });
+    expect(updated).toHaveValue("50");
+    expect(screen.queryByRole("button", { name: "2", exact: true })).not.toBeInTheDocument();
+    fireEvent.change(updated, { target: { value: "10" } });
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=10"));
   });
 
   it("shows the no-results empty state for a search term, and Clear search resets search + refetches", async () => {
@@ -304,7 +328,7 @@ describe("DynamicAgentsTab search + pagination", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenLastCalledWith(
-        "/api/dynamic-agents?page=1&page_size=20&search=zzz-no-match",
+        "/api/dynamic-agents?catalog=true&source=all&page=1&page_size=20&search=zzz-no-match",
       );
     });
 
@@ -320,7 +344,7 @@ describe("DynamicAgentsTab search + pagination", () => {
 
     expect(screen.getByPlaceholderText("Search by name or ID...")).toHaveValue("");
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?page=1&page_size=20");
+      expect(fetchMock).toHaveBeenCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=20");
     });
     await screen.findByText("Ops Helper");
   });
@@ -474,6 +498,138 @@ describe("DynamicAgentsTab search + pagination", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Active", exact: true }));
     expect(await screen.findByText("Execution configuration is unavailable")).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+  });
+
+  it("switches to compact cards without refetching or losing agent management", async () => {
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Ops Helper");
+    const before = fetchMock.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Grid", exact: true }));
+    expect(screen.getByRole("article", { name: "Ops Helper" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Execution harness: LangChain Deep Agents" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(before);
+    fireEvent.click(screen.getByRole("button", { name: "Details for Ops Helper" }));
+    expect(screen.getByRole("dialog", { name: "Ops Helper" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete Ops Helper" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open agent" }));
+    expect(screen.getByTestId("dynamic-agent-editor")).toBeInTheDocument();
+  });
+
+  it("resizes cards without refetching and retains the choice when switching views", async () => {
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Ops Helper");
+    fireEvent.click(screen.getByRole("button", { name: "Grid", exact: true }));
+    const before = fetchMock.mock.calls.length;
+    const slider = screen.getByRole("slider", { name: "Card size" });
+    expect(slider).toHaveAttribute("aria-valuetext", "Balanced");
+    fireEvent.change(slider, { target: { value: "2" } });
+    expect(slider).toHaveAttribute("aria-valuetext", "Comfortable");
+    expect(localStorage.getItem("caipe:agent-catalog-card-size:test-user")).toBe("comfortable");
+    fireEvent.click(screen.getByRole("button", { name: "List", exact: true }));
+    expect(screen.queryByRole("slider", { name: "Card size" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Grid", exact: true }));
+    expect(screen.getByRole("slider", { name: "Card size" })).toHaveAttribute("aria-valuetext", "Comfortable");
+    expect(fetchMock).toHaveBeenCalledTimes(before);
+    expect(screen.getByRole("button", { name: "Chat with Ops Helper" })).toBeEnabled();
+  });
+
+  it("uses routed creation state after the registry chooses creation so browser Back closes the builder", async () => {
+    const onCreateAgent = jest.fn();
+    const { rerender } = render(<DynamicAgentsTab creating={false} onCreateAgent={onCreateAgent} />);
+    await screen.findByText("Ops Helper");
+    const createButton = screen.getByRole("button", { name: "Add agent", exact: true });
+    expect(createButton).toHaveAttribute("data-tour", "add-agent");
+    fireEvent.click(createButton);
+    expect(onCreateAgent).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("dynamic-agent-editor")).not.toBeInTheDocument();
+    rerender(<DynamicAgentsTab creating onCreateAgent={onCreateAgent} />);
+    expect(screen.getByTestId("dynamic-agent-editor")).toBeInTheDocument();
+    rerender(<DynamicAgentsTab creating={false} onCreateAgent={onCreateAgent} />);
+    expect(screen.queryByTestId("dynamic-agent-editor")).not.toBeInTheDocument();
+    expect(screen.getByText("Ops Helper")).toBeInTheDocument();
+  });
+
+  it.each(["Open Ops Helper", "Edit Ops Helper"])("opens the builder directly with %s", async (name) => {
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Ops Helper");
+    fireEvent.click(screen.getByRole("button", { name: "Grid", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name, exact: true }));
+    expect(screen.getByTestId("dynamic-agent-editor")).toHaveAttribute("data-agent-id", "agent-1");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("keeps grid Chat separate from opening the builder", async () => {
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Ops Helper");
+    fireEvent.click(screen.getByRole("button", { name: "Grid", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Chat with Ops Helper", exact: true }));
+    await waitFor(() => expect(mockCreateConversation).toHaveBeenCalledWith("agent-1"));
+    expect(screen.queryByTestId("dynamic-agent-editor")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("keeps disabled grid Chat from opening the builder", async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ success: true, data: { items: [makeAgent({ enabled: false })], total: 1 } }));
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Ops Helper");
+    fireEvent.click(screen.getByRole("button", { name: "Grid", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Chat with Ops Helper", exact: true }));
+    expect(mockCreateConversation).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("dynamic-agent-editor")).not.toBeInTheDocument();
+  });
+
+  it("requests the connected source while preserving the chosen List view", async () => {
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Ops Helper");
+    fireEvent.click(screen.getByRole("button", { name: "Connected", exact: true }));
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?catalog=true&source=connected&page=1&page_size=20"));
+    expect(screen.getByRole("button", { name: "List", exact: true })).toHaveAttribute("aria-pressed", "true");
+  });
+
+
+  it.each([20, 0])("recovers after a registry mutation reduces the total to %s on a later page", async remaining => {
+    let removed = false;
+    const connected = (index: number) => ({ _id: `remote-${index}`, name: `Remote ${index}`, catalog_source: "a2a", timeout_seconds: 120 });
+    fetchMock.mockImplementation(async (url: string) => {
+      const query = new URL(url, "http://localhost").searchParams;
+      const page = Number(query.get("page"));
+      const items = removed ? (page === 1 ? Array.from({ length: remaining }, (_, i) => connected(i)) : [])
+        : page === 1 ? Array.from({ length: 20 }, (_, i) => connected(i)) : [connected(20)];
+      return jsonResponse({ success: true, data: { items, total: removed ? remaining : 21 } });
+    });
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Remote 0");
+    fireEvent.click(screen.getByRole("button", { name: "2", exact: true }));
+    await screen.findByText("Remote 20");
+    removed = true;
+    act(() => mockOnRegistryChange?.());
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/dynamic-agents?catalog=true&source=all&page=1&page_size=20"));
+    if (remaining) {
+      expect(await screen.findByText("Remote 0")).toBeInTheDocument();
+      expect(screen.queryByText("Remote 20")).not.toBeInTheDocument();
+    } else expect(await screen.findByText("No agents yet")).toBeInTheDocument();
+  });
+
+  it.each(["denial", "network"])("shows a %s delete failure and allows dismiss/retry inside the details dialog", async failure => {
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        if (failure === "network") throw new Error("Connection unavailable");
+        return jsonResponse({ success: false, error: "Delete denied" });
+      }
+      return jsonResponse({ success: true, data: { items: [makeAgent()], total: 1 } });
+    });
+    render(<DynamicAgentsTab />);
+    await screen.findByText("Ops Helper");
+    fireEvent.click(screen.getByRole("button", { name: "Grid", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Details for Ops Helper" }));
+    const dialog = screen.getByRole("dialog", { name: "Ops Helper" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete Ops Helper" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Confirm delete Ops Helper" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(failure === "network" ? "Connection unavailable" : "Delete denied");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Dismiss", exact: true }));
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Confirm delete Ops Helper" })).toBeEnabled();
+    expect(screen.queryByTestId("dynamic-agent-editor")).not.toBeInTheDocument();
   });
 
 });

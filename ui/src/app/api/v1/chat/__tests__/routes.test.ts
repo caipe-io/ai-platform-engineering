@@ -3,6 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { checkHarnessMcpReadiness } from "@/lib/harness-mcp-readiness";
 
 import { POST as invokePost } from "../invoke/route";
 import { POST as cancelPost } from "../stream/cancel/route";
@@ -24,6 +25,9 @@ const mockIsSchedulerTokenConfigured = jest.fn();
 const mockIsSchedulerTokenValid = jest.fn();
 const mockResolveScheduledRunContext = jest.fn();
 const mockMintScheduledOwnerToken = jest.fn();
+const mockListMcpTools = jest.fn();
+const mockFilterMcpPermissions = jest.fn();
+jest.mock("@/lib/mcp-http-server-client", () => ({ listHttpMcpTools: (...args: unknown[]) => mockListMcpTools(...args) }));
 
 jest.mock("@/lib/da-proxy", () => ({
   authenticateRequest: (...args: unknown[]) => mockAuthenticateRequest(...args),
@@ -45,6 +49,7 @@ jest.mock("@/lib/rbac/openfga-agent-authz", () => ({
 
 jest.mock("@/lib/rbac/resource-authz", () => ({
   requireResourcePermission: (...args: unknown[]) => mockRequireResourcePermission(...args),
+  filterResourcesByPermission: (...args: unknown[]) => mockFilterMcpPermissions(...args),
 }));
 
 jest.mock("@/lib/rbac/conversation-implicit-authz", () => ({
@@ -979,6 +984,29 @@ describe("Dynamic Agent chat Web UI backend routes", () => {
         traceparent: expect.stringMatching(/^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/),
       }),
     );
+
+    // Exercise real MCP readiness with the scheduled auth produced by this route.
+    // It must retain the owner session and freshly exchanged token without a cookie.
+    const scheduledAuth = mockProxyJSONRequest.mock.calls[0][2];
+    const previousGateway = process.env.AGENT_GATEWAY_URL;
+    process.env.AGENT_GATEWAY_URL = "http://gateway.example.test:4000";
+    mockGetCollection.mockResolvedValue({ find: () => ({ toArray: async () => [{ _id: "primary", enabled: true }] }) });
+    mockFilterMcpPermissions.mockImplementation(async (_session, servers) => servers);
+    mockListMcpTools.mockResolvedValue({ tools: [{ name: "lookup" }] });
+    try {
+      expect(await checkHarnessMcpReadiness("agent-persisted", ["primary.lookup"], scheduledAuth)).toBeUndefined();
+      expect(mockFilterMcpPermissions).toHaveBeenCalledWith(expect.objectContaining({ sub: "owner-sub", isServiceAccount: false }), expect.any(Array), expect.any(Object));
+      expect(mockListMcpTools).toHaveBeenCalledWith(expect.objectContaining({
+        agentId: "agent-persisted",
+        session: expect.objectContaining({ sub: "owner-sub", accessToken: "owner-bearer-token", role: "user", principalType: "oidc_user" }),
+      }));
+      expect(mockListMcpTools.mock.calls[0][0].request.headers.get("Authorization")).toBe("Bearer owner-bearer-token");
+      mockListMcpTools.mockResolvedValue({ tools: [] });
+      expect(await checkHarnessMcpReadiness("agent-persisted", ["primary.lookup"], scheduledAuth)).toMatchObject({ ready: false, code: "HARNESS_AGENT_NOT_READY" });
+    } finally {
+      if (previousGateway === undefined) delete process.env.AGENT_GATEWAY_URL;
+      else process.env.AGENT_GATEWAY_URL = previousGateway;
+    }
 
     const proxiedBody = JSON.parse(mockProxyJSONRequest.mock.calls[0][1] as string) as Record<string, unknown>;
     expect(proxiedBody.conversation_id).not.toBe("scheduled-sched_123-run_456");

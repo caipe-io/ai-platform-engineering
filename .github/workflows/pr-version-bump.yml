@@ -1,5 +1,4 @@
 name: "[CI] PR Version Bump"
-description: "PR flow labeling, mergeability/staleness checks, and release/*→main version preparation"
 
 on:
   pull_request:
@@ -388,7 +387,11 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
-          if [[ "$BASE_REF" == "main" && "$HEAD_REF" =~ ^release/([0-9]+\.[0-9]+\.[0-9]+)(-hotfix)?$ ]]; then
+          if [[ "$BASE_REF" == "main" && "$HEAD_REF" =~ ^release/[0-9]+\.[0-9]+\.[0-9]+-hotfix$ ]]; then
+            echo "is_release_merge=false" >> "$GITHUB_OUTPUT"
+            echo "needs_prepare=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Hotfix merge-back: no release version or changelog preparation. Merge the tested fix, then manually promote a version newer than the latest stable tag. Older-series stable publication is unsupported."
+          elif [[ "$BASE_REF" == "main" && "$HEAD_REF" =~ ^release/([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             VERSION="${BASH_REMATCH[1]}"
             echo "is_release_merge=true" >> $GITHUB_OUTPUT
             echo "version=$VERSION" >> $GITHUB_OUTPUT

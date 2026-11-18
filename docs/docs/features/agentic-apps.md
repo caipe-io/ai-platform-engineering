@@ -132,6 +132,31 @@ AGENTIC_APP_TOKEN_ISSUER=caipe-agentic-apps
 The catalog is deployment-owned. It is not written to MongoDB and contains no
 built-in or vendor-specific registrations.
 
+### Helm catalog configuration
+
+Use an existing ConfigMap instead of the chart's empty starter catalog:
+
+```yaml
+caipe-ui:
+  config:
+    AGENTIC_APPS_INSTALL_ENABLED: "true"
+  agenticApps:
+    existingConfigMap: example-app-catalog
+    configMapKey: agentic-apps.yaml
+```
+
+- The ConfigMap must exist in the release namespace and contain the selected key.
+- `config.AGENTIC_APPS_CONFIG_PATH` controls the chart mount's destination.
+- Existing `volumeMounts` that supply that file or a parent directory take
+  precedence. The chart adds no catalog mount or empty catalog ConfigMap in
+  that case, so existing deployments can retain their paths and volumes.
+- Without an existing ConfigMap or covering custom mount, enabling External
+  Apps creates and mounts the empty starter catalog. Disabling External Apps
+  creates neither the chart-managed catalog nor its mount.
+- The chart-managed catalog uses a `subPath` mount. Restart or roll the UI
+  Deployment after editing its ConfigMap; Kubernetes does not refresh an
+  existing `subPath` mount. This also applies to `agenticApps.existingConfigMap`.
+
 `proxied-next-zone` is retained as the compatible manifest identifier from the
 previously accepted contract; it does not by itself promise support for an
 embedded Next.js App Router transport.
@@ -190,7 +215,10 @@ agentic_apps:
 The UI validates the whole catalog at startup. Invalid IDs, non-HTTP origins,
 missing packages, duplicate mounts, unsupported runtime kinds, and malformed
 policy declarations stop startup instead of silently exposing a partial
-catalog. ConfigMap volume updates are read on subsequent requests.
+catalog. For a custom directory mount, catalog updates are read on subsequent
+requests after Kubernetes projects the ConfigMap change. File mounts using
+`subPath`, including the chart-managed catalog mount, require a UI Deployment
+restart or rollout to receive ConfigMap changes.
 
 ## Try the Weather example
 

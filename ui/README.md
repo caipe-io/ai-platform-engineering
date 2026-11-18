@@ -169,6 +169,11 @@ agent keeps its own identity and access checks, while each app still checks
 launch access. An assistant with an app-owned `streamPath` must have a unique
 agent ID so its stream routes to exactly one app.
 
+Ask Tome uses Spring Glide when minimizing to its launcher (1.05 seconds),
+with a subtle landing pulse and a reverse glide when reopened (0.75 seconds).
+The window stays mounted so an unsent draft survives minimizing. Reduced-motion
+preferences skip all movement; other app assistants retain their existing behavior.
+
 The themed conversation picker below New Chat defaults to All chats and offers
 Web chats, API chats, Autonomous runs, Scheduled runs, and Webhook runs in that
 order, with icons and search. Automation choices appear when their platform
@@ -416,3 +421,36 @@ saves reject concurrent revision or reference changes with 409; reload before
 retrying. Workflow step-agent validation runs before persistence or workflow access
 reconciliation. Dynamic-agent saves reconcile access before skill admission and
 attempt to roll back those access changes if admission or persistence fails.
+
+## Model provider credential choices
+
+- `GET/PATCH /api/credentials/llm-providers` reads and writes the authenticated
+  account's `user_settings.preferences.llm_provider_secrets` reference map.
+- Each field stores a saved-secret ID. PATCH requires metadata access and
+  `secret_ref#use`; it rejects unknown providers, fields, and incompatible types.
+- `SavedSecretPicker` wraps the shared searchable picker. New values go through
+  `POST /api/credentials/secrets`; neither selecting nor binding a secret retrieves
+  its plaintext into the browser.
+- Unique legacy `llm:<provider>:<field>` entries initialize selections. Duplicate
+  names require an explicit selection; existing reference choices take precedence.
+- `ui/src/lib/llm-provider-credentials.ts` owns provider fields and compatibility.
+  Provider cards are independent of registered models. Bedrock supports inherited
+  IAM or saved access-key references; Vertex AI explains deployment ADC.
+- Named connections use `POST /api/llm-models/connections`: name, provider,
+  authentication mode, secret refs/new values, and one or more upstream model IDs.
+  New values are encrypted server-side. Only IDs enter connection/model records.
+- Models retain unique registry IDs; `upstream_model_id` identifies the native
+  provider model. Two endpoints can expose the same upstream ID.
+- Publishing requires `system_config:platform_settings#manage` and `secret_ref#manage`
+  for reused values. Models are published as a group using a ready-state switch,
+  including on standalone MongoDB. Failed operations roll back newly created
+  resources and preserve reused secrets. UUID operation IDs make exact retries safe.
+- `POST /api/llm-models/test` uses Dynamic Agents’ native factory and the same
+  `/api/credentials/llm-model` server-only resolver as agent execution. Browser
+  requests receive redacted diagnostics, never retrieved keys. Endpoint redirects
+  are disabled for credential-bearing OpenAI-compatible requests.
+- Main, subagent, and middleware models resolve their own connections. Cached
+  graphs recheck credential use/revisions per invocation; rotation rebuilds the
+  graph and revocation blocks reuse. Legacy models keep environment defaults.
+- Deploy the UI, Dynamic Agents, and any Harness Engine Deep Agents image together. The provider UI checks the runtime
+  capability marker and `CREDENTIAL_API_URL` configuration before enabling create.

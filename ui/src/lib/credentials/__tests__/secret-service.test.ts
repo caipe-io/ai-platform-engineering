@@ -77,13 +77,13 @@ function createService(
 ) {
   const refs = new MemorySecretRefsCollection();
   const payloadStore = {
-    putSecret: jest.fn(async () => undefined),
+    putSecret: jest.fn(async (input: { secretRefId: string; plaintext: string; maskedPreview?: string }) => { void input; }),
     getSecret: jest.fn(async () => "github-token-value"),
     getMaskedPreview: jest.fn(async (secretRefId: string) =>
       secretRefId === "shared-secret" ? "jir_...alue" : "gith...alue",
     ),
     rotateSecret: jest.fn(async () => undefined),
-    deleteSecret: jest.fn(async () => undefined),
+    deleteSecret: jest.fn(async (id: string) => { void id; }),
   };
   const authorize = jest.fn(async () => undefined);
   const reconcileOwnerRelationships = jest.fn(async () => undefined);
@@ -429,4 +429,19 @@ describe("SecretService", () => {
     expect(JSON.stringify(refs.docs)).not.toContain("github-token-value");
     expect(JSON.stringify(refs.docs)).not.toContain("gith...alue");
   });
+});
+
+
+it.each(["relationships", "reference"])("removes a new encrypted payload if %s creation fails", async stage => {
+  const { refs, payloadStore, reconcileOwnerRelationships, deleteAllRelationships, service } = createService();
+  const payloads = new Map<string, string>();
+  payloadStore.putSecret.mockImplementationOnce(async ({ secretRefId, plaintext }: { secretRefId: string; plaintext: string }) => { payloads.set(secretRefId, plaintext); });
+  payloadStore.deleteSecret.mockImplementationOnce(async (id: string) => { payloads.delete(id); });
+  if (stage === "relationships") reconcileOwnerRelationships.mockRejectedValueOnce(new Error("relationship unavailable"));
+  else jest.spyOn(refs, "insertOne").mockRejectedValueOnce(new Error("reference unavailable"));
+  await expect(service.createSecret({ session: { sub: "test-user" }, owner: { type: "user", id: "test-user" }, name: "Example", type: "api_key", plaintext: "example-private-key" })).rejects.toThrow("unavailable");
+  expect(payloads.size).toBe(0);
+  expect(payloadStore.deleteSecret).toHaveBeenCalledWith("secret-1");
+  expect(deleteAllRelationships).toHaveBeenCalledWith("secret-1");
+  expect(refs.docs).toHaveLength(0);
 });

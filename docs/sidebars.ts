@@ -23,6 +23,10 @@ const sidebars: SidebarsConfig = {
           type: 'doc',
           id: 'getting-started/quick-start',
         },
+        {
+          type: 'doc',
+          id: 'getting-started/first-agent',
+        },
       ],
     },
     {
@@ -197,6 +201,21 @@ const sidebars: SidebarsConfig = {
           type: 'doc',
           id: 'development/ci-cd-and-releases',
           label: 'CI/CD & Releases',
+        },
+        {
+          type: 'doc',
+          id: 'development/caipe-regression-suite',
+          label: 'Regression & Release Readiness',
+        },
+        {
+          type: 'doc',
+          id: 'development/caipe-regression-screen-coverage',
+          label: 'Screen & API Coverage',
+        },
+        {
+          type: 'doc',
+          id: 'development/regression-report-artifacts',
+          label: 'Regression Report Artifacts',
         },
         {
           type: 'doc',

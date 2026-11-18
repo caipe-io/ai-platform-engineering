@@ -23,6 +23,7 @@ import { ApiError } from "@/lib/api-middleware";
 import { GET, POST } from "../route";
 import { PUT, DELETE } from "../[id]/route";
 import { POST as PROBE } from "../probe/route";
+import { GET as DISCOVERY_CONFIG, POST as DISCOVER } from "../discovery/route";
 
 const request = (body: unknown) => ({ json: async () => body }) as never;
 
@@ -72,9 +73,11 @@ it.each([403, 503])("blocks all remote mutations and probes on CAS failure %s, e
   await expect(PUT(request({}), context)).rejects.toThrow("CAS refused");
   await expect(DELETE(request({}), context)).rejects.toThrow("CAS refused");
   await expect(PROBE(request({}))).rejects.toThrow("CAS refused");
+  await expect(DISCOVERY_CONFIG(request({}))).rejects.toThrow("CAS refused");
+  await expect(DISCOVER(request({}))).rejects.toThrow("CAS refused");
   expect(mockCollection.insertOne).not.toHaveBeenCalled();
   expect(mockCollection.findOneAndUpdate).not.toHaveBeenCalled();
-  expect(mockRequireResourcePermission).toHaveBeenCalledTimes(4);
+  expect(mockRequireResourcePermission).toHaveBeenCalledTimes(6);
 });
 
 
@@ -92,4 +95,27 @@ it("does not downgrade a CAS outage to a metadata listing", async () => {
   mockRequireResourcePermission.mockRejectedValue(new ApiError("CAS unavailable", 503));
   await expect(GET(request({}))).rejects.toThrow("CAS unavailable");
   expect(mockCollection.find).not.toHaveBeenCalled();
+});
+
+it.each(["claude_code", "claude_agent_sdk", "google_adk", "deepagents", "unspecified"])("stores explicit framework display metadata %s", async framework => {
+  await POST(request({ name: "Example", endpoint: "https://agent.example.test", framework }));
+  expect(mockCollection.insertOne).toHaveBeenCalledWith(expect.objectContaining({ framework }));
+  await PUT(request({ framework }), { params: Promise.resolve({ id: "remote-example" }) });
+  const update = mockCollection.findOneAndUpdate.mock.calls[0][1].$set;
+  expect(update.framework).toBe(framework);
+  expect(update).not.toHaveProperty("endpoint");
+  expect(update).not.toHaveProperty("credential_source");
+  expect(update).not.toHaveProperty("execution_harness_id");
+});
+
+it.each([null, true, "unknown", "constructor", "__proto__"])("rejects unsupported framework metadata %s", async framework => {
+  await expect(POST(request({ name: "Example", endpoint: "https://agent.example.test", framework }))).rejects.toThrow("Unknown agent framework");
+  await expect(PUT(request({ framework }), { params: Promise.resolve({ id: "remote-example" }) })).rejects.toThrow("Unknown agent framework");
+  expect(mockCollection.insertOne).not.toHaveBeenCalled();
+  expect(mockCollection.findOneAndUpdate).not.toHaveBeenCalled();
+});
+
+it("preserves existing framework metadata when omitted by older clients", async () => {
+  await PUT(request({ streaming: true }), { params: Promise.resolve({ id: "remote-example" }) });
+  expect(mockCollection.findOneAndUpdate.mock.calls[0][1].$set).not.toHaveProperty("framework");
 });

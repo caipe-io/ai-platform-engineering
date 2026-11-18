@@ -9,13 +9,20 @@ import textwrap
 from pathlib import Path
 
 import pytest
+import yaml
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/release-finalize.yml"
 
 
 def test_completion_triggers_cover_every_required_component() -> None:
     source = WORKFLOW.read_text()
-    assert "actions/checkout@" not in source
+    workflow = yaml.safe_load(source)
+    checkouts = [step for step in workflow["jobs"]["check-and-publish"]["steps"]
+                 if step.get("uses", "").startswith("actions/checkout@")]
+    assert len(checkouts) == 1
+    assert checkouts[0]["with"]["ref"] == "${{ github.workflow_sha }}"
+    assert checkouts[0]["with"]["persist-credentials"] is False
+    assert "all_passed == 'true'" in checkouts[0]["if"]
     assert "actions/download-artifact@" not in source
     required = source.split("          REQUIRED_WORKFLOWS=(\n", 1)[1].split("          )", 1)[0]
     triggers = source.split("  workflow_run:\n", 1)[1].split("    types:", 1)[0]
@@ -24,6 +31,12 @@ def test_completion_triggers_cover_every_required_component() -> None:
 
 @pytest.mark.parametrize("event,repository,branch,sha,accepted", [
     ("push", "example/project", "1.2.3", "a" * 40, True),
+    ("push", "example/project", "1.2.3-rc.7", "a" * 40, True),
+    ("pull_request", "example/project", "1.2.3-rc.7", "a" * 40, False),
+    ("push", "external/project", "1.2.3-rc.7", "a" * 40, False),
+    ("push", "example/project", "1.2.3-rc.7", "b" * 40, False),
+    ("push", "example/project", "1.2.3-hotfix.1", "a" * 40, False),
+    ("push", "example/project", "1.2.3-dev.1", "a" * 40, False),
     ("pull_request", "example/project", "1.2.3", "a" * 40, False),
     ("push", "external/project", "1.2.3", "a" * 40, False),
     ("push", "example/project", "main", "a" * 40, False),
@@ -45,4 +58,6 @@ def test_completion_payload_checks_origin_tag_and_commit(
            "UPSTREAM_CONCLUSION": "success", "GH_REPOSITORY": "example/project", "FAKE_TAG_SHA": "a" * 40}
     subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, check=True)
     payload = output.read_text() if output.exists() else ""
-    assert ("tag=1.2.3\n" in payload) is accepted
+    assert (f"tag={branch}\n" in payload) is accepted
+    if accepted:
+        assert f"is_rc={str('-rc.' in branch).lower()}\n" in payload

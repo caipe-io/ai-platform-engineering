@@ -82,6 +82,7 @@ spec:
           {{- $schedulerTokenSecretName := dig "scheduler" "serviceTokenSecretName" "caipe-scheduler-service-token" (.Values.global | default dict) }}
           {{- $schedulerTokenSecretKey := dig "scheduler" "serviceTokenSecretKey" "token" (.Values.global | default dict) }}
           {{- $schedulerRunnerSecretName := .Values.schedulerRunnerClient.secretName | default "" }}
+          {{- $agenticAppsManagedMount := eq (include "caipe-ui.agenticApps.managedMount" .) "true" }}
           {{- if and $schedulerEnabled (not $schedulerRunnerSecretName) }}
           {{- $schedulerRunnerBase := printf "%s-keycloak" .Release.Name | trunc 46 | trimSuffix "-" }}
           {{- $schedulerRunnerSecretName = printf "%s-scheduler-runner" $schedulerRunnerBase }}
@@ -265,6 +266,12 @@ spec:
             {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+            {{- if $agenticAppsManagedMount }}
+            - name: agentic-apps
+              mountPath: {{ index .Values.config "AGENTIC_APPS_CONFIG_PATH" | default "/etc/caipe-ui-agentic-apps/agentic-apps.yaml" | quote }}
+              subPath: {{ .Values.agenticApps.configMapKey | quote }}
+              readOnly: true
+            {{- end }}
       volumes:
         {{- if $hasAppConfig }}
         - name: app-config
@@ -273,6 +280,14 @@ spec:
         {{- end }}
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if $agenticAppsManagedMount }}
+        - name: agentic-apps
+          configMap:
+            name: {{ .Values.agenticApps.existingConfigMap | default (printf "%s-agentic-apps" (include "caipe-ui.fullname" .)) | quote }}
+            items:
+              - key: {{ .Values.agenticApps.configMapKey | quote }}
+                path: {{ .Values.agenticApps.configMapKey | quote }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

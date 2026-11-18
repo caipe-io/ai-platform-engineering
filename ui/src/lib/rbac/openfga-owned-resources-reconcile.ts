@@ -1,5 +1,3 @@
-// assisted-by Cursor:composer-2.5
-// assisted-by Codex Codex-sonnet-4-6
 //
 // Server-facing OpenFGA reconciliation for owned/shareable resources.
 // Tuple builders live in openfga-owned-resources.ts (pure, no Mongo/CAS).
@@ -84,7 +82,7 @@ async function reconcileOwnedResource(
 
 /**
  * `team:<slug>` member usersets that opted into the all-MCP-servers wildcard,
- * read from the `tool:*` sentinel (the single source of truth now that the
+ * read from the `tool:__all_mcp_servers_intent__` sentinel (the single source of truth now that the
  * `team.resources.tool_wildcard` flag is gone). Returns slugs only.
  */
 async function listToolWildcardTeamSlugs(): Promise<string[]> {
@@ -280,6 +278,16 @@ async function deleteAllRelationshipTuplesForObject(
   const diff = { writes: [] as OpenFgaTupleKey[], deletes: uniqueTuples(deletes) };
   assertReconciliationEnabled(diff);
   return reconcileTupleDiff(diff, { ...ctx, source: ctx?.source ?? source });
+}
+
+/** Remove all conversation grants, including user, team, and service-account access. */
+export async function deleteAllConversationRelationshipTuples(
+  conversationId: string,
+): Promise<OpenFgaReconcileResult> {
+  return deleteAllRelationshipTuplesForObject(
+    `conversation:${conversationId}`,
+    "conversation_delete",
+  );
 }
 
 /** Remove every management tuple for an ingestion-source config row. */

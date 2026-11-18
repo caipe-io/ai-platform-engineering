@@ -1,11 +1,10 @@
 name: "[Release] Manual Version Release"
-description: "Manually trigger a new release by specifying the version"
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'New version to release (e.g., 1.0.0 or 1.0.0-rc.1)'
+        description: 'Version to promote: x.y.z, x.y.z-rc.N, or x.y.z-hotfix.N'
         required: true
         type: string
 
@@ -23,11 +22,24 @@ jobs:
       RELEASE_VERSION: ${{ github.event.inputs.version }}
     outputs:
       current_version: ${{ steps.validate.outputs.current_version }}
+      previous_stable: ${{ steps.validate.outputs.previous_stable }}
+      is_final_release: ${{ steps.channel.outputs.is_final_release }}
+      release_notes_url: ${{ steps.release-post.outputs.url }}
+      release_notes_version: ${{ steps.release-post.outputs.version }}
     steps:
       - name: 🔒 Harden runner
         uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a  # v2.22.4
         with:
           egress-policy: audit
+
+      - name: Validate manual release ref
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          if [[ "$DISPATCH_REF" != refs/heads/main ]]; then
+            echo "::error::Run Manual Version Release from main (--ref main). Use Pre-release Build for release-branch candidates."
+            exit 1
+          fi
 
       - name: 🔑 Generate GitHub App token
         id: app-token
@@ -48,35 +60,18 @@ jobs:
         uses: ./.github/actions/validate-release-tag
         with:
           version: ${{ env.RELEASE_VERSION }}
+          allow_prerelease: 'true'
 
-      - name: 📰 Require a release post for the minor series
-        run: |
-          set -euo pipefail
+      - name: Classify promotion channel
+        id: channel
+        uses: ./.github/actions/determine-release-tag
+        with:
+          manual_tag: ${{ env.RELEASE_VERSION }}
 
-          VERSION="$RELEASE_VERSION"
-
-          # Release candidates ship before their series post is written; only a
-          # final release must have published notes to link to.
-          if [[ "$VERSION" == *-rc.* ]]; then
-            echo "⏭️  $VERSION is a release candidate — series post not required yet"
-            exit 0
-          fi
-
-          BASE_VERSION="${VERSION%%-*}"
-          SERIES_MAJOR_MINOR="${BASE_VERSION%.*}"
-          SERIES_SLUG="release-${SERIES_MAJOR_MINOR//./-}-0"
-
-          if compgen -G "docs/releases/*${SERIES_SLUG}.md" > /dev/null; then
-            echo "✅ Found release post for the ${SERIES_MAJOR_MINOR}.0 series"
-            exit 0
-          fi
-
-          echo "❌ ERROR: no release post for the ${SERIES_MAJOR_MINOR}.0 series"
-          echo "   Expected a file matching: docs/releases/*${SERIES_SLUG}.md"
-          echo "   Release notes are published once per minor series and are what"
-          echo "   the in-app About dialog and GitHub Release link to, so the post"
-          echo "   must land before $VERSION is tagged."
-          exit 1
+      - name: 📰 Resolve the release post and canonical URL
+        id: release-post
+        if: steps.channel.outputs.is_final_release == 'true'
+        run: python3 scripts/resolve_release_blog.py "$RELEASE_VERSION" --github-output "$GITHUB_OUTPUT"
 
       - name: 🔍 Read current version
         id: validate
@@ -86,6 +81,14 @@ jobs:
           RAW_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
           echo "📋 Current version: $RAW_VERSION"
           echo "current_version=$RAW_VERSION" >> "$GITHUB_OUTPUT"
+          PREVIOUS_STABLE=""
+          while IFS= read -r tag; do
+            if [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              PREVIOUS_STABLE="$tag"
+              break
+            fi
+          done < <(git tag --sort=-version:refname)
+          echo "previous_stable=$PREVIOUS_STABLE" >> "$GITHUB_OUTPUT"
 
       - name: 🐍 Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -99,8 +102,11 @@ jobs:
         uses: ./.github/actions/prepare-release
         with:
           version: ${{ github.event.inputs.version }}
+          allow_prerelease: 'true'
 
       - name:  Commit, tag, and push
+        env:
+          CURRENT_VERSION: ${{ steps.validate.outputs.current_version }}
         run: |
           set -euo pipefail
 
@@ -118,7 +124,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "ℹ️ No file changes needed — files already at $NEW_VERSION"
           else
-            CURRENT_VERSION="${{ steps.validate.outputs.current_version }}"
             if [[ -n "$CURRENT_VERSION" ]]; then
               git commit -m "bump: version $CURRENT_VERSION → $NEW_VERSION"
             else
@@ -134,14 +139,20 @@ jobs:
           git push origin main
           git push origin "$NEW_VERSION"
 
+          if [[ "$NEW_VERSION" == *-rc.* || "$NEW_VERSION" == *-hotfix.* ]]; then
+            echo "Build-only tag $NEW_VERSION pushed; candidate CI publishes versioned images and charts." >> "$GITHUB_STEP_SUMMARY"
+            echo "RC tags receive a GitHub pre-release after required builds pass; hotfix tags remain artifacts only." >> "$GITHUB_STEP_SUMMARY"
+            echo "Candidate promotion does not update the stable changelog or latest alias." >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "✅ Committed and pushed release $NEW_VERSION"
           echo ""
           echo "🏷️ Tag '$NEW_VERSION' created and pushed"
 
-  # Then: create draft release. The tag push triggers CI builds automatically.
+  # Stable promotions create a release; candidate tag pushes only build artifacts.
   publish-release:
     name: Create Draft Release
     needs: commit-release
+    if: needs.commit-release.outputs.is_final_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -160,26 +171,32 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           RELEASE_INITIATOR: ${{ github.actor }}
+          PREVIOUS_STABLE: ${{ needs.commit-release.outputs.previous_stable }}
+          RELEASE_NOTES_URL: ${{ needs.commit-release.outputs.release_notes_url }}
+          RELEASE_NOTES_VERSION: ${{ needs.commit-release.outputs.release_notes_version }}
         run: |
           set -euo pipefail
 
           NEW_VERSION="$RELEASE_VERSION"
           echo "🔄 Creating DRAFT GitHub Release for $NEW_VERSION..."
 
-          # Release notes live once per minor series on the docs site; the release
-          # body points there instead of carrying a second hand-written narrative.
-          BASE_VERSION="${NEW_VERSION%%-*}"
-          SERIES_MAJOR_MINOR="${BASE_VERSION%.*}"
-          SERIES_URL="https://caipe.io/releases/release-${SERIES_MAJOR_MINOR}.0"
+          # Use the same post validated before tagging, including its actual slug.
+          NOTES="<!-- release-initiator:$RELEASE_INITIATOR -->"
+          if [[ -n "$RELEASE_NOTES_URL" ]]; then
+            NOTES=$(printf '%s\n\n%s\n' "$NOTES" \
+              "📖 Release notes: [$RELEASE_NOTES_VERSION release notes]($RELEASE_NOTES_URL)")
+          fi
 
-          NOTES=$(printf '%s\n\n%s\n' \
-            "<!-- release-initiator:$RELEASE_INITIATOR -->" \
-            "📖 Release notes: [${SERIES_MAJOR_MINOR}.0 release notes]($SERIES_URL)")
-
+          # Published RCs must not shorten the stable release's change set.
+          NOTES_ARGS=()
+          if [[ -n "$PREVIOUS_STABLE" ]]; then
+            NOTES_ARGS+=(--notes-start-tag "$PREVIOUS_STABLE")
+          fi
           gh release create "$NEW_VERSION" \
             --repo "${{ github.repository }}" \
             --title "Release $NEW_VERSION" \
             --generate-notes \
+            "${NOTES_ARGS[@]}" \
             --notes "$NOTES" \
             --draft
 
@@ -188,11 +205,12 @@ jobs:
           echo "🔗 https://github.com/${{ github.repository }}/releases/tag/$NEW_VERSION"
 
       - name: 📊 Summary
+        env:
+          CURRENT_VERSION: ${{ needs.commit-release.outputs.current_version }}
         run: |
           set -euo pipefail
 
           NEW_VERSION="$RELEASE_VERSION"
-          CURRENT_VERSION="${{ needs.commit-release.outputs.current_version }}"
 
           echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

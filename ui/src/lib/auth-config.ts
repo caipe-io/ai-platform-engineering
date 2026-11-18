@@ -258,6 +258,26 @@ async function reconcileLoginGroupsFromClaims(input: {
   }
 }
 
+async function reconcileLoginAdminAccess(input: {
+  subject?: string;
+  email?: string;
+  isAuthorized: boolean;
+  isAdmin: boolean;
+  isBootstrapAdmin: boolean;
+  isOidcAdmin: boolean;
+  oidcProviderId: string;
+}): Promise<void> {
+  try {
+    const { reconcileLoginOpenFgaAccess } = await import("@/lib/rbac/login-openfga-bootstrap");
+    await reconcileLoginOpenFgaAccess({
+      ...input,
+      oidcAdminGroup: REQUIRED_ADMIN_GROUP,
+    });
+  } catch (error) {
+    console.warn("[Auth] Login OpenFGA bootstrap failed:", error);
+  }
+}
+
 function hasConfiguredGroup(groups: string[], requiredGroup: string): boolean {
   if (!requiredGroup) return false;
   const requiredLower = requiredGroup.toLowerCase();
@@ -339,32 +359,63 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
   }
 }
 
+// OIDC_DISCOVERY_URL is the server-side realm URL. OIDC_ISSUER is the URL the
+// browser and issued tokens use. They differ for the --no-ingress SSH path:
+// the browser reaches localhost:7080 through SSH, while the UI pod reaches
+// caipe-keycloak:8080 inside the cluster.
+const browserOidcIssuer = process.env.OIDC_ISSUER?.replace(/\/+$/, "");
+const serverOidcIssuer = (process.env.OIDC_DISCOVERY_URL || process.env.OIDC_ISSUER)?.replace(/\/+$/, "");
+const hasSplitOidcEndpoints = Boolean(browserOidcIssuer && serverOidcIssuer && browserOidcIssuer !== serverOidcIssuer);
+
 export const authOptions: NextAuthOptions = {
   providers: [
     {
       id: "oidc",
       name: "SSO",
       type: "oauth",
+      ...(browserOidcIssuer ? { issuer: browserOidcIssuer } : {}),
       // OIDC_DISCOVERY_URL lets server-side discovery use a Docker-internal URL
       // (e.g. http://keycloak:7080/realms/caipe) while OIDC_ISSUER stays as the
       // browser-facing URL (e.g. http://localhost:7080/realms/caipe) so the
       // "iss" claim in JWTs validates against what the browser was redirected to.
       // Falls back to OIDC_ISSUER when not set (single-URL deployments).
-      wellKnown: process.env.OIDC_DISCOVERY_URL
-        ? `${process.env.OIDC_DISCOVERY_URL}/.well-known/openid-configuration`
-        : process.env.OIDC_ISSUER
-          ? `${process.env.OIDC_ISSUER}/.well-known/openid-configuration`
-          : undefined,
+      // When the browser and server use different OIDC origins, do not feed
+      // NextAuth discovery metadata with the internal issuer. openid-client
+      // validates the metadata issuer and would reject it before redirecting
+      // the browser. The explicit endpoints below preserve the split while
+      // single-origin deployments continue to use discovery.
+      wellKnown: !hasSplitOidcEndpoints && (process.env.OIDC_DISCOVERY_URL || process.env.OIDC_ISSUER)
+        ? `${process.env.OIDC_DISCOVERY_URL || process.env.OIDC_ISSUER}/.well-known/openid-configuration`
+        : undefined,
       // Keycloak issues regular refresh tokens for confidential clients
       // without needing offline_access scope. Requesting offline_access
       // requires extra Keycloak config and causes login failures if not
       // enabled on the client/realm. Regular refresh tokens are sufficient.
       authorization: {
+        ...(browserOidcIssuer
+          ? { url: `${browserOidcIssuer}/protocol/openid-connect/auth` }
+          : {}),
         params: {
           scope: "openid email profile groups",
           ...(process.env.OIDC_IDP_HINT ? { kc_idp_hint: process.env.OIDC_IDP_HINT } : {}),
         }
       },
+      // Keep the callback's token and profile calls on the in-cluster URL when
+      // discovery is served by an internal Keycloak service. Without explicit
+      // endpoints NextAuth follows the internal URLs from discovery, which is
+      // correct for the pod but makes the browser redirect to an unresolvable
+      // Kubernetes service name in SSH port-forward mode.
+      ...(serverOidcIssuer
+        ? {
+            jwks_endpoint: `${serverOidcIssuer}/protocol/openid-connect/certs`,
+            token: {
+              url: `${serverOidcIssuer}/protocol/openid-connect/token`,
+            },
+            userinfo: {
+              url: `${serverOidcIssuer}/protocol/openid-connect/userinfo`,
+            },
+          }
+        : {}),
       idToken: true,
       checks: ["pkce", "state"],
       clientId: process.env.OIDC_CLIENT_ID,
@@ -480,6 +531,7 @@ export const authOptions: NextAuthOptions = {
         const email = profileData.email as string | undefined;
         const adminViaBootstrap = isBootstrapAdmin(email);
         const adminViaGroup = isAdminUser(groups);
+        const providerId = resolveLoginProviderId(profileData);
         token.role = adminViaBootstrap || adminViaGroup ? 'admin' : 'user';
 
         if (adminViaBootstrap) {
@@ -506,26 +558,34 @@ export const authOptions: NextAuthOptions = {
           (profileData.name as string | undefined) ??
           (profileData.preferred_username as string | undefined);
 
-        await import("@/lib/rbac/login-openfga-bootstrap")
-          .then(({ reconcileLoginOpenFgaAccess }) =>
-            reconcileLoginOpenFgaAccess({
-              subject,
-              email,
-              isAuthorized: token.isAuthorized === true,
-              isAdmin: token.role === "admin",
-            })
-          )
-          .catch((error) => {
-            console.warn("[Auth] Login OpenFGA bootstrap failed:", error);
-          });
+        await reconcileLoginAdminAccess({
+          subject,
+          email,
+          isAuthorized: token.isAuthorized === true,
+          isAdmin: token.role === "admin",
+          isBootstrapAdmin: adminViaBootstrap,
+          isOidcAdmin: adminViaGroup,
+          oidcProviderId: providerId,
+        });
 
         await reconcileLoginGroupsFromClaims({
           subject,
           email,
           displayName,
           groups,
-          providerId: resolveLoginProviderId(profileData),
+          providerId,
         });
+
+        if (subject && (token.isAuthorized === true || adminViaBootstrap)) {
+          try {
+            const { backfillMissingUserNamesFromClaims } = await import("@/lib/rbac/keycloak-admin");
+            const repairedName = await backfillMissingUserNamesFromClaims(subject, profileData);
+            if (repairedName) token.name = repairedName;
+          } catch (error) {
+            // Profile repair must not prevent an otherwise valid sign-in.
+            console.warn("[Auth] Could not backfill missing profile names:", error instanceof Error ? error.message : "profile update failed");
+          }
+        }
       }
 
       // NOTE: When trigger === "update" (from updateSession() or refetchInterval),
@@ -569,14 +629,49 @@ export const authOptions: NextAuthOptions = {
             if (shouldRecheckGroups) {
               try {
                 const claims = decodeJwt(refreshedToken.idToken as string);
-                const groups = extractGroups(claims as Record<string, unknown>);
-                cacheOidcClaimGroups(token.sub as string | undefined, groups);
+                const claimData = claims as Record<string, unknown>;
+                const groups = extractGroups(claimData);
+                const subject =
+                  (claimData.sub as string | undefined) ??
+                  (refreshedToken.sub as string | undefined) ??
+                  (token.sub as string | undefined);
+                const email =
+                  (claimData.email as string | undefined) ??
+                  (refreshedToken.email as string | undefined) ??
+                  (token.email as string | undefined);
+                const displayName =
+                  (claimData.name as string | undefined) ??
+                  (claimData.preferred_username as string | undefined);
+                const isAuthorized = hasRequiredGroup(groups);
+                const adminViaBootstrap = isBootstrapAdmin(email);
+                const adminViaGroup = isAdminUser(groups);
+                const providerId = resolveLoginProviderId(claimData);
+                cacheOidcClaimGroups(subject, groups);
                 console.log(`[Auth] Re-evaluating groups from refreshed id_token (last checked ${Math.round((now - lastGroupCheck) / 3600)}h ago), count: ${groups.length}`);
+
+                await reconcileLoginAdminAccess({
+                  subject,
+                  email,
+                  isAuthorized,
+                  isAdmin: adminViaBootstrap || adminViaGroup,
+                  isBootstrapAdmin: adminViaBootstrap,
+                  isOidcAdmin: adminViaGroup,
+                  oidcProviderId: providerId,
+                });
+                await reconcileLoginGroupsFromClaims({
+                  subject,
+                  email,
+                  displayName,
+                  groups,
+                  providerId,
+                });
+
                 return {
                   ...refreshedToken,
-                  isAuthorized: hasRequiredGroup(groups),
-                  role: refreshedToken.role === 'admin' ? 'admin' : 'user',
+                  isAuthorized,
+                  role: adminViaBootstrap || adminViaGroup ? 'admin' : 'user',
                   canViewAdmin: canViewAdminDashboard(groups),
+                  canAccessDynamicAgents: canAccessDynamicAgents(groups),
                   groupsCheckedAt: now,
                 };
               } catch (err) {

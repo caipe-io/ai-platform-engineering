@@ -2,6 +2,7 @@
 
 import { apiClient } from "@/lib/api-client";
 import { getConfig } from "@/lib/config";
+import { debugLog } from "@/lib/debug-log";
 import { useSession } from "next-auth/react";
 import { useEffect,useState } from "react";
 
@@ -37,12 +38,12 @@ export function useUserInit() {
         // This endpoint creates the user if it doesn't exist
         await apiClient.getCurrentUser();
         setInitialized(true);
-        console.log("[useUserInit] User profile initialized in MongoDB");
+        debugLog("[useUserInit] User profile initialized in MongoDB");
       } catch (err) {
         // 401/Unauthorized is expected when user isn't fully authenticated yet
         const msg = err instanceof Error ? err.message.toLowerCase() : '';
         if (msg.includes('401') || msg.includes('unauthorized')) {
-          console.log("[useUserInit] Not authenticated yet, skipping initialization");
+          debugLog("[useUserInit] Not authenticated yet, skipping initialization");
           setInitialized(true);
           return;
         }

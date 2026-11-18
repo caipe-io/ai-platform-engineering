@@ -7,6 +7,7 @@ import { CAIPESpinner } from "@/components/ui/caipe-spinner";
 import { apiClient } from "@/lib/api-client";
 import { buildAgentChatTitle,fetchAgentInfoForChat } from "@/lib/chat-agent-metadata";
 import { getConfig } from "@/lib/config";
+import { debugLog } from "@/lib/debug-log";
 import { getStorageMode } from "@/lib/storage-config";
 import { useChatStore } from "@/store/chat-store";
 import type { Conversation as LocalConversation, ConversationAccessLevel } from "@/types/a2a";
@@ -152,7 +153,7 @@ export function ChatContainer() {
         const hasMessages = localConv.messages && localConv.messages.length > 0;
 
         if (hasMessages) {
-          console.log("[ChatContainer] Found conversation in store with messages, loading instantly");
+          debugLog("[ChatContainer] Found conversation in store with messages, loading instantly");
           setFetchInProgress(false);
           setFetchDone(true);
 
@@ -162,7 +163,7 @@ export function ChatContainer() {
             });
           }
         } else if (storageMode === 'mongodb') {
-          console.log("[ChatContainer] Found conversation in store but no messages, loading from MongoDB...");
+          debugLog("[ChatContainer] Found conversation in store but no messages, loading from MongoDB...");
           try {
             await loadMessagesFromServer(uuid, { force: true });
           } catch (err) {
@@ -178,11 +179,11 @@ export function ChatContainer() {
         return;
       }
 
-      console.log("[ChatContainer] Conversation not in store, loading from backend...");
+      debugLog("[ChatContainer] Conversation not in store, loading from backend...");
 
       try {
         if (storageMode === 'mongodb') {
-          console.log("[ChatContainer] Loading from MongoDB...");
+          debugLog("[ChatContainer] Loading from MongoDB...");
           try {
             const conv = await apiClient.getConversation(uuid) as Conversation & { access_level?: ConversationAccessLevel };
             if (conv.access_level) {
@@ -221,13 +222,13 @@ export function ChatContainer() {
           } catch (apiErr) {
             const storeConv = useChatStore.getState().conversations.find(c => c.id === uuid);
             if (storeConv) {
-              console.log("[ChatContainer] Conversation appeared in store during fetch");
+              debugLog("[ChatContainer] Conversation appeared in store during fetch");
               setConversation(storeConv);
               return;
             }
 
             if (getErrorMessage(apiErr, "")?.includes('not found') || getErrorMessage(apiErr, "")?.includes('404')) {
-              console.log("[ChatContainer] Conversation not found in MongoDB (expected for new conversations)");
+              debugLog("[ChatContainer] Conversation not found in MongoDB (expected for new conversations)");
             } else {
               console.warn("[ChatContainer] Failed to load from MongoDB:", getErrorMessage(apiErr, ""));
             }
@@ -248,7 +249,7 @@ export function ChatContainer() {
             setConversation(newConv);
           }
         } else {
-          console.log("[ChatContainer] MongoDB unavailable, showing empty conversation");
+          debugLog("[ChatContainer] MongoDB unavailable, showing empty conversation");
           const newConv: LocalConversation = {
             id: uuid,
             title: "New Conversation",

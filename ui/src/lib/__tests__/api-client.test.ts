@@ -210,4 +210,125 @@ describe('APIClient — Archive methods', () => {
       await expect(apiClient.getTrash()).rejects.toThrow();
     });
   });
+
+  describe('conversation sharing', () => {
+    it('sends DELETE with the recipient when revoking access', async () => {
+      mockFetch.mockResolvedValue(mockSuccessResponse({ _id: 'conv-1', sharing: {} }));
+
+      await apiClient.revokeConversationShare('conv-1', { email: 'viewer@example.com' });
+
+      const [url, options] = mockFetch.mock.calls[0];
+      expect(url).toBe('/api/chat/conversations/conv-1/share');
+      expect(options.method).toBe('DELETE');
+      expect(JSON.parse(options.body)).toEqual({ email: 'viewer@example.com' });
+    });
+
+    it('passes an AbortSignal to user directory search', async () => {
+      mockFetch.mockResolvedValue(mockSuccessResponse([]));
+      const controller = new AbortController();
+
+      await apiClient.searchUsers('shri', controller.signal);
+
+      const [url, options] = mockFetch.mock.calls[0];
+      expect(url).toBe('/api/users/search?q=shri');
+      expect(options.signal).toBe(controller.signal);
+    });
+  });
+});
+
+describe('APIClient — console output', () => {
+  const logSpy = console.log as jest.Mock;
+  const errorSpy = console.error as jest.Mock;
+  const secretBody = 'secret-body-marker';
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+    logSpy.mockClear();
+    errorSpy.mockClear();
+  });
+
+  function allOutput(): string {
+    return JSON.stringify([...logSpy.mock.calls, ...errorSpy.mock.calls]);
+  }
+
+  it('does not log the response body or data preview on success', async () => {
+    mockFetch.mockResolvedValue(mockSuccessResponse({ title: secretBody }));
+    await apiClient.getConversation('conv-1');
+    expect(allOutput()).not.toContain(secretBody);
+  });
+
+  it('does not log the request URL or status by default', async () => {
+    mockFetch.mockResolvedValue(mockSuccessResponse({ ok: 1 }));
+    await apiClient.getConversation('conv-1');
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+
+  describe.each([false, true])('with uiDebugLogging=%s', (uiDebugLogging) => {
+    it.each([null, undefined])('does not log response content when data is %s', async (data) => {
+      const appWindow = window as unknown as { __APP_CONFIG__?: { uiDebugLogging: boolean } };
+      appWindow.__APP_CONFIG__ = { uiDebugLogging };
+      try {
+        mockFetch.mockResolvedValue({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: () => Promise.resolve(JSON.stringify({ success: true, data, error: secretBody })),
+        });
+
+        await expect(apiClient.getConversation('conv-1')).rejects.toThrow(secretBody);
+        expect(allOutput()).not.toContain(secretBody);
+        expect(errorSpy).toHaveBeenCalledWith('[APIClient] Result data is undefined/null');
+      } finally {
+        delete appWindow.__APP_CONFIG__;
+      }
+    });
+  });
+
+  it('does not log the error body on a non-OK response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Server Error',
+      text: () => Promise.resolve(JSON.stringify({ error: secretBody })),
+    });
+    await expect(apiClient.getConversation('conv-1')).rejects.toThrow(secretBody);
+    expect(allOutput()).not.toContain(secretBody);
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[APIClient] Error response:',
+      { status: 500, statusText: 'Server Error' },
+    );
+  });
+
+  it('does not put a non-JSON error body in the thrown error or logs', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 502,
+      statusText: '',
+      text: () => Promise.resolve(secretBody),
+    });
+    await expect(apiClient.getConversation('conv-1')).rejects.toThrow('HTTP 502');
+    expect(allOutput()).not.toContain(secretBody);
+  });
+
+  it('does not log the response text when JSON parsing fails', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: () => Promise.resolve(`not json ${secretBody}`),
+    });
+    await expect(apiClient.getConversation('conv-1')).rejects.toThrow('Invalid JSON response from server');
+    expect(allOutput()).not.toContain(secretBody);
+  });
+
+  it('logs request and status lines when uiDebugLogging is enabled', async () => {
+    (window as unknown as { __APP_CONFIG__?: unknown }).__APP_CONFIG__ = { uiDebugLogging: true };
+    try {
+      mockFetch.mockResolvedValue(mockSuccessResponse({ ok: 1 }));
+      await apiClient.getConversation('conv-1');
+      expect(logSpy.mock.calls.map(c => String(c[0])).join('\n')).toContain('Making request to');
+    } finally {
+      delete (window as unknown as { __APP_CONFIG__?: unknown }).__APP_CONFIG__;
+    }
+  });
 });

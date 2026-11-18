@@ -145,7 +145,7 @@ test.describe("agent editor owner-team transfer", () => {
 
     await page.goto("/dynamic-agents?tab=agents", { waitUntil: "domcontentloaded" });
 
-    await page.getByText("Ownership Transfer Agent").click();
+    await page.getByRole("button", { name: "Open Ownership Transfer Agent", exact: true }).click();
     await expect(
       page.getByText(/Edit Agent - Ownership Transfer Agent/i),
     ).toBeVisible();

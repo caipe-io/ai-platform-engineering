@@ -236,7 +236,7 @@ test.describe("Platform Health page", () => {
     await expect.poll(() => requests.health).toBeGreaterThan(0);
     await expect(page.getByText("System Status: Healthy")).toBeVisible();
     await expect(page.getByText("Chat Runtime", { exact: true })).toBeVisible();
-    await expect(page.getByText("Audit Service")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Inspect Audit Service health details", exact: true })).toBeVisible();
     await expect(
       page
         .getByRole("navigation",{ name: "Admin sections" })
@@ -260,8 +260,8 @@ test.describe("Platform Health page", () => {
     await page.goto("/admin/operations/health");
     await dismissReleaseUpgradeDialog(page);
     await expect(page.getByText("Platform Capabilities", { exact: true })).toBeVisible();
-    await expect(page.getByText("Audit Service")).toBeVisible();
-    await expect(page.getByText(/last error: S3 write failed/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Inspect Audit Service health details", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Inspect Audit Service health details", exact: true }).getByText(/last error: S3 write failed/)).toBeVisible();
     await expect(page.getByText("System Status: Degraded")).toBeVisible();
   });
 
@@ -282,8 +282,8 @@ test.describe("Platform Health page", () => {
     await dismissReleaseUpgradeDialog(page);
 
     await expect(page.getByText("System Status: Degraded")).toBeVisible();
-    await expect(page.getByText("Audit Service")).toBeVisible();
-    await expect(page.getByText(/local disk 92\.0% used/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Inspect Audit Service health details", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Inspect Audit Service health details", exact: true }).getByText(/local disk 92\.0% used/)).toBeVisible();
   });
 
   test("optional capability failure degrades without marking the platform down", async ({ page }) => {
@@ -345,10 +345,10 @@ test.describe("Platform Health page", () => {
     await expect(page.getByText("Checks the runtime health endpoint used by the chat experience.")).toBeVisible();
     await page.getByRole("button", { name: /inspect authentication health details/i }).click();
     await expect(page.getByRole("dialog", { name: "Authentication" })).toBeVisible();
-    await expect(page.getByText("Upstream Probes", { exact: true })).toBeVisible();
-    await expect(page.getByText("Keycloak", { exact: true })).toBeVisible();
-    await expect(page.getByText("OpenFGA", { exact: true })).toBeVisible();
-    await expect(page.getByText("OpenFGA Bridge", { exact: true })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Authentication", exact: true }).getByText("Upstream Probes", { exact: true })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Authentication", exact: true }).getByText("Keycloak", { exact: true })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Authentication", exact: true }).getByText("OpenFGA", { exact: true })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "Authentication", exact: true }).getByText("OpenFGA Bridge", { exact: true })).toBeVisible();
     await expect(page.getByText("Slack Integration")).toHaveCount(0);
     await expect(page.getByText("Webex Integration")).toHaveCount(0);
     await expect(page.getByText("All dependency checks are passing.")).toHaveCount(0);

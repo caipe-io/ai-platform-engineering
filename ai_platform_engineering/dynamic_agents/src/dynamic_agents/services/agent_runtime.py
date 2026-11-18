@@ -28,12 +28,11 @@ from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.state import StateBackend
 from deepagents.backends.store import StoreBackend
 from deepagents.middleware.skills import SkillsMiddleware
-from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
+from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT, SubAgentMiddleware
 from jinja2 import ChainableUndefined, TemplateSyntaxError
 from jinja2.sandbox import ImmutableSandboxedEnvironment, SecurityError
 from langchain.agents.middleware.pii import PIIMiddleware
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.checkpoint.mongodb.saver import MongoDBSaver
 from langgraph.config import get_stream_writer
 from langgraph.store.memory import InMemoryStore
 from langgraph.types import Command
@@ -47,6 +46,7 @@ from dynamic_agents.models import (
     AgentContext,
     ClientContext,
     DynamicAgentConfig,
+    FeaturesConfig,
     InputFile,
     InterruptConfig,
     MCPServerConfig,
@@ -73,7 +73,7 @@ from dynamic_agents.services.builtin_tools import (
 )
 from dynamic_agents.services.credential_exchange import CredentialExchangeClient
 from dynamic_agents.services.gridfs_store import MongoDBGridFSStore
-from dynamic_agents.services.llm_clients import get_llm
+from dynamic_agents.services.llm_clients import LLMConfigError, close_model_transports, get_llm
 from dynamic_agents.services.mcp_client import (
     McpCredentialUnavailableError,
     build_mcp_connections,
@@ -94,6 +94,9 @@ from dynamic_agents.services.model_capabilities import (
     ModelCapabilities,
     get_model_capabilities,
 )
+from dynamic_agents.services.model_connections import ResolvedModel, resolve_registered_model
+from dynamic_agents.services.mongo_checkpoint import MongoDBSaver
+from dynamic_agents.services.remote_agent_subagent import create_remote_agent_subagent
 from dynamic_agents.services.remote_agent_tool import create_remote_agent_tool
 from dynamic_agents.services.skills import build_skills_files, detect_missing_skills, load_skills, verify_skill_pins
 from dynamic_agents.services.skills_backend import ReadOnlySkillsBackend
@@ -104,6 +107,7 @@ from dynamic_agents.services.structured_response import (
     create_submit_structured_response_tool,
     extract_response_format,
 )
+from dynamic_agents.services.subagent_dispatch import subagent_factory
 from dynamic_agents.services.tool_call_recovery import ToolCallRecoveryMiddleware
 from dynamic_agents.services.tracing import TracingManager
 
@@ -732,6 +736,11 @@ class AgentRuntime:
         # Track config timestamps for cache invalidation
         self._config_updated_at: datetime = config.updated_at
         self._subagent_models: dict[str, ModelConfig] = {}
+        self._model_connection_revisions: dict[str, str] = {}
+        self._connection_models: list[Any] = []
+        self._middleware_model_plans: list[ResolvedModel] = []
+        self._resolved_model_id = config.model.id
+        self._subagent_execution_owners: dict[str, tuple[str, bool] | None] = {}
         self._mcp_servers_updated_at: datetime = max(
             (s.updated_at for s in mcp_servers), default=datetime.min.replace(tzinfo=timezone.utc)
         )
@@ -843,6 +852,34 @@ class AgentRuntime:
             )
             ttl = max_ttl
         return ttl
+
+    async def _resolve_model_connection(self, model_id: str) -> ResolvedModel | None:
+        plan = await resolve_registered_model(self.settings, self._user, self._mongo_service, model_id)
+        if plan is not None:
+            previous = self._model_connection_revisions.setdefault(model_id, plan.revision)
+            if previous != plan.revision:
+                raise LLMConfigError("Model credentials changed while building this agent; retry initialization.")
+        return plan
+
+    async def model_credentials_current(self, user: UserContext | None) -> bool:
+        """Recheck use authorization and rotations before reusing a cached graph."""
+        for model_id, revision in self._model_connection_revisions.items():
+            plan = await resolve_registered_model(self.settings, user, self._mongo_service, model_id, metadata_only=True)
+            if plan is None or plan.revision != revision:
+                return False
+        return True
+
+    async def _middleware_connection_models(self, features: FeaturesConfig | None) -> dict[str, ResolvedModel]:
+        models = {}
+        for entry in (features.middleware or []) if features else []:
+            if not entry.enabled or not entry.params.get("model_id"):
+                continue
+            model_id = entry.params["model_id"]
+            plan = await self._resolve_model_connection(model_id)
+            if plan is not None:
+                models[model_id] = plan
+                self._middleware_model_plans.append(plan)
+        return models
 
     def _credential_exchange_client(self) -> CredentialExchangeClient | None:
         """Create a credential API client when impersonation token resolution is configured."""
@@ -988,9 +1025,10 @@ class AgentRuntime:
         if builtin_tools:
             tools = tools + builtin_tools
 
-        # 2b. Add remote A2A agents as delegation tools
+        # 2b. Resolve selected A2A transports; native mode registers them as subagents
         remote_agent_tools = await self._build_remote_agent_tools()
-        if remote_agent_tools:
+        native_remote = self._uses_remote_subagents(self.config)
+        if not native_remote:
             tools = tools + remote_agent_tools
 
         # 3. Wrap all tools with error handling
@@ -1017,12 +1055,17 @@ class AgentRuntime:
             f"[llm] Instantiating LLM for agent '{self.config.name}': "
             f"provider={self.config.model.provider}, model={self.config.model.id}"
         )
+        model_plan = await self._resolve_model_connection(self.config.model.id)
         llm = get_llm(
-            self.config.model.provider,
-            self.config.model.id,
+            model_plan.provider if model_plan else self.config.model.provider,
+            model_plan.model_id if model_plan else self.config.model.id,
             self.config.model.reasoning_effort,
             streaming=self.config.model.streaming,
+            **({"provider_options": model_plan.parameters} if model_plan else {}),
         )
+        self._resolved_model_id = model_plan.model_id if model_plan else self.config.model.id
+        if model_plan:
+            self._connection_models.append(llm)
         logger.info(f"[llm] LLM instantiated for agent '{self.config.name}': type={type(llm).__name__}")
 
         # ─────────────────────────────────────────────────────────────────
@@ -1031,6 +1074,10 @@ class AgentRuntime:
 
         # 6. Subagents
         subagents = await self._resolve_subagents(self.config.subagents)
+        if native_remote:
+            subagents.extend(create_remote_agent_subagent(tool) for tool in remote_agent_tools)
+        if native_remote and len({spec["name"] for spec in subagents}) != len(subagents):
+            raise ValueError("Remote and local subagent names must be unique")
         if subagents:
             logger.info(
                 f"Agent '{self.config.name}': resolved {len(subagents)} subagents: {[s['name'] for s in subagents]}"
@@ -1171,9 +1218,10 @@ class AgentRuntime:
         middleware_stack = build_middleware(
             self.config.features,
             self._session_id,
+            resolved_models=await self._middleware_connection_models(self.config.features),
             agent_name=self.config.name,
-            model_id=self.config.model.id,
-            model_provider=self.config.model.provider,
+            model_id=self._resolved_model_id,
+            model_provider=model_plan.provider if model_plan else self.config.model.provider,
             attachment_store=self._get_attachment_store(),
             model_streaming=self.config.model.streaming,
             enable_prompt_cache=self._prompt_cache_enabled(),
@@ -1269,6 +1317,10 @@ class AgentRuntime:
             f"tools={len(tools)}, subagents={len(subagents) if subagents else 0}"
         )
 
+    @staticmethod
+    def _uses_remote_subagents(config: DynamicAgentConfig) -> bool:
+        return bool(getattr(getattr(config, "features", None), "remote_agents_as_subagents", False))
+
     async def _build_remote_agent_tools(self, config: DynamicAgentConfig | None = None) -> list:
         """Build tools for a dynamic agent's selected A2A registry entries."""
         agent_config = config or self.config
@@ -1292,6 +1344,7 @@ class AgentRuntime:
                     allowed_http_origins=self.settings.remote_a2a_allowed_http_origins,
                     max_response_bytes=self.settings.remote_a2a_max_response_bytes,
                     max_output_bytes=self.settings.remote_a2a_max_output_bytes,
+                    registry_id=remote_agent["_id"] if self._uses_remote_subagents(agent_config) else None,
                     name=remote_agent.get("name"),
                     description=remote_agent.get("description"),
                     bearer_token=self._auth_bearer,
@@ -1316,6 +1369,11 @@ class AgentRuntime:
                 logger.warning("Skipping remote agent %s: %s", remote_agent.get("_id"), result)
                 continue
             tools.append(result)
+
+        if self._uses_remote_subagents(agent_config):
+            policies = self._build_interrupt_config(tools, set(), agent_config)
+            if any(policies.get(tool.name) for tool in tools):
+                raise ValueError("Migrate remote tool approvals to builtin.task before enabling remote subagents")
 
         logger.info(
             f"Agent '{self.config.name}': added {len(tools)} remote agent tools: "
@@ -1556,7 +1614,19 @@ class AgentRuntime:
                 )
                 continue
 
-            # Load subagent config from MongoDB
+            execution = self._mongo_service.get_agent_execution(ref.agent_id)
+            self._subagent_execution_owners[ref.agent_id] = self._subagent_execution_owner(execution)
+            if execution and execution.get("enabled") is False:
+                continue
+            if execution and execution.get("execution_harness_id") not in (None, "dynamic_agents"):
+                factory = subagent_factory.get()
+                if factory is None:
+                    raise ValueError("Harness-owned subagents require Harness Engine execution")
+                subagents.append(await factory(ref))
+                continue
+
+            # Native children require a Deep Agents configuration; provider-owned
+            # children above need not have a LangChain model at all.
             subagent_config = self._mongo_service.get_agent(ref.agent_id)
             if not subagent_config:
                 logger.warning(f"Agent '{self.config.name}': Subagent '{ref.name}' not found (agent_id={ref.agent_id})")
@@ -1579,12 +1649,17 @@ class AgentRuntime:
 
             # Instantiate subagent LLM (uses its own configured model)
             self._subagent_models[ref.agent_id] = subagent_config.model.model_copy(deep=True)
+            subagent_plan = await self._resolve_model_connection(subagent_config.model.id)
             subagent_llm = get_llm(
-                subagent_config.model.provider,
-                subagent_config.model.id,
+                subagent_plan.provider if subagent_plan else subagent_config.model.provider,
+                subagent_plan.model_id if subagent_plan else subagent_config.model.id,
                 subagent_config.model.reasoning_effort,
                 streaming=subagent_config.model.streaming,
+                **({"provider_options": subagent_plan.parameters} if subagent_plan else {}),
             )
+
+            if subagent_plan:
+                self._connection_models.append(subagent_llm)
 
             # Create SubAgent dict in deepagents format
             # Use agent_id as the name - this ensures namespace[0] from LangGraph
@@ -1599,8 +1674,9 @@ class AgentRuntime:
                 "middleware": build_middleware(
                     subagent_config.features,
                     self._session_id,
+                    resolved_models=await self._middleware_connection_models(subagent_config.features),
                     agent_name=subagent_config.name,
-                    model_id=subagent_config.model.id,
+                    model_id=subagent_plan.model_id if subagent_plan else subagent_config.model.id,
                     model_provider=subagent_config.model.provider,
                     attachment_store=self._get_attachment_store(),
                     model_streaming=subagent_config.model.streaming,
@@ -1608,7 +1684,12 @@ class AgentRuntime:
                 ),
             }
 
-            # Note: Nested subagents (subagent of subagent) are not supported in this MVP.
+            if self._uses_remote_subagents(subagent_config):
+                remote_specs = [create_remote_agent_subagent(tool) for tool in await self._build_remote_agent_tools(subagent_config)]
+                if remote_specs:
+                    subagent_dict["middleware"].append(SubAgentMiddleware(backend=StateBackend, subagents=remote_specs))
+
+            # Note: Nested local subagents (subagent of subagent) are not supported in this MVP.
             # If needed in the future, we could recursively resolve subagent_config.subagents
             # by passing the updated visited set.
 
@@ -1686,8 +1767,8 @@ class AgentRuntime:
                 tools.extend(mcp_tools)
 
         # 2. Add only the remote A2A agents selected on this subagent.
-        remote_tools = await self._build_remote_agent_tools(subagent_config)
-        tools.extend(remote_tools)
+        if not self._uses_remote_subagents(subagent_config):
+            tools.extend(await self._build_remote_agent_tools(subagent_config))
 
         # 3. Add built-in tools based on subagent's config
         client_ctx = self._client_context.model_dump() if self._client_context else None
@@ -1708,6 +1789,12 @@ class AgentRuntime:
         Releases MCP client, checkpointer, graph, and MongoClient (if owned).
         After cleanup, this runtime instance should not be reused.
         """
+        owned_models = [*self._connection_models, *(model for plan in self._middleware_model_plans for model in plan.instances)]
+        for model in owned_models:
+            await close_model_transports(model)
+        self._connection_models.clear()
+        self._middleware_model_plans.clear()
+
         # 1. Checkpointer — do NOT call .close() as it closes the underlying
         #    MongoClient (which may be shared). Just release the reference.
         self._checkpointer = None
@@ -1754,6 +1841,12 @@ class AgentRuntime:
         """Get the age of this runtime in seconds."""
         return time.time() - self._created_at
 
+    @staticmethod
+    def _subagent_execution_owner(execution: dict[str, Any] | None) -> tuple[str, bool] | None:
+        if execution is None:
+            return None
+        return execution.get("execution_harness_id") or "dynamic_agents", execution.get("enabled") is not False
+
     def is_stale(
         self,
         agent_config: DynamicAgentConfig,
@@ -1768,6 +1861,10 @@ class AgentRuntime:
         if agent_config.model != self.config.model:
             return True
         if self._mongo_service:
+            for agent_id, owner in getattr(self, "_subagent_execution_owners", {}).items():
+                execution = self._mongo_service.get_agent_execution(agent_id)
+                if self._subagent_execution_owner(execution) != owner:
+                    return True
             for agent_id, model in getattr(self, "_subagent_models", {}).items():
                 subagent = self._mongo_service.get_agent(agent_id)
                 if subagent is None or subagent.model != model:
@@ -2102,7 +2199,7 @@ class AgentRuntime:
         #      some channels (Slack) suppress the user warning to avoid noise,
         #      which would otherwise leave the model answering blind (silent
         #      failure). See _skipped_files_notice.
-        model_id = self.config.model.id
+        model_id = self._resolved_model_id
         max_file_bytes = self.settings.max_input_file_bytes
         max_turn_bytes = self.settings.max_input_turn_bytes
         user_content, skipped_files = _build_user_content(

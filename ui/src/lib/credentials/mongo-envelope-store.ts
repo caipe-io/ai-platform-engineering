@@ -1,4 +1,4 @@
-import { createCipheriv,createDecipheriv,randomBytes } from "crypto";
+import { createHash,createCipheriv,createDecipheriv,randomBytes } from "crypto";
 
 // assisted-by Codex Codex-sonnet-4-6
 
@@ -191,6 +191,11 @@ export class MongoEnvelopeCredentialStore {
   async getSecret(secretRefId: string): Promise<string> {
     const payload = await this.getPayload(secretRefId);
     return this.decryptPayloadField(secretRefId, payload, payload.ciphertext);
+  }
+
+  async getSecretRevision(secretRefId: string): Promise<string> {
+    const payload = await this.getPayload(secretRefId);
+    return createHash("sha256").update(payload.ciphertext).digest("hex");
   }
 
   async getMaskedPreview(secretRefId: string): Promise<string> {

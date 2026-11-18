@@ -95,3 +95,33 @@ it("keeps task provenance on a direct-open chat so run follow-ups work without t
   ]);
   expect(mockSetActiveConversation).toHaveBeenCalledWith("task-chat");
 });
+
+describe("informational logging", () => {
+  type WithConfig = { __APP_CONFIG__?: { uiDebugLogging?: boolean } };
+  let logSpy: jest.SpyInstance;
+  beforeEach(() => { logSpy = jest.spyOn(console, "log").mockImplementation(() => {}); });
+  afterEach(() => {
+    logSpy.mockRestore();
+    delete (window as unknown as WithConfig).__APP_CONFIG__;
+  });
+
+  const openChat = async () => {
+    mockGetConversation.mockResolvedValue({
+      _id: "task-chat", title: "Example", created_at: "2026-09-01T10:00:00Z", updated_at: "2026-09-01T10:00:00Z",
+      participants: [{ type: "agent", id: "example-agent" }], owner_id: "owner@example.com", access_level: "owner",
+    });
+    render(<ChatContainer />);
+    await screen.findByText("task-chat");
+  };
+
+  it("is silent by default", async () => {
+    await openChat();
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+
+  it("logs when uiDebugLogging is on", async () => {
+    (window as unknown as WithConfig).__APP_CONFIG__ = { uiDebugLogging: true };
+    await openChat();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("[ChatContainer]"));
+  });
+});

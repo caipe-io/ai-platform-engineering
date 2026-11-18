@@ -1,148 +1,180 @@
 "use client";
 
-// assisted-by Codex Codex-sonnet-4-6
-
-import { AlertTriangle,CheckCircle2,KeyRound,Loader2,Settings } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  CheckCircle2,
+  KeyRound,
+  Loader2,
+  Settings,
+  Share2,
+  ShieldCheck,
+  Trash2,
+} from "lucide-react";
 import React from "react";
-
-import { Button } from "@/components/ui/button";
+import { SecretProtectionBadge } from "@/components/credentials/SecretProtectionDetails";
+import { SavedSecretPicker } from "@/components/credentials/SavedSecretPicker";
+import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
 import { WorkspacePageActions } from "@/components/layout/WorkspacePageActions";
-import { Card,CardContent,CardDescription,CardHeader,CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardFooter,
+  CardTitle,
+} from "@/components/ui/card";
+import { ModelConnectionTest } from "./ModelConnectionTest";
+import type { ModelConnection } from "@/lib/model-connections";
+import type { LLMModelConfig } from "@/types/dynamic-agent";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
+import {
+  LLM_PROVIDERS,
+  providerBindingsWithLegacySecrets,
+  providerFieldAcceptsSecret,
+  type ProviderDefinition,
+  type ProviderSecretBindings,
+  type SavedProviderSecret,
+} from "@/lib/llm-provider-credentials";
 
-type ProviderField = {
-  id: string;
-  label: string;
-  secretType: "api_key" | "custom";
-  placeholder?: string;
-};
-
-type ProviderDefinition = {
-  id: string;
-  name: string;
-  description: string;
-  aliases: string[];
-  fields: ProviderField[];
-};
-
-type SecretMetadata = {
-  id: string;
-  name: string;
-  type: string;
-  maskedPreview?: string;
-};
-
-type LlmModel = {
-  model_id: string;
-  name: string;
-  provider: string;
-};
-
-const PROVIDERS: ProviderDefinition[] = [
-  {
-    id: "openai",
-    name: "OpenAI",
-    description: "GPT and OpenAI-compatible model providers.",
-    aliases: ["openai"],
-    fields: [{ id: "api_key", label: "API Key", secretType: "api_key", placeholder: "sk-..." }],
-  },
-  {
-    id: "anthropic-claude",
-    name: "Anthropic Claude",
-    description: "Claude models through the Anthropic API.",
-    aliases: ["anthropic-claude", "anthropic", "claude"],
-    fields: [{ id: "api_key", label: "API Key", secretType: "api_key", placeholder: "sk-ant-..." }],
-  },
-  {
-    id: "azure-openai",
-    name: "Azure OpenAI",
-    description: "OpenAI models hosted on Azure deployments.",
-    aliases: ["azure-openai", "azure"],
-    fields: [
-      { id: "api_key", label: "API Key", secretType: "api_key" },
-      { id: "endpoint", label: "Endpoint", secretType: "custom", placeholder: "https://resource.openai.azure.com/" },
-      { id: "api_version", label: "API Version", secretType: "custom", placeholder: "2024-02-01" },
-    ],
-  },
-  {
-    id: "aws-bedrock",
-    name: "AWS Bedrock",
-    description: "Claude and other foundation models through AWS Bedrock.",
-    aliases: ["aws-bedrock", "bedrock", "aws"],
-    fields: [
-      { id: "access_key_id", label: "Access Key ID", secretType: "custom", placeholder: "AKIA..." },
-      { id: "secret_access_key", label: "Secret Access Key", secretType: "api_key" },
-      { id: "region", label: "Region", secretType: "custom", placeholder: "us-east-1" },
-    ],
-  },
-  {
-    id: "google-genai",
-    name: "Google Gemini",
-    description: "Gemini models through Google AI APIs.",
-    aliases: ["google-genai", "google-gemini", "gemini", "google"],
-    fields: [{ id: "api_key", label: "API Key", secretType: "api_key" }],
-  },
-];
-
-function secretName(providerId: string, fieldId: string): string {
-  return `llm:${providerId}:${fieldId}`;
-}
-
-function providerForModel(provider: string): ProviderDefinition | null {
-  const normalized = provider.toLowerCase();
-  return PROVIDERS.find((definition) => definition.aliases.some((alias) => normalized.includes(alias))) ?? null;
+class ModelConnectionRequestError extends Error {
+  constructor(message: string, public code?: string) { super(message); }
 }
 
 async function parseData<T>(response: Response): Promise<T> {
-  const payload = (await response.json()) as { data?: T; success?: boolean; error?: string };
-  if (!response.ok || payload.success === false) {
-    throw new Error(payload.error || "Request failed");
-  }
+  const payload = (await response.json()) as {
+    data?: T;
+    success?: boolean;
+    error?: string;
+    code?: string;
+  };
+  if (!response.ok || payload.success === false)
+    throw new ModelConnectionRequestError(payload.error || "Request failed", payload.code);
   return payload.data as T;
 }
 
+type FieldSource = { mode: "saved" | "new"; secretId?: string; value: string };
+
 function ProviderCredentialDialog({
   provider,
+  secrets,
+  initialBindings,
   onClose,
   onSaved,
 }: {
   provider: ProviderDefinition;
+  secrets: SavedProviderSecret[];
+  initialBindings: Record<string, string>;
   onClose: () => void;
   onSaved: () => void;
-}) {
-  const [values, setValues] = React.useState<Record<string, string>>({});
+}): React.ReactElement {
+  const availableSecrets = secrets;
+  const [connectionName, setConnectionName] = React.useState("");
+  const [modelIds, setModelIds] = React.useState("");
+  const [compatible, setCompatible] = React.useState(false);
+  const [noKey, setNoKey] = React.useState(false);
+  const operation = React.useRef(crypto.randomUUID());
+  const [sources, setSources] = React.useState<Record<string, FieldSource>>(
+    () =>
+      Object.fromEntries(
+        provider.fields.map((field) => [
+          field.id,
+          {
+            mode:
+              initialBindings[field.id] ||
+              secrets.some((secret) =>
+                providerFieldAcceptsSecret(field, secret),
+              )
+                ? "saved"
+                : "new",
+            secretId: initialBindings[field.id],
+            value: "",
+          },
+        ]),
+      ),
+  );
+  const [bedrockAuth, setBedrockAuth] = React.useState(
+    initialBindings.access_key_id || initialBindings.secret_access_key
+      ? "keys"
+      : "deployment",
+  );
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const useDeployment =
+    Boolean(provider.deploymentHelp) ||
+    (provider.id === "aws-bedrock" && bedrockAuth === "deployment");
 
+  const updateSource = (id: string, value: Partial<FieldSource>) =>
+    setSources((current) => ({
+      ...current,
+      [id]: { ...current[id], ...value },
+    }));
+
+  const draft = {
+    provider: compatible ? "openai-compatible" : provider.id,
+    auth_mode: useDeployment ? "deployment" : noKey ? "none" : "secrets",
+    fields: Object.fromEntries(
+      Object.entries(sources)
+        .filter(
+          ([id, source]) =>
+            !useDeployment &&
+            !(noKey && id === "api_key") &&
+            source.mode === "saved" &&
+            source.secretId,
+        )
+        .map(([id, source]) => [id, source.secretId]),
+    ),
+    values: Object.fromEntries(
+      Object.entries(sources)
+        .filter(
+          ([id, source]) =>
+            !useDeployment &&
+            !(noKey && id === "api_key") &&
+            source.mode === "new" &&
+            source.value.trim(),
+        )
+        .map(([id, source]) => [id, source.value.trim()]),
+    ),
+  };
+  const upstreamIds = modelIds
+    .split(/[,\n]/)
+    .map((id) => id.trim())
+    .filter(Boolean);
+  const payload = JSON.stringify({
+    ...draft,
+    name: connectionName,
+    models: upstreamIds,
+  });
+  React.useEffect(() => {
+    operation.current = crypto.randomUUID();
+  }, [payload]);
   const handleSave = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setSaving(true);
     setError(null);
+    setSaving(true);
     try {
-      for (const field of provider.fields) {
-        const value = values[field.id]?.trim();
-        if (!value) continue;
-        await fetch("/api/credentials/secrets", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            name: secretName(provider.id, field.id),
-            type: field.secretType,
-            description: `${provider.name} ${field.label}`,
-            value,
-          }),
-        }).then(async (response) => {
-          if (!response.ok) {
-            const payload = await response.json().catch(() => ({}));
-            throw new Error(payload.error || `Could not save ${field.label}`);
-          }
-        });
-      }
+      await fetch("/api/llm-models/connections", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...JSON.parse(payload),
+          operation_id: operation.current,
+        }),
+      }).then(parseData);
       onSaved();
       onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save provider credentials");
+    } catch (reason) {
+      if (reason instanceof ModelConnectionRequestError && reason.code === "MODEL_CONNECTION_OPERATION_FAILED") {
+        operation.current = crypto.randomUUID();
+      }
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not create model connection",
+      );
     } finally {
       setSaving(false);
     }
@@ -155,43 +187,282 @@ function ProviderCredentialDialog({
       aria-label={`Configure ${provider.name}`}
       className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-sm"
     >
-      <form onSubmit={handleSave} className="w-full max-w-2xl rounded-lg border border-border bg-card p-5 shadow-xl space-y-4">
+      <form
+        onSubmit={handleSave}
+        className="max-h-[calc(100dvh-2rem)] w-full max-w-2xl space-y-4 overflow-y-auto rounded-lg border border-border bg-card p-5 shadow-xl"
+      >
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-medium">Connect {provider.name}</h2>
-            <p className="text-sm text-muted-foreground">
-              Values are saved as protected secrets. Existing secrets are left unchanged.
+            <p className="mt-1 text-sm text-muted-foreground">
+              Choose saved credentials or enter new values.{" "}
+              {provider.id === "openai" &&
+                "Any OpenAI-compatible endpoint is supported."}
             </p>
           </div>
-          <button type="button" className="text-sm text-muted-foreground" onClick={onClose}>
+          <button
+            type="button"
+            className="text-sm text-muted-foreground"
+            disabled={saving}
+            onClick={onClose}
+          >
             Close
           </button>
         </div>
-
-        {error && <p className="text-sm text-destructive">{error}</p>}
-
         <div className="grid gap-4 md:grid-cols-2">
-          {provider.fields.map((field) => (
-            <label key={field.id} className="space-y-1 text-sm">
-              <Label htmlFor={`${provider.id}-${field.id}`}>{field.label}</Label>
-              <Input
-                id={`${provider.id}-${field.id}`}
-                aria-label={field.label}
-                placeholder={field.placeholder}
-                type={field.secretType === "api_key" ? "password" : "text"}
-                value={values[field.id] ?? ""}
-                onChange={(event) => setValues((current) => ({ ...current, [field.id]: event.target.value }))}
-              />
-            </label>
-          ))}
+          <div className="space-y-2">
+            <Label htmlFor="connection-name">Connection name</Label>
+            <Input
+              id="connection-name"
+              value={connectionName}
+              required
+              maxLength={160}
+              placeholder="Primary model gateway"
+              disabled={saving}
+              onChange={(event) => setConnectionName(event.target.value)}
+            />
+          </div>
+          {provider.id === "openai" && (
+            <div className="space-y-2">
+              <Label htmlFor="connection-type">Provider type</Label>
+              <Select
+                id="connection-type"
+                value={compatible ? "openai-compatible" : "openai"}
+                disabled={saving}
+                onChange={(event) =>
+                  setCompatible(event.target.value === "openai-compatible")
+                }
+              >
+                <option value="openai">OpenAI</option>
+                <option value="openai-compatible">
+                  Any OpenAI-compatible endpoint
+                </option>
+              </Select>
+            </div>
+          )}
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="connection-models">Model IDs</Label>
+          <textarea
+            id="connection-models"
+            className="min-h-20 w-full rounded-md border border-input bg-background p-3 text-sm"
+            required
+            disabled={saving}
+            value={modelIds}
+            onChange={(event) => setModelIds(event.target.value)}
+            placeholder="Enter one model ID per line"
+          />
+          <p className="text-xs text-muted-foreground">
+            Use the IDs exposed by your endpoint. Model discovery is not
+            required. Azure uses deployment names.
+          </p>
+        </div>
+        {provider.id === "openai" && (
+          <div className="space-y-2">
+            <Label htmlFor="connection-key-mode">Authentication</Label>
+            <Select
+              id="connection-key-mode"
+              value={noKey ? "none" : "secrets"}
+              disabled={saving}
+              onChange={(event) => setNoKey(event.target.value === "none")}
+            >
+              <option value="secrets">Saved or new API key</option>
+              <option value="none">Endpoint does not require a key</option>
+            </Select>
+          </div>
+        )}
+        <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-sm">
+          <div className="flex items-center gap-2 font-medium">
+            <ShieldCheck className="h-4 w-4 text-primary" aria-hidden="true" />
+            Saved securely in Saved Secrets
+          </div>
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">
+            Your values are encrypted when saved. Full values stay hidden after
+            saving, and existing values are preserved.
+          </p>
+          <details className="mt-3 text-xs text-muted-foreground">
+            <summary className="cursor-pointer">
+              Share, rotate, or delete credentials
+            </summary>
+            <ul className="mt-3 space-y-2">
+              <li className="flex items-start gap-2">
+                <Share2
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                  aria-hidden="true"
+                />
+                <span>
+                  Use{" "}
+                  <strong className="font-medium text-foreground">Share</strong>{" "}
+                  on a saved secret to grant a team access.
+                </span>
+              </li>
+              <li className="flex items-start gap-2">
+                <Trash2
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                  aria-hidden="true"
+                />
+                <span>
+                  Use{" "}
+                  <strong className="font-medium text-foreground">
+                    Delete
+                  </strong>{" "}
+                  on a saved secret and confirm to remove it. This does not
+                  revoke the key at its provider.
+                </span>
+              </li>
+              <li>
+                Use{" "}
+                <strong className="font-medium text-foreground">Rotate</strong>{" "}
+                to replace a value. Agents use the updated value on their next
+                invocation.
+              </li>
+            </ul>
+          </details>
+          <NavigationProgressLink
+            href="/credentials/secrets"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+          >
+            Manage Saved Secrets
+            <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
+            <span className="sr-only"> (opens in a new tab)</span>
+          </NavigationProgressLink>
         </div>
 
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        {provider.id === "aws-bedrock" && (
+          <div className="space-y-2">
+            <Label htmlFor="bedrock-auth">Authentication</Label>
+            <Select
+              id="bedrock-auth"
+              value={bedrockAuth}
+              disabled={saving}
+              onChange={(event) => setBedrockAuth(event.target.value)}
+            >
+              <option value="deployment">Use deployment IAM credentials</option>
+              <option value="keys">Use saved or new access keys</option>
+            </Select>
+          </div>
+        )}
+        {useDeployment ? (
+          <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
+            {provider.deploymentHelp ??
+              "Uses the runtime’s existing AWS identity and region. No access key is stored by this form."}
+          </p>
+        ) : (
+          <div className="grid gap-5 md:grid-cols-2">
+            {provider.fields
+              .filter((field) => !(noKey && field.id === "api_key"))
+              .map((field) => {
+                const source = sources[field.id];
+                const options = availableSecrets.filter((secret) =>
+                  providerFieldAcceptsSecret(field, secret),
+                );
+                const required =
+                  field.required ||
+                  (provider.id === "aws-bedrock" &&
+                    field.id !== "session_token");
+                const inputId = `${provider.id}-${field.id}`;
+                return (
+                  <div key={field.id} className="space-y-2 text-sm">
+                    <Label htmlFor={inputId}>
+                      {field.label}
+                      {required && (
+                        <span
+                          aria-hidden="true"
+                          className="ml-1 text-destructive"
+                        >
+                          *
+                        </span>
+                      )}
+                    </Label>
+                    <Select
+                      aria-label={`${field.label} source`}
+                      value={source.mode}
+                      disabled={saving}
+                      onChange={(event) =>
+                        updateSource(field.id, {
+                          mode: event.target.value as FieldSource["mode"],
+                          value: "",
+                        })
+                      }
+                    >
+                      <option value="saved">Choose a saved secret</option>
+                      <option value="new">Enter a new value</option>
+                    </Select>
+                    {source.mode === "saved" ? (
+                      <SavedSecretPicker
+                        id={inputId}
+                        label={field.label}
+                        secrets={options}
+                        value={source.secretId}
+                        disabled={saving}
+                        onChange={(secretId) =>
+                          updateSource(field.id, { secretId })
+                        }
+                      />
+                    ) : (
+                      <Input
+                        id={inputId}
+                        aria-label={field.label}
+                        aria-describedby={`${inputId}-help`}
+                        type={
+                          field.inputType ??
+                          (field.secretType === "api_key" ? "password" : "text")
+                        }
+                        required={required}
+                        disabled={saving}
+                        autoComplete="off"
+                        placeholder={field.placeholder}
+                        value={source.value}
+                        onChange={(event) =>
+                          updateSource(field.id, { value: event.target.value })
+                        }
+                      />
+                    )}
+                    <p
+                      id={`${inputId}-help`}
+                      className="text-xs leading-5 text-muted-foreground"
+                    >
+                      {source.mode === "saved"
+                        ? "Only the secret reference is saved. Its value stays hidden."
+                        : (field.help ??
+                          "The new value will be encrypted in Saved Secrets.")}
+                    </p>
+                    {options.length === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        No saved secrets available for this field. Enter a new
+                        value to create one.
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        )}
         <div className="flex gap-2">
-          <Button type="submit" disabled={saving || Object.values(values).every((value) => !value.trim())}>
-            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Save Connection
+          <ModelConnectionTest
+            request={{ draft, upstream_model_id: upstreamIds[0] }}
+            disabled={saving || !upstreamIds.length}
+          />
+          <Button
+            type="submit"
+            disabled={saving || !connectionName.trim() || !upstreamIds.length}
+          >
+            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Save
+            Connection
           </Button>
-          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={saving}
+            onClick={onClose}
+          >
             Cancel
           </Button>
         </div>
@@ -200,114 +471,252 @@ function ProviderCredentialDialog({
   );
 }
 
-export function LLMProvidersTab() {
-  const [models, setModels] = React.useState<LlmModel[]>([]);
-  const [secrets, setSecrets] = React.useState<SecretMetadata[]>([]);
+export function LLMProvidersTab(): React.ReactElement {
+  const [secrets, setSecrets] = React.useState<SavedProviderSecret[]>([]);
+  const [connections, setConnections] = React.useState<ModelConnection[]>([]);
+  const [connectionModels, setConnectionModels] = React.useState<
+    LLMModelConfig[]
+  >([]);
+  const [canManage, setCanManage] = React.useState(false);
+  const [runtimeSupported, setRuntimeSupported] = React.useState(false);
+  const [bindings, setBindings] = React.useState<ProviderSecretBindings>({});
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-  const [editingProvider, setEditingProvider] = React.useState<ProviderDefinition | null>(null);
-
+  const [savedProvider, setSavedProvider] = React.useState<string | null>(null);
+  const [editingProvider, setEditingProvider] =
+    React.useState<ProviderDefinition | null>(null);
   const load = React.useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [modelsResult, secretsResult] = await Promise.all([
-        fetch("/api/llm-models?page_size=100").then((response) =>
-          parseData<{ items?: LlmModel[] }>(response),
+      const [metadata, configuration, catalog] = await Promise.all([
+        fetch("/api/credentials/secrets").then(
+          parseData<SavedProviderSecret[]>,
         ),
-        fetch("/api/credentials/secrets")
-          .then((response) => (response.ok ? parseData<SecretMetadata[]>(response) : []))
-          .catch(() => []),
+        fetch("/api/credentials/llm-providers").then(
+          parseData<{ bindings: ProviderSecretBindings }>,
+        ),
+        fetch("/api/llm-models/connections").then(
+          parseData<{
+            connections: ModelConnection[];
+            models: LLMModelConfig[];
+            can_manage: boolean;
+            runtime_supported: boolean;
+          }>,
+        ),
       ]);
-      setModels(modelsResult.items ?? []);
-      setSecrets(secretsResult);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load LLM providers");
+      setSecrets(metadata);
+      setConnections(catalog.connections);
+      setConnectionModels(catalog.models);
+      setCanManage(catalog.can_manage);
+      setRuntimeSupported(catalog.runtime_supported);
+      setBindings(
+        providerBindingsWithLegacySecrets(configuration.bindings, metadata),
+      );
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Could not load provider credentials",
+      );
     } finally {
       setLoading(false);
     }
   }, []);
-
   React.useEffect(() => {
     void load();
   }, [load]);
 
-  const modelProviders = React.useMemo(() => {
-    const ids = new Set(models.map((model) => providerForModel(model.provider)?.id ?? model.provider));
-    return PROVIDERS.filter((provider) => ids.has(provider.id));
-  }, [models]);
-
-  const visibleProviders = modelProviders.length > 0 ? modelProviders : PROVIDERS;
-  const configuredSecretNames = new Set(secrets.map((secret) => secret.name));
-
   return (
-    <section className="space-y-6">
+    <section data-tour="model-providers" className="space-y-6">
       <WorkspacePageActions>
-        <Button type="button" variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
-          {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Settings className="mr-2 h-4 w-4" />}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={loading}
+          onClick={() => void load()}
+        >
+          {loading ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <Settings className="mr-2 h-4 w-4" />
+          )}
           Refresh
         </Button>
       </WorkspacePageActions>
+      <p
+        role="note"
+        className="rounded-xl border border-border/60 bg-muted/30 p-3 text-xs leading-5 text-muted-foreground"
+      >
+        Named connections bind an endpoint and credentials to specific models.
+        Test them here, then select the model in an agent. Existing models
+        continue using their deployment settings.
+      </p>
+      {!runtimeSupported && !loading && (
+        <p role="alert" className="text-sm text-destructive">
+          Creating saved connections requires a compatible Dynamic Agents
+          runtime with its credential API configured.
+        </p>
+      )}
+      {connections.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-lg font-medium">Your model connections</h2>
+          {connections.map((connection) => (
+            <Card key={connection._id} className="overflow-hidden">
+              <CardHeader className="px-6 py-4">
+                <CardTitle className="text-base">{connection.name}</CardTitle>
+                <CardDescription>
+                  {connection.provider} ·{" "}
+                  {connection.auth_mode === "deployment"
+                    ? "Deployment identity"
+                    : "Protected saved credentials"}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="px-6 pb-0">
+                {connectionModels
+                  .filter((model) => model.connection_id === connection._id)
+                  .map((model) => (
+                    <div
+                      key={model._id}
+                      className="flex min-w-0 flex-col items-start gap-3 border-t py-3 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <span className="min-w-0 break-all font-mono text-sm">
+                        {model.upstream_model_id}
+                      </span>
+                      <ModelConnectionTest
+                        compact
+                        request={{ model_id: model._id }}
+                      />
+                    </div>
+                  ))}
+              </CardContent>
+              <CardFooter className="border-t px-6 py-3">
+                <NavigationProgressLink
+                  href="/credentials/secrets"
+                  className="text-xs text-primary hover:underline"
+                >
+                  Share, rotate, or delete credentials in Saved Secrets
+                </NavigationProgressLink>
+              </CardFooter>
+            </Card>
+          ))}
+        </div>
+      )}
       <Card className="rounded-none border-0 bg-transparent shadow-none">
         <CardContent className="space-y-4 px-0 pt-0">
           {error && (
-            <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
-              <AlertTriangle className="mt-0.5 h-4 w-4 text-destructive" />
-              <p className="text-sm text-destructive">{error}</p>
+            <div
+              role="alert"
+              className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-3"
+            >
+              <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" />
+              <span className="flex-1 text-sm">{error}</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void load()}
+              >
+                Retry
+              </Button>
             </div>
           )}
-
+          {savedProvider && (
+            <p
+              role="status"
+              className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/20 bg-primary/5 p-3 text-sm"
+            >
+              <ShieldCheck
+                className="h-4 w-4 text-primary"
+                aria-hidden="true"
+              />
+              {savedProvider} connection and models saved. Test the connection
+              below.{" "}
+              <NavigationProgressLink
+                href="/credentials/secrets"
+                className="font-medium text-primary hover:underline"
+              >
+                Manage Saved Secrets
+              </NavigationProgressLink>
+            </p>
+          )}
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {visibleProviders.map((provider) => {
-              const configuredFields = provider.fields.filter((field) =>
-                configuredSecretNames.has(secretName(provider.id, field.id)),
+            {LLM_PROVIDERS.map((provider) => {
+              const providerConnections = connections.filter(
+                (connection) =>
+                  connection.provider === provider.id ||
+                  (provider.id === "openai" &&
+                    connection.provider === "openai-compatible"),
               );
-              const configured = configuredFields.length > 0;
+              const complete = providerConnections.length > 0;
               return (
-                <Card key={provider.id} className="border-border/70">
+                <Card
+                  key={provider.id}
+                  className="flex h-full min-w-0 flex-col border-border/70"
+                >
                   <CardHeader className="space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <CardTitle className="text-base">{provider.name}</CardTitle>
-                      {configured ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-1 text-xs text-emerald-600 dark:text-emerald-400">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <CardTitle className="text-base">
+                        {provider.name}
+                      </CardTitle>
+                      <span
+                        className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs ${complete ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "bg-amber-500/10 text-amber-600 dark:text-amber-400"}`}
+                      >
+                        {complete ? (
                           <CheckCircle2 className="h-3.5 w-3.5" />
-                          Ready
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-1 text-xs text-amber-600 dark:text-amber-400">
+                        ) : (
                           <KeyRound className="h-3.5 w-3.5" />
-                          Needs secret
-                        </span>
-                      )}
+                        )}
+                        {complete
+                          ? `${providerConnections.length} connection${providerConnections.length === 1 ? "" : "s"}`
+                          : "Ready to connect"}
+                      </span>
                     </div>
                     <CardDescription>{provider.description}</CardDescription>
                   </CardHeader>
-                  <CardContent className="space-y-3">
+                  <CardContent className="flex-1">
                     <p className="text-xs text-muted-foreground">
-                      Saved as: {provider.fields.map((field) => secretName(provider.id, field.id)).join(", ")}
+                      {complete
+                        ? "Select these models in your agent or test them above."
+                        : "Add credentials and one or more model IDs."}
                     </p>
+                  </CardContent>
+                  <CardFooter className="mt-auto flex-wrap justify-between gap-3">
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
+                      disabled={
+                        loading ||
+                        Boolean(error) ||
+                        !canManage ||
+                        !runtimeSupported
+                      }
                       aria-label={`Connect ${provider.name}`}
                       onClick={() => setEditingProvider(provider)}
                     >
-                      Connect provider
+                      Add connection
                     </Button>
-                  </CardContent>
+                    {complete && <SecretProtectionBadge />}
+                  </CardFooter>
                 </Card>
               );
             })}
           </div>
         </CardContent>
       </Card>
-
       {editingProvider && (
         <ProviderCredentialDialog
+          key={editingProvider.id}
           provider={editingProvider}
-          onClose={() => setEditingProvider(null)}
-          onSaved={() => void load()}
+          secrets={secrets}
+          initialBindings={bindings[editingProvider.id] ?? {}}
+          onClose={() => {
+            setEditingProvider(null);
+            void load();
+          }}
+          onSaved={() => setSavedProvider(editingProvider.name)}
         />
       )}
     </section>

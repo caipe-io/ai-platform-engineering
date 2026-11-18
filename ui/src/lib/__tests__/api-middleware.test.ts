@@ -1077,6 +1077,7 @@ describe('getAuthenticatedUser', () => {
         $set: expect.objectContaining({
           keycloak_sub: 'test-keycloak-sub',
           'metadata.keycloak_sub': 'test-keycloak-sub',
+          'metadata.role': 'user',
         }),
       }),
       { upsert: true }
@@ -1228,6 +1229,33 @@ describe('getAuthenticatedUser', () => {
     expect(mockGetServerSession).toHaveBeenCalledTimes(3);
     expect(updateOne).toHaveBeenCalledTimes(1);
     expect(updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists a role downgrade immediately within the identity-write dedup window', async () => {
+    const updateOne = jest.fn().mockResolvedValue({ matchedCount: 1 });
+    const updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
+    const session = {
+      user: { email: 'test-user@example.com', name: 'Test User' },
+      role: 'admin', sub: 'role-change-sub',
+    };
+    mockGetServerSession.mockResolvedValueOnce(session)
+      .mockResolvedValueOnce({ ...session, role: 'user' })
+      .mockResolvedValueOnce(session)
+      .mockResolvedValueOnce({ ...session, role: 'user' });
+    mockGetCollection.mockImplementation(async (name: string) => (
+      name === 'users' ? { updateOne } : { updateMany }
+    ));
+    const request = () => new Request('http://example.test/api/example') as unknown as NextRequest;
+    await getAuthenticatedUser(request());
+    await getAuthenticatedUser(request());
+    await getAuthenticatedUser(request());
+    await getAuthenticatedUser(request());
+    expect(updateOne).toHaveBeenCalledTimes(4);
+    expect(updateOne).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ $set: expect.objectContaining({ 'metadata.role': 'user' }) }),
+      expect.anything(),
+    );
   });
 
   it('re-runs keycloak sub mapping writes once the dedup window elapses', async () => {

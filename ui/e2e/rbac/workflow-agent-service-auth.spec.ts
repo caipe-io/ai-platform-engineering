@@ -171,7 +171,7 @@ test.describe("mocked workflow agent service auth", () => {
     await installMockedRbacApp(page, { isAdmin: true, handlers: [handler] });
 
     await page.goto("/dynamic-agents?tab=agents", { waitUntil: "domcontentloaded" });
-    await page.getByText("SRE Agent", { exact: true }).click();
+    await page.getByRole("button", { name: "Open SRE Agent", exact: true }).click();
     await expect(page.getByText(/Edit Agent - SRE Agent/i)).toBeVisible();
 
     await page.getByRole("button", { name: /^\d+ Advanced$/ }).click();

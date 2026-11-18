@@ -316,6 +316,29 @@ describe('chat-store', () => {
     });
   });
 
+  it('does not rewrite conversation state when sharing metadata is unchanged', () => {
+    const sharing = {
+      is_public: false,
+      shared_with: ['recipient@example.com'],
+      shared_with_teams: ['platform'],
+      team_permissions: { platform: 'view' as const },
+      share_link_enabled: false,
+    };
+    const conversation = makeConversation({ sharing });
+    useChatStore.setState({ conversations: [conversation] });
+    const before = useChatStore.getState();
+
+    before.updateConversationSharing(conversation.id, {
+      ...sharing,
+      shared_with: [...sharing.shared_with],
+      shared_with_teams: [...sharing.shared_with_teams],
+      team_permissions: { ...sharing.team_permissions },
+    });
+
+    expect(useChatStore.getState()).toBe(before);
+    expect(useChatStore.getState().conversations[0]).toBe(conversation);
+  });
+
 
   // --------------------------------------------------------------------------
   // last active conversation pointer
@@ -2663,4 +2686,42 @@ describe('chat-store', () => {
     });
   });
 
+});
+
+it("persists and reloads the configuration block without losing its recovery action", async () => {
+  const conv = makeConversation({ id: "readiness-chat", agent_id: "example" });
+  conv.messages = [makeMessage({ id: "readiness-message", role: "assistant", content: "Nothing was executed.", isFinal: true, turnStatus: "interrupted", error: "HARNESS_AGENT_NOT_READY" })];
+  useChatStore.setState({ conversations: [conv], activeConversationId: conv.id, streamingConversations: new Map() });
+  await useChatStore.getState().saveMessagesToServer(conv.id);
+  expect(mockApiClient.addMessage).toHaveBeenCalledWith(conv.id, expect.objectContaining({ metadata: expect.objectContaining({ execution_error_code: "HARNESS_AGENT_NOT_READY" }) }));
+  mockApiClient.getMessages.mockResolvedValueOnce({ items: [{ _id: "saved", message_id: "readiness-message", conversation_id: conv.id, role: "assistant", content: "Nothing was executed.", created_at: new Date(), metadata: { is_final: true, turn_status: "interrupted", execution_error_code: "HARNESS_AGENT_NOT_READY" } }], total: 1, page: 1, page_size: 100, has_more: false } as never);
+  useChatStore.setState({ conversations: [{ ...conv, messages: [] }], loadingConversations: new Set() } as never);
+  await useChatStore.getState().loadMessagesFromServer(conv.id, { force: true });
+  expect(useChatStore.getState().getActiveConversation()?.messages[0].error).toBe("HARNESS_AGENT_NOT_READY");
+});
+
+
+it("saves a rejected admission before a queued turn can replace the current turn", async () => {
+  jest.useFakeTimers();
+  try {
+    resetStore();
+    mockApiClient.addMessage.mockClear();
+    const conv = makeConversation({ id: "queued-readiness", agent_id: "example" });
+    conv.messages = [
+      makeMessage({ id: "rejected-user", turnId: "rejected", role: "user" }),
+      makeMessage({ id: "rejected-assistant", turnId: "rejected", role: "assistant", content: "Nothing was executed.", isFinal: true, error: "HARNESS_AGENT_NOT_READY" }),
+    ];
+    useChatStore.setState({ conversations: [conv], activeConversationId: conv.id });
+    useChatStore.getState().setConversationStreaming(conv.id, null);
+    const current = useChatStore.getState().conversations[0];
+    useChatStore.setState({ conversations: [{ ...current, messages: [...current.messages,
+      makeMessage({ id: "queued-user", turnId: "queued", role: "user" }),
+      makeMessage({ id: "queued-assistant", turnId: "queued", role: "assistant", content: "New turn", isFinal: false }),
+    ] }] });
+    await jest.advanceTimersByTimeAsync(500);
+    expect(mockApiClient.addMessage).toHaveBeenCalledWith(conv.id, expect.objectContaining({
+      message_id: "rejected-assistant", metadata: expect.objectContaining({ execution_error_code: "HARNESS_AGENT_NOT_READY", turn_id: "rejected" }),
+    }));
+    expect(mockApiClient.addMessage.mock.calls.map(([, message]) => message.message_id)).toEqual(["rejected-user", "rejected-assistant"]);
+  } finally { jest.useRealTimers(); }
 });
