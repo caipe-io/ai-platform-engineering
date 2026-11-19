@@ -108,8 +108,8 @@ export function AgenticAppAssistantOverlay({
   const deepLink = readAssistantDeepLink(searchParams.toString(), options);
   const conversationKey = `${appId}:${assistantAgentId}`;
   const requestedId = deepLink.id;
-  const requestKey = JSON.stringify([conversationKey, deepLink.error ?? requestedId]);
-  const hasSelectedConversation = !deepLink.error && assistantConversation?.key === conversationKey &&
+  const requestKey = JSON.stringify([conversationKey, deepLink.error ?? (deepLink.createNew ? "new" : requestedId)]);
+  const hasSelectedConversation = !deepLink.error && !deepLink.createNew && assistantConversation?.key === conversationKey &&
     (!requestedId || assistantConversation.id === requestedId);
   const conversationTitle = `${appName} Assistant`.slice(0, 120);
   const conversationMetadata = useMemo(
@@ -178,6 +178,7 @@ export function AgenticAppAssistantOverlay({
     const session = selectionSessionRef.current;
     if (deepLink.error) throw new Error(deepLink.error);
     // Invalid/unauthorized deep links report an error; never fall back to another chat.
+    if (deepLink.createNew) return createAppConversation();
     if (requestedId) return restoreConversation(requestedId);
     const existing = await findLatestAppConversation(
       useChatStore.getState().conversations,
@@ -194,7 +195,7 @@ export function AgenticAppAssistantOverlay({
     assistantAgentId,
     createAppConversation,
     restoreConversation,
-    requestedId, deepLink.error, options?.includeLegacyAgentHistory,
+    requestedId, deepLink.error, deepLink.createNew, options?.includeLegacyAgentHistory,
   ]);
 
   useEffect(() => {
@@ -203,6 +204,7 @@ export function AgenticAppAssistantOverlay({
     const session = selectionSessionRef.current;
 
     if (hasSelectedConversation && assistantConversation) {
+      conversationRequestRef.current = null;
       activate(assistantConversation.id, session);
       return () => {
         cancelled = true;

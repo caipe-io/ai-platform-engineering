@@ -248,6 +248,8 @@ Do not renumber existing children when inserting a new assertion.
 | WEBEX-01.01 | Approved test identity/destination: send labelled 1:1, then contextual follow-up | Delivered replies and host history preserve marker/context without duplicate runs |
 | WEBEX-01.02 | Approved fixture space mapping: mention bot, then follow up in its thread | Correct scoped route/identity and actual delivery agree with stored host conversation |
 
+| APP-05.01 | Open an app with `assistant_chat=new` twice while an older app conversation exists | Each action creates one fresh conversation with the configured assistant and app metadata, replaces the URL with its real ID, and preserves old chats. Ordinary opens and explicit saved-chat links retain their existing restore behavior. Adapter: `AgenticAppAssistantOverlay.test.tsx` |
+
 Record adapter gaps explicitly. This register and inventory do not restore the old
 Playwright runners, synthetic-cookie helpers or monolithic app endpoints. Port
 only compatible assertions to current owning suites; track every remaining gap

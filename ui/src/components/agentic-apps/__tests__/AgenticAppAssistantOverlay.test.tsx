@@ -454,6 +454,28 @@ describe("AgenticAppAssistantOverlay", () => {
     expect(screen.queryByTestId("chat-panel")).toBeNull();
   });
 
+  it("creates a fresh bound conversation for each explicit new-chat link without restoring history", async () => {
+    mockFindConversation.mockResolvedValue(makeConversation("old-app-chat", "2026-01-01"));
+    mockCreateConversation.mockResolvedValueOnce("fresh-a").mockResolvedValueOnce("fresh-b");
+    window.history.replaceState(null, "", "/example?assistant_chat=new");
+    const props = { appId: "example-app", appName: "Example App", activeContext: null,
+      onClearContext: jest.fn(), assistantAgentId: "agent-example", open: true, onOpenChange: jest.fn() };
+    const { rerender } = render(<AgenticAppAssistantOverlay {...props} />);
+    await waitFor(() => expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-conversation-id", "fresh-a"));
+    expect(window.location.search).toBe("?assistant_chat=fresh-a");
+    expect(mockCreateConversation).toHaveBeenCalledWith("agent-example", expect.objectContaining({
+      activate: false, metadata: expect.objectContaining({ agentic_app_id: "example-app", agentic_app_agent_id: "agent-example" }),
+    }));
+    rerender(<AgenticAppAssistantOverlay {...props} />);
+    window.history.pushState(null, "", "/example?assistant_chat=new");
+    rerender(<AgenticAppAssistantOverlay {...props} />);
+    await waitFor(() => expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-conversation-id", "fresh-b"));
+    expect(mockFindConversation).not.toHaveBeenCalled();
+    expect(mockRestoreConversation).not.toHaveBeenCalled();
+    expect(mockDeleteConversation).not.toHaveBeenCalled();
+    expect(mockCreateConversation).toHaveBeenCalledTimes(2);
+  });
+
   it("starts a new chat while retaining the prior conversation in history", async () => {
     mockCreateConversation
       .mockResolvedValueOnce("assistant-conversation")
