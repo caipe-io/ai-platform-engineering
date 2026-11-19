@@ -250,6 +250,8 @@ Do not renumber existing children when inserting a new assertion.
 
 | APP-05.01 | Open an app with `assistant_chat=new` twice while an older app conversation exists | Each action creates one fresh conversation with the configured assistant and app metadata, replaces the URL with its real ID, and preserves old chats. Ordinary opens and explicit saved-chat links retain their existing restore behavior. Adapter: `AgenticAppAssistantOverlay.test.tsx` |
 
+| RUN-05.03 | Seed a config-driven agent with changed native tools while Harness Engine is enabled | The same publication adapter used by agent saves prepares a version before replacing the agent pointer. Unchanged restarts retain the version; failed publication leaves the previous configuration intact; adopted agents remain unchanged. Adapter: `seed-config-execution.test.ts` |
+
 Record adapter gaps explicitly. This register and inventory do not restore the old
 Playwright runners, synthetic-cookie helpers or monolithic app endpoints. Port
 only compatible assertions to current owning suites; track every remaining gap
