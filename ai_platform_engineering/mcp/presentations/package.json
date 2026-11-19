@@ -1,0 +1,22 @@
+{
+  "name": "@caipe/mcp-presentations",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check src/server.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@xmldom/xmldom": "0.9.12",
+    "jose": "6.2.2",
+    "jszip": "3.10.1",
+    "mongodb": "7.1.1",
+    "zod": "4.6.7"
+  }
+}

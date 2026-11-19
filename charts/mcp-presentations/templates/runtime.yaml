@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-presentations
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: presentations
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: presentations
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: presentations
+          image: "{{ .Values.image.repository }}@{{ required "image.digest is required" .Values.image.digest }}"
+          ports:
+            - name: http
+              containerPort: 8088
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: PORT
+              value: "8088"
+            - name: PRESENTATION_PUBLIC_URL
+              value: {{ required "publicUrl is required" .Values.publicUrl | quote }}
+            - name: PRESENTATION_DOWNLOAD_URL
+              value: {{ default .Values.publicUrl .Values.downloadUrl | quote }}
+            - name: OIDC_ISSUER
+              value: {{ required "issuer is required" .Values.issuer | quote }}
+            - name: OIDC_JWKS_URL
+              value: {{ required "jwksUrl is required" .Values.jwksUrl | quote }}
+            - name: PRESENTATION_TOKEN_AUDIENCE
+              value: {{ required "tokenAudience is required" .Values.tokenAudience | quote }}
+            - name: CAIPE_API_ORIGIN
+              value: {{ required "hostApiOrigin is required" .Values.hostApiOrigin | quote }}
+            - name: MONGODB_DATABASE
+              value: {{ .Values.mongodbDatabase | quote }}
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "credentialsSecret is required" .Values.credentialsSecret }}
+                  key: MONGODB_URI
+            - name: PRESENTATION_PROFILES_FILE
+              value: /config/profiles.json
+          volumeMounts:
+            - name: profiles
+              mountPath: /config
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          startupProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+      volumes:
+        - name: profiles
+          secret:
+            secretName: {{ required "profilesSecret is required" .Values.profilesSecret }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-presentations
+spec:
+  selector:
+    app.kubernetes.io/name: presentations
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 8088
+      targetPort: http

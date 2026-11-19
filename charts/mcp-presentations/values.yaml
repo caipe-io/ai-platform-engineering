@@ -1,0 +1,27 @@
+image:
+  repository: ghcr.io/caipe-io/mcp-presentations
+  # Pin a reviewed image digest before installing.
+  digest: ""
+imagePullSecrets: []
+replicas: 1
+publicUrl: ""
+# For CAIPE use its authenticated /api/agentic-apps/runtime/presentations route.
+downloadUrl: ""
+issuer: ""
+jwksUrl: ""
+tokenAudience: ""
+hostApiOrigin: ""
+mongodbDatabase: presentations
+# Secret containing MONGODB_URI. Use a dedicated database user.
+credentialsSecret: ""
+# Secret containing profiles.json. Presets contain layout mappings, never template bytes.
+profilesSecret: ""
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 768Mi
+nodeSelector: {}
+tolerations: []

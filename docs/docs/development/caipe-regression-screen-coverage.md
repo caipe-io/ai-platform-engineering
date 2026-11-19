@@ -248,6 +248,11 @@ Do not renumber existing children when inserting a new assertion.
 | WEBEX-01.01 | Approved test identity/destination: send labelled 1:1, then contextual follow-up | Delivered replies and host history preserve marker/context without duplicate runs |
 | WEBEX-01.02 | Approved fixture space mapping: mention bot, then follow up in its thread | Correct scoped route/identity and actual delivery agree with stored host conversation |
 
+
+| MCP-06.01 | Configured presentation service and two team personas: upload an empty template as team admin, discover tools and plan a source-URL deck as a member | Metadata and actual slide count return without template bytes. Reader upload, forged identity and outside-team lookup deny. Adapters: `mcp/presentations/test/{auth,http,mongo}.test.mjs` under `ai_platform_engineering/` |
+| MCP-06.02 | Approved synthetic fixture deck: call the real MCP render tool and download the returned artifact through the configured authenticated route | Editable OOXML preserves content marker, source links, notes and supplied master. Other user, removed team membership, changed template version and expired artifact deny. Same HTTP/Mongo adapters; configured-host browser/download verification remains a separate live check |
+| MCP-06.03 | Empty/malformed/oversized, macro, embedded-object, external-content and XML-entity template fixtures | Bounded request, ZIP expansion and worker failure reject safely; no executed slide text or stored partial artifact. Adapter: presentation renderer tests; inspect every slide of operator-supplied template fixture separately |
+
 Record adapter gaps explicitly. This register and inventory do not restore the old
 Playwright runners, synthetic-cookie helpers or monolithic app endpoints. Port
 only compatible assertions to current owning suites; track every remaining gap

@@ -1,0 +1,7 @@
+node_modules
+.env*
+*.pptx
+*.potx
+*.otf
+*.ttf
+test

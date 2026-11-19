@@ -1,0 +1,92 @@
+{
+  "id": "presentations",
+  "displayName": "Presentations",
+  "description": "Private team templates and editable PowerPoint downloads for any agent.",
+  "apiVersion": "2.0",
+  "ui": {
+    "profiles": [
+      {
+        "id": "hosted",
+        "mode": "iframe"
+      }
+    ],
+    "routes": [
+      {
+        "id": "home",
+        "path": "/apps/presentations"
+      }
+    ]
+  },
+  "api": {
+    "mounts": []
+  },
+  "auth": {
+    "mode": "forward-user-access-token"
+  },
+  "runtime": {
+    "kind": "proxied-next-zone",
+    "mountPath": "/apps/presentations",
+    "maxRequestBodyBytes": 12582912
+  },
+  "surfaces": {
+    "showInHub": true,
+    "navOrder": 30,
+    "homeEligible": false
+  },
+  "access": {
+    "requiredRoles": [
+      "user"
+    ],
+    "tokenScopes": [],
+    "policyActions": [
+      {
+        "action": "proxy:GET",
+        "method": "GET",
+        "path": "/*",
+        "defaultEffect": "allow"
+      },
+      {
+        "action": "proxy:POST",
+        "method": "POST",
+        "path": "/api/templates",
+        "defaultEffect": "allow"
+      },
+      {
+        "action": "proxy:PUT",
+        "method": "PUT",
+        "path": "/api/templates/*",
+        "defaultEffect": "allow"
+      }
+    ]
+  },
+  "provides": {
+    "mcp": [
+      "presentations"
+    ],
+    "agents": [],
+    "workflows": []
+  },
+  "consumes": {
+    "platformApis": [
+      {
+        "id": "app.gateway",
+        "version": "1.0",
+        "required": true
+      }
+    ]
+  },
+  "requestedPermissions": [],
+  "health": {
+    "endpoint": "/health/ready",
+    "timeoutMs": 1500
+  },
+  "catalog": {
+    "categories": [
+      "productivity"
+    ],
+    "capabilities": [
+      "presentation-rendering"
+    ]
+  },
+  "version": "0.1.0"
+}
