@@ -21,7 +21,7 @@ test('HTTP/MCP end-to-end: private upload → discovery → plan → render → 
   let entitled = true;
   const authenticate = createAuthenticator({ issuer, audience, hostOrigin: 'http://host.example.test' }, { keys, fetchImpl: async () => new Response(JSON.stringify({ success: true, data: entitled ? [{ slug: 'example-team', name: 'Example', user_role: 'admin' }] : [] })) });
   const store = new PresentationStore(db, { publicUrl: 'http://127.0.0.1/apps/presentations' }); await store.initialize();
-  const server = createPresentationServer({ store, authenticate, profiles: [{ id: 'example', name: 'Example', profile }], defaultProfileId: 'example', publicUrl: store.publicUrl });
+  const server = createPresentationServer({ store, authenticate, profiles: [{ id: 'secondary', name: 'Secondary', profile: { ...profile, font: 'Courier New' } }, { id: 'example', name: 'Example', profile }], defaultProfileId: 'example', publicUrl: store.publicUrl });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`;
   store.publicUrl = `${base}/apps/presentations`; store.downloadUrl = store.publicUrl;
@@ -35,9 +35,10 @@ test('HTTP/MCP end-to-end: private upload → discovery → plan → render → 
     assert.equal((await (await fetch(`${base}/api/config`, { headers })).json()).default_profile_id, 'example');
     const fixture = await (await template()).generateAsync({ type: 'nodebuffer' });
     const upload = await fetch(`${base}/apps/presentations/api/templates`, { method: 'POST', headers,
-      body: JSON.stringify({ name: 'Example template', owner_team: 'example-team', profile_id: 'example', file: fixture.toString('base64') }) });
+      body: JSON.stringify({ name: 'Example template', owner_team: 'example-team', file: fixture.toString('base64') }) });
     assert.equal(upload.status, 200); const uploaded = await upload.json();
     assert.ok(uploaded.version); assert.equal(uploaded.bytes, undefined);
+    assert.equal((await store.templates.findOne({ _id: uploaded.id })).profile.font, profile.font); // Configured default wins over the first entry.
     store.defaultTemplateId = uploaded.id;
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers } }));
     const tools = (await client.listTools()).tools.map(tool => tool.name);

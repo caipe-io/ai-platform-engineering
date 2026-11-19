@@ -1,3 +1,4 @@
+import { normalizeTeamText, rankTeams, teamLabel, teamDescription, createSearchablePicker } from './picker.mjs';
 const escapeHtml = value => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 const paths = {
   file: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M8 13h8 M8 17h5',
@@ -7,6 +8,7 @@ const paths = {
   lock: 'M7 10V7a5 5 0 0 1 10 0v3 M5 10h14v11H5z M12 14v3',
   search: 'M21 21l-5-5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
   plus: 'M12 5v14 M5 12h14',
+  chevron: 'M6 9l6 6 6-6',
   close: 'M6 6l12 12 M18 6 6 18',
   layers: 'M12 3 2 8l10 5 10-5-10-5z M2 12l10 5 10-5 M2 16l10 5 10-5',
   arrow: 'M5 12h14 M13 6l6 6-6 6',
@@ -26,6 +28,10 @@ export function readHostAppearance(event, origin, parent) {
   return { theme: ['dark', 'light'].includes(theme) ? theme : undefined, shadows: typeof shadows === 'boolean' ? shadows : undefined };
 }
 
+function pickerMarkup(id, label, placeholder, multiple = false) {
+  return `<div class="picker" id="${id}-picker"><button id="${id}-trigger" data-trigger type="button" class="picker-trigger" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-controls="${id}-options" aria-labelledby="${id}-label ${id}-value"${multiple ? '' : ' aria-required="true"'}><span data-value id="${id}-value">${placeholder}</span>${svg('chevron')}</button><div data-popup class="picker-popup" hidden><div class="picker-search">${svg('search')}<input type="search" aria-label="Search ${label}" aria-controls="${id}-options" aria-autocomplete="list" autocomplete="off" spellcheck="false" placeholder="Search teams by name or slug…"></div><div id="${id}-options" role="listbox" aria-labelledby="${id}-label"${multiple ? ' aria-multiselectable="true"' : ''} class="picker-options"></div><div role="status" aria-live="polite" class="picker-status"></div></div></div>`;
+}
+
 export function page(basePath) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Presentation Generator</title>
 <style>
@@ -38,10 +44,11 @@ main{max-width:1320px;margin:auto;padding:38px 36px 48px}.page-header{display:fl
 .deck-row{padding:20px;display:flex;gap:14px;align-items:center;border-bottom:1px solid hsl(var(--border))}.deck-row:last-child{border:0}.deck-row:hover{background:hsl(var(--muted)/.3)}.file-icon{width:43px;height:50px;border:1px solid hsl(var(--border));border-radius:8px;display:grid;place-items:center;background:hsl(var(--muted));color:hsl(var(--primary));flex:none}.file-icon svg{width:23px;height:23px}.deck-info{min-width:0;flex:1}.deck-title{display:flex;align-items:center;gap:8px;margin-bottom:6px}.deck-title h3{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.deck-meta{display:flex;gap:7px 12px;align-items:center;flex-wrap:wrap;font-size:12px;color:hsl(var(--muted-foreground))}.badge{font-size:10px;text-transform:uppercase;font-weight:600;letter-spacing:.3px;display:inline-flex;align-items:center;gap:4px;padding:3px 6px;border:1px solid hsl(var(--border));border-radius:5px;white-space:nowrap}.badge.default{color:hsl(var(--success));background:hsl(var(--success)/.07);border-color:hsl(var(--success)/.2)}.badge svg{width:11px;height:11px}.download{font-size:12px;min-height:34px}.download svg{width:15px}.deck-actions{display:flex;align-items:center;gap:6px;flex:none}.deck-actions .button{font-size:12px;min-height:34px}.deck-actions .icon-only{width:34px}.button.kept{color:hsl(var(--success))}.button.danger{color:#ef9999}.button.danger:hover{background:#a3262622}:root[data-theme=light] .button.danger{color:#a32626}.panel-foot{border-top:1px solid hsl(var(--border));padding:12px 20px;font-size:12px;color:hsl(var(--muted-foreground));display:flex;gap:7px;align-items:center}.panel-foot svg{width:13px}.sidebar{display:grid;gap:20px}.templates-intro{padding:16px 20px 0}.template{padding:18px 20px;border-bottom:1px solid hsl(var(--border))}.template:last-child{border:0}.template-title{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:7px}.template-title h3{line-height:1.5}.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:13px}.chip{padding:3px 7px;border:1px solid hsl(var(--border));border-radius:5px;color:hsl(var(--muted-foreground));font-size:11px}.template-owner{overflow-wrap:anywhere}.create-card{padding:20px}.create-icon{color:hsl(var(--primary));display:inline-flex;background:hsl(var(--primary)/.1);padding:9px;border-radius:9px;margin-bottom:13px}.create-card p{margin:8px 0 16px;line-height:1.7}.create-card a{display:flex;justify-content:space-between;width:100%}
 .empty{padding:56px 24px;text-align:center;display:grid;justify-items:center;gap:10px}.empty-icon{width:54px;height:54px;display:grid;place-items:center;border:1px solid hsl(var(--border));background:hsl(var(--muted));border-radius:13px;color:hsl(var(--muted-foreground));margin-bottom:5px}.empty-icon svg{width:25px;height:25px}.empty p{max-width:340px}.empty a{margin-top:9px}.skeleton-row{padding:22px 20px;display:flex;align-items:center;gap:14px;border-bottom:1px solid hsl(var(--border))}.skeleton{background:hsl(var(--muted));border-radius:6px;animation:pulse 1.7s ease-in-out infinite}.skeleton.icon{width:43px;height:50px}.skeleton.line{height:12px;width:65%;margin:8px 0}.skeleton.line.short{width:40%}@keyframes pulse{50%{opacity:.45}}@media(prefers-reduced-motion:reduce){*{animation:none!important;scroll-behavior:auto!important}}
 #message:empty{display:none}#message{padding:12px 15px;border:1px solid hsl(var(--border));border-radius:8px;margin-bottom:20px;background:hsl(var(--muted));overflow-wrap:anywhere}#message[data-kind=error]{border-color:#e0717166;color:#ef9999}:root[data-theme=light] #message[data-kind=error]{color:#a32626}
-dialog{color:inherit;background:hsl(var(--card));border:1px solid hsl(var(--border));border-radius:14px;width:min(580px,calc(100vw - 32px));padding:0;max-height:90vh;box-shadow:var(--shadow)}dialog::backdrop{background:#0008;backdrop-filter:blur(3px)}.dialog-heading{display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid hsl(var(--border))}.dialog-heading h2{font-size:18px}.form-body{padding:20px 24px}.form-body>p{margin-bottom:20px}label,legend{display:block;font-size:12px;font-weight:550;margin-bottom:7px}.field{margin:18px 0}.field input:not([type=file]),.field select{width:100%;padding:10px 11px;background:hsl(var(--background));color:inherit;border:1px solid hsl(var(--border));border-radius:7px;min-height:41px}.field-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}.field-row .field{margin:0}.hint{font-size:12px;color:hsl(var(--muted-foreground));margin-top:6px}.file-choice{display:flex;align-items:center;gap:12px;padding:17px;border:1px dashed hsl(var(--border));border-radius:8px;cursor:pointer;background:hsl(var(--background));margin:0}.file-choice>svg{color:hsl(var(--primary));width:25px;height:25px}.file-choice strong{display:block;font-size:13px;font-weight:550}.file-choice span{display:block;font-size:12px;font-weight:400;color:hsl(var(--muted-foreground));margin-top:3px}.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}.share-input{display:flex;gap:8px}.selected-teams{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.selected-team{display:inline-flex;align-items:center;gap:5px;padding:4px 7px;background:hsl(var(--muted));border-radius:5px;font-size:12px}.selected-team button{border:0;background:none;color:inherit;display:flex;padding:2px}.selected-team svg{width:12px;height:12px}.dialog-actions{border-top:1px solid hsl(var(--border));padding:16px 24px;display:flex;justify-content:flex-end;gap:9px}.form-message{font-size:13px;min-height:0;color:hsl(var(--muted-foreground));overflow-wrap:anywhere}.form-message:empty{display:none}fieldset{border:0;padding:0;margin:0}:focus-visible{outline:2px solid hsl(var(--primary));outline-offset:3px}[hidden]{display:none!important}
+dialog{color:inherit;background:hsl(var(--card));border:1px solid hsl(var(--border));border-radius:14px;width:min(580px,calc(100vw - 32px));padding:0;max-height:90vh;box-shadow:var(--shadow)}dialog::backdrop{background:#0008;backdrop-filter:blur(3px)}.dialog-heading{display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid hsl(var(--border))}.dialog-heading h2{font-size:18px}.form-body{padding:20px 24px}.form-body>p{margin-bottom:20px}label,legend{display:block;font-size:12px;font-weight:550;margin-bottom:7px}.field{margin:18px 0}.field input:not([type=file]),.field select{width:100%;padding:10px 11px;background:hsl(var(--background));color:inherit;border:1px solid hsl(var(--border));border-radius:7px;min-height:41px}.hint{font-size:12px;color:hsl(var(--muted-foreground));margin-top:6px}.file-choice{display:flex;align-items:center;gap:12px;padding:17px;border:1px dashed hsl(var(--border));border-radius:8px;cursor:pointer;background:hsl(var(--background));margin:0}.file-choice>svg{color:hsl(var(--primary));width:25px;height:25px}.file-choice strong{display:block;font-size:13px;font-weight:550}.file-choice span{display:block;font-size:12px;font-weight:400;color:hsl(var(--muted-foreground));margin-top:3px}.visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}.selected-teams{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.selected-team{display:inline-flex;align-items:center;gap:5px;padding:4px 7px;background:hsl(var(--muted));border-radius:5px;font-size:12px}.selected-team button{border:0;background:none;color:inherit;display:flex;padding:2px}.selected-team svg{width:12px;height:12px}.dialog-actions{border-top:1px solid hsl(var(--border));padding:16px 24px;display:flex;justify-content:flex-end;gap:9px}.form-message{font-size:13px;min-height:0;color:hsl(var(--muted-foreground));overflow-wrap:anywhere}.form-message:empty{display:none}fieldset{border:0;padding:0;margin:0}:focus-visible{outline:2px solid hsl(var(--primary));outline-offset:3px}[hidden]{display:none!important}
 @media(max-width:1050px){.workspace{grid-template-columns:minmax(0,1fr) 275px}.deck-row{gap:10px;padding:18px 16px}.download{padding:7px 9px}.deck-meta{gap:4px 8px}}
 @media(max-width:850px){main{padding:26px 20px}.workspace{grid-template-columns:1fr}.sidebar{grid-template-columns:1fr 1fr}.privacy{align-items:flex-start}.privacy .retention{display:none}.page-header{align-items:flex-start}h1{font-size:27px}}
-@media(max-width:560px){main{padding:24px 16px}.page-header{display:block}.page-header>.button{margin-top:18px}.sidebar{grid-template-columns:1fr}.toolbar{padding:14px;gap:8px}.sort{max-width:125px;font-size:12px}.deck-row{align-items:flex-start;flex-wrap:wrap}.deck-info{flex-basis:calc(100% - 58px)}.deck-row>.deck-actions{margin-left:57px;flex-wrap:wrap}.deck-title{align-items:flex-start}.deck-title h3{white-space:normal;overflow-wrap:anywhere}.field-row{grid-template-columns:1fr}.dialog-heading,.form-body,.dialog-actions{padding-left:18px;padding-right:18px}.file-icon{width:40px;height:46px}}
+@media(max-width:560px){main{padding:24px 16px}.page-header{display:block}.page-header>.button{margin-top:18px}.sidebar{grid-template-columns:1fr}.toolbar{padding:14px;gap:8px}.sort{max-width:125px;font-size:12px}.deck-row{align-items:flex-start;flex-wrap:wrap}.deck-info{flex-basis:calc(100% - 58px)}.deck-row>.deck-actions{margin-left:57px;flex-wrap:wrap}.deck-title{align-items:flex-start}.deck-title h3{white-space:normal;overflow-wrap:anywhere}.dialog-heading,.form-body,.dialog-actions{padding-left:18px;padding-right:18px}.file-icon{width:40px;height:46px}}
+.picker-trigger{display:flex;width:100%;align-items:center;justify-content:space-between;gap:12px;padding:10px 11px;background:hsl(var(--background));color:inherit;border:1px solid hsl(var(--border));border-radius:7px;font-weight:400;text-align:left;min-height:42px}.picker-trigger [data-value]{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.picker-trigger svg{width:16px;height:16px;color:hsl(var(--muted-foreground))}.picker-trigger[aria-expanded=true]{outline:2px solid hsl(var(--primary));outline-offset:2px}.picker-popup{position:fixed;inset:auto;margin:0;padding:0;border:1px solid hsl(var(--border));border-radius:10px;background:hsl(var(--card));color:hsl(var(--foreground));box-shadow:var(--shadow);z-index:20;display:flex;flex-direction:column;overflow:hidden;font:14px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.picker-search{display:flex;align-items:center;gap:8px;padding:12px;border-bottom:1px solid hsl(var(--border));flex:none}.picker-search:focus-within{outline:2px solid hsl(var(--primary));outline-offset:-3px;border-radius:8px 8px 0 0}.picker-search svg{width:16px;color:hsl(var(--muted-foreground))}.picker-search input{width:100%;padding:0;min-width:0;border:0;background:transparent;color:inherit;outline:none;font:inherit}.picker-options{max-height:230px;overflow-y:auto;overscroll-behavior:contain;min-height:0;padding:5px}.picker-options:empty{display:none}.picker-option{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:9px 10px;text-align:left;border:0;border-radius:5px;background:transparent;color:inherit;font:inherit}.picker-option>span:first-child{min-width:0}.picker-label{display:block;overflow-wrap:anywhere}.picker-slug{display:block;margin-top:2px;color:hsl(var(--muted-foreground));font-size:12px;overflow-wrap:anywhere}.picker-option:hover,.picker-option[data-active=true]{background:hsl(var(--primary)/.13)}.picker-option[aria-disabled=true]{opacity:.4;cursor:default}.picker-option[aria-selected=true] .picker-check{color:hsl(var(--primary))}.picker-check{width:16px;flex:none}.picker-status{padding:10px 12px;border-top:1px solid hsl(var(--border));font-size:12px;color:hsl(var(--muted-foreground));flex:none}
 </style></head>
 <body data-base="${escapeHtml(basePath)}"><main>
 <header class="page-header"><div><div class="eyebrow">Your workspace</div><h1>Presentation Generator</h1><p class="muted">Download presentations created by your agents, all in one place.</p></div><button id="open-upload" class="button" type="button" hidden>${svg('plus')}Add template</button></header>
@@ -57,14 +64,14 @@ dialog{color:inherit;background:hsl(var(--card));border:1px solid hsl(var(--bord
 <dialog id="upload-dialog" aria-labelledby="upload-heading"><div class="dialog-heading"><h2 id="upload-heading">Add a team template</h2><button class="button icon-only ghost" id="close-upload" type="button" aria-label="Close template upload">${svg('close')}</button></div>
 <form id="upload"><div class="form-body"><p class="muted">Templates are shared with the teams you choose. Generated PowerPoints remain private to their creator.</p>
 <div class="field"><label for="name">Template name</label><input id="name" required maxlength="100" placeholder="e.g. Team presentation template" autocomplete="off"></div>
-<div class="field-row"><div class="field"><label for="team">Owner team</label><input id="team" list="owner-team-options" required placeholder="Find a team…" autocomplete="off"><datalist id="owner-team-options"></datalist></div><div class="field"><label for="preset">Template preset</label><select id="preset" required></select></div></div>
+<div class="field"><label id="owner-label" for="owner-trigger">Owner team</label>${pickerMarkup('owner', 'owner teams', 'Choose an owner team')}<input id="team" type="hidden"><p class="hint">Choose a team you administer. Its members can use this template.</p></div>
 <div class="field"><label for="file">PowerPoint template</label><label class="file-choice" for="file">${svg('file')}<div><strong id="file-label">Choose a .pptx file</strong><span id="file-hint">Empty template · up to 8 MiB</span></div></label><input class="visually-hidden" id="file" type="file" accept=".pptx" required><p class="hint">Use your team’s empty template with its original layouts. Remove example slides before uploading.</p></div>
-<div class="field"><fieldset><legend>Share with additional teams <span class="muted">(optional)</span></legend><div class="share-input"><label class="visually-hidden" for="share-team">Additional team</label><input id="share-team" list="all-team-options" placeholder="Find a team…" autocomplete="off"><datalist id="all-team-options"></datalist><button id="add-share" type="button" class="button">Add</button></div><div id="sharing" class="selected-teams"></div></fieldset><p class="hint">Members of the owner team can already use this template.</p></div>
+<div class="field"><label id="share-label" for="share-trigger">Share with additional teams <span class="muted">(optional)</span></label>${pickerMarkup('share', 'additional teams', 'Choose teams to share with', true)}<div id="sharing" class="selected-teams"></div><p class="hint">Add up to 30 teams. Members of the owner team already have access.</p></div>
 <p id="upload-message" class="form-message" role="status" aria-live="polite"></p></div><div class="dialog-actions"><button class="button" id="cancel-upload" type="button">Cancel</button><button class="button primary" id="submit" type="submit">Upload template</button></div></form></dialog>
 </main><script src="${escapeHtml(basePath)}/client.js" defer></script></body></html>`;
 }
 
-export const clientScript = 'const readHostAppearance = ' + readHostAppearance.toString() + ';' + String.raw`
+export const clientScript = [readHostAppearance, normalizeTeamText, rankTeams, teamLabel, teamDescription, createSearchablePicker].map(fn => fn.toString()).join(';\n') + ';' + String.raw`
 const base = document.body.dataset.base;
 const byId = id => document.getElementById(id);
 const configState = { teams: [], profiles: [], artifact_days: 7 };
@@ -138,24 +145,18 @@ function renderTemplates() {
   }
   if(!templates.length)list.append(element('div','template muted','No templates are shared with your teams yet. Ask a team administrator to add one.'));
 }
-function suggest(input,list,adminOnly) {
-  const query=input.value.trim().toLowerCase();const teams=configState.teams.filter(team=>(!adminOnly||team.role==='admin')&&[team.slug,team.name].some(value=>value.toLowerCase().includes(query))).slice(0,30);
-  list.replaceChildren(...teams.map(team=>{const option=element('option');option.value=team.slug;option.label=team.name;return option;}));
-}
 function renderSharing() {
   const list=byId('sharing');list.replaceChildren();
   for(const slug of sharedTeams) {
-    const chip=element('span','selected-team',slug);const remove=element('button');remove.type='button';remove.setAttribute('aria-label','Remove '+slug);remove.append(icon('close'));remove.addEventListener('click',()=>{sharedTeams.delete(slug);renderSharing();});chip.append(remove);list.append(chip);
+    const team=configState.teams.find(item=>item.slug===slug);const chip=element('span','selected-team',team?teamLabel(team):slug);chip.title=slug;const remove=element('button');remove.type='button';remove.setAttribute('aria-label','Remove '+slug);remove.append(icon('close'));remove.addEventListener('click',()=>{sharedTeams.delete(slug);renderSharing();sharePicker.update();});chip.append(remove);list.append(chip);
   }
 }
 function resetForm() {
-  byId('upload').reset();sharedTeams.clear();renderSharing();byId('upload-message').textContent='';byId('file-label').textContent='Choose a .pptx file';byId('file-hint').textContent='Empty template · up to 8 MiB';
-  byId('preset').replaceChildren(...configState.profiles.map(profile=>{const option=element('option','',profile.name);option.value=profile.id;return option;}));
-  if(configState.default_profile_id)byId('preset').value=configState.default_profile_id;
+  byId('upload').reset();byId('team').value='';sharedTeams.clear();renderSharing();byId('upload-message').textContent='';byId('file-label').textContent='Choose a .pptx file';byId('file-hint').textContent='Empty template · up to 8 MiB';
   const owner=templates.find(template=>template.is_default)?.owner_team;
   const admins=configState.teams.filter(team=>team.role==='admin');
   if(admins.some(team=>team.slug===owner))byId('team').value=owner;else if(admins.length===1)byId('team').value=admins[0].slug;
-  suggest(byId('team'),byId('owner-team-options'),true);suggest(byId('share-team'),byId('all-team-options'),false);
+  ownerPicker.update();sharePicker.update();
 }
 async function refresh() {
   const button=byId('refresh');button.disabled=true;status('');
@@ -176,28 +177,34 @@ byId('confirm-delete').addEventListener('click',async()=>{
 });
 byId('search').addEventListener('input',renderArtifacts);byId('sort').addEventListener('change',renderArtifacts);byId('refresh').addEventListener('click',refresh);
 byId('open-upload').addEventListener('click',()=>{resetForm();byId('upload-dialog').showModal();});
-for(const id of ['close-upload','cancel-upload'])byId(id).addEventListener('click',()=>{if(!busy)byId('upload-dialog').close();});
+for(const id of ['close-upload','cancel-upload'])byId(id).addEventListener('click',()=>{if(!busy){ownerPicker.close();sharePicker.close();byId('upload-dialog').close();}});
 byId('upload-dialog').addEventListener('cancel',event=>{if(busy)event.preventDefault();});
-for(const [input,list,adminOnly] of [['team','owner-team-options',true],['share-team','all-team-options',false]]) {
-  byId(input).addEventListener('input',()=>suggest(byId(input),byId(list),adminOnly));byId(input).addEventListener('focus',()=>suggest(byId(input),byId(list),adminOnly));
-}
-byId('add-share').addEventListener('click',()=>{
-  const slug=byId('share-team').value.trim();
-  if(!configState.teams.some(team=>team.slug===slug)){byId('upload-message').textContent='Choose an additional team from the list.';return;}
-  if(slug!==byId('team').value)sharedTeams.add(slug);
-  byId('share-team').value='';byId('upload-message').textContent='';renderSharing();
+const ownerPicker=createSearchablePicker({
+  root:byId('owner-picker'),
+  getOptions:query=>rankTeams(configState.teams.filter(team=>team.role==='admin'),query,[byId('team').value]),
+  getSelected:()=>[byId('team').value],
+  getValueLabel:()=>{const team=configState.teams.find(team=>team.slug===byId('team').value);return team?teamLabel(team):'Choose an owner team';},
+  onSelect:team=>{byId('team').value=team.slug;sharedTeams.delete(team.slug);renderSharing();sharePicker.update();},
+});
+const sharePicker=createSearchablePicker({
+  root:byId('share-picker'),multiple:true,
+  getOptions:query=>rankTeams(configState.teams.filter(team=>team.slug!==byId('team').value),query,[...sharedTeams]),
+  getSelected:()=>[...sharedTeams],
+  getValueLabel:()=>sharedTeams.size?sharedTeams.size+(sharedTeams.size===1?' team selected':' teams selected'):'Choose teams to share with',
+  isDisabled:team=>sharedTeams.size>=30&&!sharedTeams.has(team.slug),
+  onSelect:team=>{if(sharedTeams.has(team.slug))sharedTeams.delete(team.slug);else sharedTeams.add(team.slug);renderSharing();},
 });
 byId('file').addEventListener('change',()=>{
   const file=byId('file').files[0];byId('file-label').textContent=file?file.name:'Choose a .pptx file';byId('file-hint').textContent=file?(file.size/1048576).toFixed(1)+' MiB · PowerPoint template':'Empty template · up to 8 MiB';
 });
 byId('upload').addEventListener('submit',async event=>{
   event.preventDefault();if(busy)return;const button=byId('submit');const owner=byId('team').value.trim();
-  if(!configState.teams.some(team=>team.slug===owner&&team.role==='admin')){byId('upload-message').textContent='Choose an owner team that you administer.';return;}
+  if(!configState.teams.some(team=>team.slug===owner&&team.role==='admin')){byId('upload-message').textContent='Choose an owner team that you administer.';ownerPicker.focus();return;}
   busy=true;button.disabled=true;byId('upload-message').textContent='Uploading template…';
   try{
     const file=byId('file').files[0];if(!file||!file.name.toLowerCase().endsWith('.pptx')||file.size>8*1024*1024)throw new Error('Choose a .pptx file no larger than 8 MiB.');
     const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let start=0;start<bytes.length;start+=32768)binary+=String.fromCharCode(...bytes.subarray(start,start+32768));
-    await api('/api/templates',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:byId('name').value,owner_team:owner,profile_id:byId('preset').value,shared_with:[...sharedTeams].filter(team=>team!==owner),file:btoa(binary)})});
+    await api('/api/templates',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:byId('name').value,owner_team:owner,shared_with:[...sharedTeams].filter(team=>team!==owner),file:btoa(binary)})});
     byId('upload-dialog').close();await refresh();status('Team template uploaded. It is available to its owner team and the teams you selected.');
   }catch(error){byId('upload-message').textContent=error.message;}finally{busy=false;button.disabled=false;}
 });

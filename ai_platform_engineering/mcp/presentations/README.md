@@ -112,7 +112,18 @@ one-based master/layout numbers for `cover`, `content`, `closing`, optional
 inches; source-line `footer_y`; and font family. Upload validation checks these
 against the template's actual master/layout relationships and page dimensions.
 Keep proprietary presets, templates and fonts in deployment-owned private storage,
-not generic source or images. The UI presents preset names rather than raw JSON.
+not generic source or images. The upload UI uses the configured default preset automatically, or the sole
+preset when only one exists. With multiple presets and no default, an operator
+must configure a default before browser uploads can succeed. Existing API clients
+can still pass `profile_id` explicitly. Users select only the file, owner team and
+optional sharing teams.
+
+The standalone iframe has no host React runtime, so its small DOM picker adapter
+follows the host `SearchablePicker` contract instead of importing React/Radix.
+It uses bounded top-layer listboxes inside the upload dialog, keyboard navigation,
+case-insensitive name/slug search, exact-match ranking, selected-team chips and
+explicit empty/result-count states. Owner choices are admin-only; sharing excludes
+the owner and supports up to 30 accessible teams. Native datalists are not used.
 
 The Mongo user needs read/insert/update on `presentation_templates` and
 read/insert/update/remove/createIndex on `presentation_artifacts`, plus database ping.

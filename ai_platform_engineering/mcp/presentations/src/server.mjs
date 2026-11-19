@@ -12,6 +12,12 @@ const PPTX = 'application/vnd.openxmlformats-officedocument.presentationml.prese
 const artifactMetadata = (artifact, store) => ({ id: artifact._id, title: artifact.title, filename: artifact.filename,
   created_at: artifact.created_at, kept: artifact.kept === true, expires_at: artifact.expires_at ?? null,
   download_url: `${store.downloadUrl}/artifacts/${artifact._id}` });
+export function resolveUploadProfile(profiles, defaultProfileId, requestedProfileId) {
+  const selected = requestedProfileId ?? defaultProfileId ?? (profiles.length === 1 ? profiles[0].id : undefined);
+  const preset = profiles.find(profile => profile.id === selected);
+  if (!preset) throw new HttpError(400, requestedProfileId !== undefined ? 'Unknown template type.' : 'Template uploads need an administrator to configure a default template type.');
+  return preset;
+}
 export async function readBody(request, max) {
   const chunks = []; let size = 0;
   if (Number(request.headers['content-length']) > max) throw new HttpError(413, 'Request too large');
@@ -46,8 +52,7 @@ export function createPresentationServer({ store, authenticate, profiles, defaul
       if (path === '/api/templates' && request.method === 'GET') return send(response, 200, { templates: await store.list(identity) });
       if ((path === '/api/templates' && request.method === 'POST') || (/^\/api\/templates\/[^/]+$/.test(path) && request.method === 'PUT')) {
         const data = await readBody(request, 12 * 1024 * 1024);
-        const preset = profiles.find(profile => profile.id === data.profile_id);
-        if (!preset) throw new HttpError(400, 'Choose a configured template preset');
+        const preset = resolveUploadProfile(profiles, defaultProfileId, data.profile_id);
         if (typeof data.file !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(data.file)) throw new HttpError(400, 'A PowerPoint file is required');
         const templateId = request.method === 'PUT' ? id.parse(path.split('/').pop()) : undefined;
         const result = await store.upload(identity, { name: data.name, owner_team: data.owner_team, shared_with: data.shared_with || [], profile: preset.profile }, Buffer.from(data.file, 'base64'), templateId);
