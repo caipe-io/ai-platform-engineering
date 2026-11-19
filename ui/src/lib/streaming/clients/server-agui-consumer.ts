@@ -37,6 +37,10 @@ export interface ConsumeOptions {
   sourceId: string;
   /** AbortSignal for cancellation */
   signal?: AbortSignal;
+  /** Time without semantic progress before the step is stopped. */
+  idleTimeoutMs?: number;
+  /** Absolute deadline, including a stream that only sends keep-alives. */
+  maxDurationMs?: number;
 }
 
 export interface ConsumeResult {
@@ -62,6 +66,8 @@ export interface ConsumeResult {
   };
   /** Error message if stream errored */
   error?: string;
+  /** False when replay could repeat a tool action whose outcome is unknown. */
+  retryable?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -88,17 +94,38 @@ export async function consumeAgentStream(options: ConsumeOptions): Promise<Consu
   let interrupt: ConsumeResult["interrupt"] | undefined;
   let error: string | undefined;
   let terminalReceived = false;
+  let toolStarted = false;
   let pendingEvents: StreamEvent[] = [];
+  const controller = new AbortController();
+  let timeoutError: string | undefined;
+  const expire = (message: string) => {
+    timeoutError = message;
+    controller.abort();
+  };
+  const idleTimeoutMs = options.idleTimeoutMs ?? 300_000;
+  let idleTimer: ReturnType<typeof setTimeout>;
+  const progress = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => expire("Agent stream stopped making progress"), idleTimeoutMs);
+  };
+  const durationTimer = setTimeout(() => expire("Agent step exceeded its execution deadline"), options.maxDurationMs ?? 1_800_000);
+  const cancel = () => controller.abort();
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
+  progress();
 
   // Build callbacks that create StreamEvents and buffer them
   const callbacks: StreamCallbacks = {
     onContent(text, namespace) {
+      progress();
       accumulatedText += text;
       pendingEvents.push(
         createStreamEvent("content", { text, namespace }),
       );
     },
     onToolStart(toolCallId, toolName, args, namespace) {
+      progress();
+      toolStarted = true;
       pendingEvents.push(
         createStreamEvent("tool_start", {
           tool_call_id: toolCallId,
@@ -109,10 +136,12 @@ export async function consumeAgentStream(options: ConsumeOptions): Promise<Consu
       );
     },
     onToolOutput(toolCallId, result, namespace) {
+      progress();
       const event = createStreamEvent("tool_output", { tool_call_id: toolCallId, result, namespace });
       pendingEvents.push(event);
     },
     onToolEnd(toolCallId, toolName, err, namespace, args, result) {
+      progress();
       pendingEvents.push(
         createStreamEvent("tool_end", {
           tool_call_id: toolCallId,
@@ -180,7 +209,7 @@ export async function consumeAgentStream(options: ConsumeOptions): Promise<Consu
       method: "POST",
       headers: { ...headers, "Accept": "text/event-stream" },
       body: JSON.stringify(body),
-      signal,
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -199,7 +228,7 @@ export async function consumeAgentStream(options: ConsumeOptions): Promise<Consu
       const terminal = processAGUIEvent(raw.event, parsed, state, callbacks);
 
       // Flush in batches
-      if (pendingEvents.length >= EVENT_FLUSH_BATCH_SIZE) {
+      if (pendingEvents.length >= EVENT_FLUSH_BATCH_SIZE || pendingEvents.some((event) => event.type !== "content")) {
         await flush();
       }
 
@@ -216,13 +245,13 @@ export async function consumeAgentStream(options: ConsumeOptions): Promise<Consu
     // Final flush
     await flush();
   } catch (err) {
-    if ((err as Error).name === "AbortError") {
+    if (signal?.aborted && !timeoutError) {
       await flush();
-      return { text: accumulatedText, interrupted: false, error: "Cancelled" };
+      return { text: accumulatedText, interrupted: false, error: "Cancelled", retryable: false };
     }
     const cause = (err as { cause?: { code?: string; message?: string } }).cause;
     const causeInfo = cause?.code ? ` (${cause.code})` : cause?.message ? ` (${cause.message})` : "";
-    const msg = `${(err as Error).message || "Unknown error"}${causeInfo} — target: ${url}`;
+    const msg = `${timeoutError || (err as Error).message || "Unknown error"}${causeInfo} — target: ${url}. Completion is unconfirmed; inspect saved progress and external state before retrying.`;
     error = error || msg;
 
     // Create an error event so the UI timeline shows what went wrong
@@ -230,9 +259,16 @@ export async function consumeAgentStream(options: ConsumeOptions): Promise<Consu
       createStreamEvent("error", { message: error, namespace: [] }),
     );
     await flush();
+    // Admission or tool-start events may themselves have been lost in transport.
+    return { text: accumulatedText, interrupted: false, error, retryable: false };
+  } finally {
+    clearTimeout(idleTimer!);
+    clearTimeout(durationTimer);
+    signal?.removeEventListener("abort", cancel);
+    controller.abort();
   }
 
-  return { text: accumulatedText, interrupted, interrupt, error };
+  return { text: accumulatedText, interrupted, interrupt, error, ...(error && toolStarted ? { retryable: false } : {}) };
 }
 
 // ═══════════════════════════════════════════════════════════════

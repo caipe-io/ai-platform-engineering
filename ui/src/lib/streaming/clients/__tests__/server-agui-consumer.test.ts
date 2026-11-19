@@ -27,6 +27,8 @@ describe("workflow stream completion", () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+    jest.clearAllTimers();
+    jest.useRealTimers();
   });
 
   function respond(body: string): void {
@@ -66,5 +68,64 @@ describe("workflow stream completion", () => {
       error: undefined,
       interrupt: { interruptId: "test-input", prompt: "Choose a region" },
     });
+  });
+
+  function hang(body: string, intervalBody?: string): void {
+    (global.fetch as jest.Mock).mockImplementation(async (_url, init: RequestInit) => {
+      const encoder = new TextEncoder();
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(body));
+          const timer = intervalBody ? setInterval(() => controller.enqueue(encoder.encode(intervalBody)), 10) : undefined;
+          init.signal!.addEventListener("abort", () => {
+            clearInterval(timer);
+            controller.error(new DOMException("Aborted", "AbortError"));
+          }, { once: true });
+        },
+      }));
+    });
+  }
+
+  it("persists a tool result before completion and stops a silent stream without permitting replay", async () => {
+    jest.useFakeTimers();
+    hang(frame("TOOL_CALL_START", { toolCallId: "write-1", toolCallName: "update_resource" }) +
+      frame("TOOL_CALL_RESULT", { tool_call_id: "write-1", content: "committed" }) +
+      frame("TOOL_CALL_END", { toolCallId: "write-1" }), ": heartbeat\n\n");
+    const pending = consumeAgentStream({ ...options, idleTimeoutMs: 100 });
+    await jest.advanceTimersByTimeAsync(50);
+    expect(appendEvents).toHaveBeenCalledWith("workflow_step", options.sourceId,
+      expect.arrayContaining([expect.objectContaining({ type: "tool_end", toolData: expect.objectContaining({ result: "committed" }) })]));
+    await jest.advanceTimersByTimeAsync(51);
+    expect(await pending).toMatchObject({ error: expect.stringContaining("stopped making progress"), retryable: false });
+  });
+
+  it("enforces the absolute deadline even when content keeps arriving", async () => {
+    jest.useFakeTimers();
+    hang(frame("RUN_STARTED"), frame("TEXT_MESSAGE_CONTENT", { delta: "progress" }));
+    const pending = consumeAgentStream({ ...options, idleTimeoutMs: 100, maxDurationMs: 50 });
+    await jest.advanceTimersByTimeAsync(51);
+    expect(await pending).toMatchObject({ error: expect.stringContaining("execution deadline") });
+  });
+
+  it("bounds waiting for response headers without assuming the request was not admitted", async () => {
+    jest.useFakeTimers();
+    (global.fetch as jest.Mock).mockImplementation((_url, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal!.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    }));
+    const pending = consumeAgentStream({ ...options, idleTimeoutMs: 100 });
+    await jest.advanceTimersByTimeAsync(101);
+    expect(await pending).toMatchObject({ retryable: false, error: expect.stringContaining("stopped making progress") });
+  });
+
+  it("does not retry a disconnected stream after a tool was admitted", async () => {
+    respond(frame("TOOL_CALL_START", { toolCallId: "write-1", toolCallName: "update_resource" }));
+    expect(await consumeAgentStream(options)).toMatchObject({ retryable: false, error: expect.stringContaining("without a completion event") });
+  });
+
+  it("cleans up deadlines after a successful terminal event", async () => {
+    jest.useFakeTimers();
+    respond(frame("RUN_FINISHED", { outcome: "success" }));
+    await consumeAgentStream(options);
+    expect(jest.getTimerCount()).toBe(0);
   });
 });
