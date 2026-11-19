@@ -13,6 +13,8 @@
  * The gateway owns config seeding; Dynamic Agents remains stateless here.
  */
 
+import { prepareAgentExecution } from "@/lib/harness-agent-publication";
+import { withAgentMutationLock } from "@/lib/agent-mutation-lock";
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
 import { BUILTIN_MCP_CREDENTIAL_SOURCES } from "@/lib/rbac/agentgateway-mcp-discovery";
 import { computeIngestionSourceId } from "@/lib/ingestion-source-id";
@@ -347,7 +349,29 @@ export async function seedAgents(
       updated_at: now,
     };
 
-    await collection.replaceOne({ _id: agentId }, doc, { upsert: true });
+    if (process.env.HARNESS_ENGINE_DEEP_AGENTS_ENABLED === "true") {
+      // Publish before swapping the runtime pointer, just like an editor save.
+      // The fingerprint excludes seed timestamps, so restarts reuse the version.
+      const fingerprint = createHash("sha256").update(JSON.stringify({ ...doc, created_at: undefined, updated_at: undefined })).digest("hex");
+      const saved = await withAgentMutationLock(agentId, async () => {
+        const current = await collection.findOne({ _id: agentId });
+        if (current?.config_import_adopted === true) return false;
+        const published = current;
+        let version = published?.execution_blueprint_version;
+        if (published?.seed_execution_fingerprint !== fingerprint || !Number.isInteger(version)) {
+          const execution = await prepareAgentExecution(doc, "system");
+          if (!execution) throw new Error("Seeded execution configuration could not be published");
+          version = execution.version;
+        }
+        await collection.replaceOne({ _id: agentId }, {
+          ...doc, execution_blueprint_version: version, seed_execution_fingerprint: fingerprint,
+        }, { upsert: true });
+        return true;
+      });
+      if (!saved) continue;
+    } else {
+      await collection.replaceOne({ _id: agentId }, doc, { upsert: true });
+    }
 
     // Write the OpenFGA ownership/share tuples so config-driven agents have
     // the same PDP-visible policy as agents saved through the editor.
