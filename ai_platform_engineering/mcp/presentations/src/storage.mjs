@@ -47,7 +47,7 @@ export class PresentationStore {
     const template = await this.get(identity, parsed.template_id);
     if (template.version !== parsed.version) throw new HttpError(409, 'Template changed; list templates again');
     const plan = planDeck(parsed.deck, template.profile);
-    return { slide_count: plan.slide_count, warnings: plan.warnings, template_version: template.version };
+    return { slide_count: plan.slide_count, compositions: plan.pages.map(page => ({ title: page.displayTitle, layout: page.visual?.layout || page.slide.kind, group_count: page.slide.visual?.groups.length || 0 })), warnings: plan.warnings, template_version: template.version };
   }
   async render(identity, input) {
     const parsed = renderSchema.parse(input);

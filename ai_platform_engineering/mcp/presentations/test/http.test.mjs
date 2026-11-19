@@ -9,7 +9,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { createAuthenticator } from '../src/auth.mjs';
 import { createPresentationServer } from '../src/server.mjs';
 import { PresentationStore } from '../src/storage.mjs';
-import { template, profile, deck } from './fixture.mjs';
+import { template, profile, deck, visualDeck } from './fixture.mjs';
 test('HTTP/MCP end-to-end: private upload → discovery → plan → render → protected download, no project dependency', { skip: process.env.PRESENTATION_TEST_MONGO !== '1' }, async () => {
   const mongo = new MongoClient('mongodb://127.0.0.1:27018', { serverSelectionTimeoutMS: 2000 });
   const db = mongo.db(`presentation_test_${randomUUID().replaceAll('-', '')}`); await mongo.connect();
@@ -48,6 +48,14 @@ test('HTTP/MCP end-to-end: private upload → discovery → plan → render → 
     const input = { template_id: uploaded.id, version: uploaded.version, deck };
     const plan = await client.callTool({ name: 'presentations_plan', arguments: input });
     assert.equal(plan.structuredContent.slide_count, 3);
+    const visualInput = { ...input, deck: visualDeck };
+    const visualPlan = await client.callTool({ name: 'presentations_plan', arguments: visualInput });
+    assert.equal(visualPlan.structuredContent.slide_count, 8);
+    assert.equal(visualPlan.structuredContent.compositions[1].layout, 'metrics');
+    const visualRender = await client.callTool({ name: 'presentations_render', arguments: { ...visualInput, approved: true } });
+    assert.equal(visualRender.isError, undefined);
+    assert.equal((await fetch(visualRender.structuredContent.download_url, { headers })).status, 200);
+    assert.equal((await fetch(`${base}/api/artifacts/${visualRender.structuredContent.artifact_id}`, { method: 'DELETE', headers })).status, 200);
     const render = await client.callTool({ name: 'presentations_render', arguments: { ...input, approved: true } });
     assert.equal(render.isError, undefined); assert.equal(render.structuredContent.slide_count, 3);
     const link = render.structuredContent.download_url;

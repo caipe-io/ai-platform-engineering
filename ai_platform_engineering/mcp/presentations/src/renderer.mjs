@@ -3,6 +3,7 @@ import { posix } from 'node:path';
 import JSZip from 'jszip';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import { deckSchema, profileSchema } from './schema.mjs';
+import { planVisual } from './visuals.mjs';
 export const MAX_FILE = 8 * 1024 * 1024;
 const P = 'http://schemas.openxmlformats.org/presentationml/2006/main';
 const A = 'http://schemas.openxmlformats.org/drawingml/2006/main';
@@ -23,6 +24,9 @@ function verifyTag(id, x, y, font, style) {
 }
 function box(id, text, x, y, w, h, size, font, color = 'tx1', link) {
   return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Evidence"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="${emu(x)}" y="${emu(y)}"/><a:ext cx="${emu(w)}" cy="${emu(h)}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="square" lIns="0" rIns="0" tIns="0" bIns="0"><a:noAutofit/></a:bodyPr><a:lstStyle/>${para(text, size, color, font, link)}</p:txBody></p:sp>`;
+}
+function connector(id, line) {
+  return `<p:cxnSp><p:nvCxnSpPr><p:cNvPr id="${id}" name="Evidence relationship"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr><p:spPr><a:xfrm><a:off x="${emu(line.x)}" y="${emu(line.y)}"/><a:ext cx="${emu(line.w)}" cy="${emu(line.h)}"/></a:xfrm><a:prstGeom prst="line"><a:avLst/></a:prstGeom><a:ln w="9525"><a:solidFill><a:schemeClr val="${line.color}"/></a:solidFill>${line.arrow ? '<a:tailEnd type="triangle"/>' : ''}</a:ln></p:spPr></p:cxnSp>`;
 }
 export async function inspectTemplate(bytes, profileInput) {
   if (!bytes.length || bytes.length > MAX_FILE) throw new Error('Template must be between 1 byte and 8 MiB');
@@ -121,9 +125,15 @@ export function planDeck(deckInput, profileInput) {
   const size = deck.density === 'dense' ? 16 : 18;
   const pages = [];
   for (const slide of deck.slides) {
+    if (slide.visual && slide.kind !== 'content') throw new Error('Only content slides accept visuals');
+    if (slide.visual && slide.bullets.length) throw new Error('Put visual evidence in groups and notes, without duplicate bullets');
     if (slide.kind === 'open_items' && !mode.open_items) throw new Error('Template has no open-items layout');
     if (slide.kind === 'open_items' && slide.items.length > (profile.placeholders.items?.length || 0)) throw new Error('Split open items to fit the template rows');
     if (slide.kind !== 'content') { if (slide.bullets.length) throw new Error('Only content slides accept bullets'); pages.push({ slide, rows: [] }); continue; }
+    if (slide.visual) {
+      pages.push({ slide, rows: [], visual: planVisual(slide.visual, profile, deck.density, slide.role) });
+      continue;
+    }
     const rows = slide.bullets.flatMap(bullet => {
       const tokens = bullet.text.match(/\S+\s*/gu) ?? [];
       const parts = []; let current = '';
@@ -152,6 +162,10 @@ export function planDeck(deckInput, profileInput) {
       current.push({ ...row, h }); words += count; used += h;
     }
     pages.push({ slide, rows: current });
+  }
+  for (const page of pages) {
+    const parts = pages.filter(candidate => candidate.slide === page.slide);
+    page.displayTitle = parts.length > 1 ? `${page.slide.title} (${parts.indexOf(page) + 1}/${parts.length})` : page.slide.title;
   }
   if (pages.length > 160) throw new Error('Deck splits into too many slides; shorten the content');
   return { deck, profile, mode, pages, size, slide_count: pages.length, warnings: [
@@ -187,8 +201,8 @@ export async function renderDeck(bytes, profileInput, deckInput) {
   for (const [index, page] of plan.pages.entries()) {
     const { slide, rows } = page; const n = index + 1;
     const placeholders = plan.profile.placeholders;
-    const sources = [...new Set(slide.bullets.flatMap(row => row.sources))];
-    const values = Object.assign(Object.create(null), { [placeholders.title]: slide.title, [placeholders.subtitle]: slide.subtitle });
+    const sources = [...new Set([...slide.bullets.flatMap(row => row.sources), ...(slide.visual?.groups.flatMap(group => group.sources) || [])])];
+    const values = Object.assign(Object.create(null), { [placeholders.title]: page.displayTitle, [placeholders.subtitle]: slide.subtitle });
     if (placeholders.status && !['cover', 'closing'].includes(slide.kind)) values[placeholders.status] = { draft: 'Draft', approved: 'Approved', 'needs decision': 'Needs decision' }[slide.status];
     if (placeholders.eyebrow) values[placeholders.eyebrow] = slide.role.toUpperCase();
     for (const [i, item] of slide.items.entries()) {
@@ -204,12 +218,18 @@ export async function renderDeck(bytes, profileInput, deckInput) {
       if (tag) extra += verifyTag(600 + i, x + w - .95, y, plan.profile.font, plan.profile.verify_style);
       y += row.h;
     }
+    if (page.visual) {
+      extra += page.visual.lines.map((line, i) => connector(1000 + i, line)).join('');
+      extra += page.visual.boxes.map((shape, i) => shape.tag && plan.profile.verify_style
+        ? verifyTag(1200 + i, shape.x, shape.y, plan.profile.font, plan.profile.verify_style)
+        : box(1200 + i, shape.tag ? 'Verify' : shape.text, shape.x, shape.y, shape.w, shape.h, shape.tag ? 11 : shape.size, plan.profile.font, shape.color || 'tx2')).join('');
+    }
     for (const [i, source] of sources.slice(0, 1).entries()) extra += box(400 + i, `[${i + 1}] Source`, plan.profile.canvas[0], plan.profile.footer_y, plan.profile.canvas[2], .22, 11, plan.profile.font, 'tx2', `source${i}`);
     const layoutNumber = plan.mode[slide.kind === 'open_items' ? 'open_items' : slide.kind];
     const shapes = fill(await zip.file(`ppt/slideLayouts/slideLayout${layoutNumber}.xml`).async('string'), values, plan.profile, slide.role);
     zip.file(`ppt/slides/slide${n}.xml`, `${HEAD}<p:sld xmlns:p="${P}" xmlns:a="${A}" xmlns:r="${R}"><p:cSld><p:spTree>${GROUP}${shapes}${extra}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`);
     zip.file(`ppt/slides/_rels/slide${n}.xml.rels`, rels(rel('layout', 'slideLayout', `../slideLayouts/slideLayout${layoutNumber}.xml`) + rel('notes', 'notesSlide', `../notesSlides/notesSlide${n}.xml`) + sources.slice(0, 1).map((source, i) => rel(`source${i}`, 'hyperlink', source, true)).join('')));
-    const notes = [slide.title, slide.subtitle, slide.notes, ...slide.bullets.map(row => `${row.verify || !row.sources.length ? 'Verify: ' : ''}${row.text}`), ...slide.items.map(item => `${item.text} | ${item.owner} | ${item.due}`), ...sources, ...plan.warnings].join('\n');
+    const notes = [slide.title, slide.subtitle, slide.notes, ...slide.bullets.map(row => `${row.verify || !row.sources.length ? 'Verify: ' : ''}${row.text}`), ...slide.items.map(item => `${item.text} | ${item.owner} | ${item.due}`), ...(slide.visual?.groups.map(group => `${group.verify || !group.sources.length ? 'Verify: ' : ''}${group.label}: ${[group.value, ...group.items].filter(Boolean).join('; ')}`) || []), ...sources, ...plan.warnings].join('\n');
     zip.file(`ppt/notesSlides/notesSlide${n}.xml`, `${HEAD}<p:notes xmlns:p="${P}" xmlns:a="${A}" xmlns:r="${R}"><p:cSld><p:spTree>${GROUP}<p:sp><p:nvSpPr><p:cNvPr id="2" name="Notes"/><p:cNvSpPr/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>${notes.split('\n').map(line => para(line, 12)).join('')}</p:txBody></p:sp></p:spTree></p:cSld></p:notes>`);
     zip.file(`ppt/notesSlides/_rels/notesSlide${n}.xml.rels`, rels(rel('rId1', 'notesMaster', '../notesMasters/notesMaster1.xml') + rel('rId2', 'slide', `../slides/slide${n}.xml`)));
     slideIds.push(`<p:sldId id="${256 + index}" r:id="presentationSlide${n}"/>`);

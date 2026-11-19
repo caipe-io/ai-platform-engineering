@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { template, profile, deck } from './fixture.mjs';
+import { template, profile, deck, visualDeck } from './fixture.mjs';
 import { renderDeck } from '../src/renderer.mjs';
 
 const directory = process.argv[2];
@@ -21,3 +21,5 @@ for (const density of ['spacious', 'balanced', 'dense']) {
   const result = await renderDeck(bytes, { ...profile, verify_style: { fill: 'accent6', text: 'dk1' } }, { ...input, density });
   await writeFile(join(directory, `generated-${density}.pptx`), result.bytes);
 }
+
+await writeFile(join(directory, 'generated-visuals.pptx'), (await renderDeck(bytes, profile, visualDeck)).bytes);

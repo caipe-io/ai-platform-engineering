@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { visualLayouts } from './visuals.mjs';
 export const id = z.string().uuid();
 export const retentionSchema = z.object({ keep: z.boolean() }).strict();
 const placeholder = z.string().regex(/^\d{1,3}$/);
@@ -18,6 +19,14 @@ export const profileSchema = z.object({
 }).strict();
 const text = z.string().max(2000);
 const url = z.string().url().max(2048).refine(value => ['https:', 'http:'].includes(new URL(value).protocol));
+const visualSchema = z.object({
+  layout: z.enum(visualLayouts),
+  groups: z.array(z.object({
+    label: z.string().trim().min(1).max(100), value: z.string().max(24).optional(),
+    items: z.array(z.string().trim().min(1).max(200)).max(3).default([]),
+    sources: z.array(url).max(12).default([]), verify: z.boolean().default(false),
+  }).strict()).min(2).max(5),
+}).strict();
 export const deckSchema = z.object({
   title: z.string().min(1).max(160), subtitle: z.string().max(300).default(''),
   mode: z.string().max(32), density: z.enum(['spacious', 'balanced', 'dense']).default('balanced'),
@@ -27,6 +36,7 @@ export const deckSchema = z.object({
     role: z.enum(['context', 'actionable', 'exploration']).default('context'),
     status: z.enum(['draft', 'needs decision', 'approved']).default('draft'),
     bullets: z.array(z.object({ text, sources: z.array(url).max(12).default([]), verify: z.boolean().default(false) }).strict()).max(12).default([]),
+    visual: visualSchema.optional(),
     notes: z.string().max(12000).default(''),
     items: z.array(z.object({ text, owner: z.string().max(100).default('To assign'), due: z.string().max(100).default('To assign') }).strict()).max(10).default([]),
   }).strict()).min(1).max(40),

@@ -34,3 +34,15 @@ export const deck = { title: 'Example briefing', mode: 'primary', slides: [
 ] };
 export const member = { subject: 'example-user', teams: new Map([['example-team', { name: 'Example team', role: 'member' }]]) };
 export const admin = { ...member, teams: new Map([['example-team', { name: 'Example team', role: 'admin' }]]) };
+
+export const visualDeck = { ...deck, title: 'Evidence composition fixtures', slides: [
+  { kind: 'cover', title: 'Evidence composition fixtures', subtitle: 'Synthetic layout checks' },
+  ...['metrics', 'comparison', 'flow', 'timeline', 'layers', 'ledger'].map(layout => ({
+    title: `Example ${layout}`, notes: 'Synthetic fixture values, not operational claims.',
+    visual: { layout, groups: (layout === 'comparison' ? ['Primary', 'Secondary'] : ['First', 'Second', 'Third']).map((label, i) => ({
+      label, ...(layout === 'metrics' ? { value: String((i + 1) * 12) } : {}),
+      items: ['Example evidence'], sources: ['https://example.test/evidence'],
+    })) },
+  })),
+  { kind: 'closing', title: 'Review the evidence' },
+] };

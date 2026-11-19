@@ -17,8 +17,7 @@ source; no project, knowledge application or model runtime is required here.
 `approved` records the agent's assertion, not a cryptographic human approval.
 Agents must obtain the user's approval before calling. Sources are links provided
 by the agent; the renderer does not retrieve evidence or verify claims. Mark
-unsupported wording `verify: true`. Text, source links and full notes remain
-editable. Font files are not embedded. Automatic visual QA, charts and images are
+unsupported wording `verify: true`. Text, structured visual groups, source links and full notes remain editable. Font files are not embedded. Automatic visual QA, charts and images are
 not implemented; review the generated file before presenting.
 
 A deck contains `title`, `mode`, `density` and `slides`. A slide has `kind`
@@ -27,6 +26,23 @@ A deck contains `title`, `mode`, `density` and `slides`. A slide has `kind`
 URLs), and `verify`. Open items contain `text`, optional `owner` and `due`; missing
 owners/dates read `To assign`. The MCP schemas are the complete input contract.
 There is no implicit addition of bookends or approval status.
+
+Content slides can supply `visual` instead of `bullets`. Choose `layout` from
+`metrics`, `comparison`, `flow`, `timeline`, `layers` or `ledger`, and supply 2–5
+`groups` with `label`, optional `value`, concise `items`, `sources` and `verify`.
+Metrics and comparisons accept 2–3 groups; metrics require explicit values.
+Ordered flow/timeline/layer groups define the sequence; no relationships are
+inferred from prose. All labels and connectors are native editable objects that
+use the uploaded template’s canvas, theme colors and fonts. No image service or
+knowledge application is required.
+
+The planner returns each physical slide’s composition and rejects visuals that
+exceed the selected density or canvas. It preserves groups together rather than
+splitting a diagram across pages. Shorten visual labels and keep explanation in
+notes; never invent metrics or dates. Text-only decks remain supported, and split
+slides now show part numbers. New agent executions must discover the updated MCP
+schemas to request visual groups; existing downloads are not rewritten.
+
 
 ## Deploy in an existing CAIPE instance
 
