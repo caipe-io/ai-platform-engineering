@@ -7,8 +7,8 @@ import { proxyAgenticAppRequest } from "@/lib/agentic-apps/proxy";
 import { ApiError, requireConversationAccess, validateConversationId, withErrorHandler } from "@/lib/api-middleware";
 import { getServerConfig } from "@/lib/config";
 import { authenticateRequest, type AuthResult } from "@/lib/da-proxy";
-import { appGitHubFeedbackSettings, createGitHubFeedback, createPlatformGitHubFeedback, platformFeedbackCapabilities, platformFeedbackHandler } from "@/lib/feedback-github";
-import { parseFeedbackFeatures, platformFeedbackFeatures, type FeedbackDestination } from "@/lib/feedback-features";
+import { appGitHubFeedbackSettings, createGitHubFeedback, createPlatformGitHubFeedback, createServiceDeskTicket, platformFeedbackCapabilities, platformFeedbackHandler, serviceDeskCapabilities } from "@/lib/feedback-github";
+import { parseFeedbackFeatures, platformFeedbackFeatures, type FeedbackDestination, type ServiceDeskCapability } from "@/lib/feedback-features";
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
 import { requireConversationResourcePermission } from "@/lib/rbac/conversation-implicit-authz";
 import { readBodyWithLimit } from "@/lib/request-body";
@@ -97,10 +97,12 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
   let features: string[];
   let screenshotsEnabled: boolean | undefined;
   let destination: FeedbackDestination | undefined;
+  let serviceDesk: ServiceDeskCapability | undefined;
   if (!app) {
-    features = platformFeedbackFeatures(process.env.FEEDBACK_FEATURES);
+    features = platformCapabilities!.feedbackEnabled === false ? ["Other"] : platformFeedbackFeatures(process.env.FEEDBACK_FEATURES);
     screenshotsEnabled = platformCapabilities!.screenshotsEnabled;
     destination = platformCapabilities!.destination;
+    serviceDesk = platformCapabilities!.serviceDesk;
   }
   else {
     features = app.installation.feedbackFeatures ?? ["Other"];
@@ -125,7 +127,8 @@ export const GET = withErrorHandler(async (request: NextRequest) => {
     }
   }
   return NextResponse.json({ success: true, data: {
-    appId: app?.installation.appId ?? null, label: app?.manifest.displayName ?? platformLabel, features, components, screenshotsEnabled, destination,
+    appId: app?.installation.appId ?? null, label: app?.manifest.displayName ?? platformLabel, features, components, screenshotsEnabled, destination, serviceDesk,
+    ...(!app && platformCapabilities?.feedbackEnabled === false ? { feedbackEnabled: false } : {}),
   } }, { headers: { "Cache-Control": "private, no-store" } });
 });
 
@@ -143,9 +146,15 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   try { body = JSON.parse(new TextDecoder().decode(bytes)); }
   catch { throw new ApiError("Invalid feedback JSON", 400); }
   const app = await feedbackApp(body?.contextUrl, body?.conversationId, auth.authenticatedUser, body?.componentId);
+  if (body?.requestType === "service-desk" && app) throw new ApiError("Request help is not available for this component", 400);
   if (app?.installation.feedbackGitHub) {
     if (!canLaunchAgenticApp(app, agenticAppUserContextFromSession(auth.authenticatedUser.session, auth.authenticatedUser.user.role))) throw new ApiError("Feedback component is unavailable", 403);
     const data = await createGitHubFeedback(body, auth.authenticatedUser.user.email, request.signal, appGitHubFeedbackSettings(app));
+    return NextResponse.json({ success: true, data });
+  }
+  if (body?.requestType === "service-desk") {
+    if (serviceDeskCapabilities() === undefined) throw new ApiError("Request help is not available for this component", 400);
+    const data = await createServiceDeskTicket(body, auth.authenticatedUser.user.email, request.signal);
     return NextResponse.json({ success: true, data });
   }
   if (!app?.installation.feedbackPath) {

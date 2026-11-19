@@ -1,9 +1,10 @@
 "use client";
 
-import { FEEDBACK_SEVERITIES, describeFeedbackBrowser, type FeedbackSeverity } from "@/lib/feedback-features";
+import { FEEDBACK_SEVERITIES, SERVICE_DESK_DETAILS, boundedContextUrl, describeFeedbackBrowser, type FeedbackSeverity } from "@/lib/feedback-features";
 import { getErrorMessage } from "@/lib/error-utils";
 
 import { Button } from "@/components/ui/button";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { Select } from "@/components/ui/select";
 import {
 Dialog,
@@ -57,6 +58,11 @@ const REPORT_FIELDS = {
   ],
 } as const;
 const FIELD_CLASS = "w-full px-3 py-2 text-sm bg-muted/50 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50";
+const REQUIRED_FIELD_CLASS = "w-full px-3 py-2 text-sm bg-muted/50 border border-foreground/40 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50";
+const OPTIONAL_FIELD_CLASS = "w-full px-3 py-2 text-sm bg-background/40 border border-dashed border-muted-foreground/40 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50";
+const REQUIRED_SELECT_CLASS = "border-foreground/40";
+const OPTIONAL_SELECT_CLASS = "border-dashed border-muted-foreground/40 bg-background/40";
+const Required = () => <> <span className="text-destructive">*</span></>;
 
 type DialogStatus = "idle" | "submitting" | "success" | "error";
 
@@ -82,6 +88,19 @@ interface ImageCaptureConstructor {
   };
 }
 
+/** Recovery always describes the submitted payload, including its original classification. */
+function requestRecoveryDescription(request: TicketRequest): string {
+  if (request.requestType !== "service-desk" || !request.serviceDesk) return request.description;
+  const details = request.serviceDesk;
+  return [
+    request.title, request.description,
+    `Areas of impact: ${details.areas.join(", ")}`,
+    `Severity: ${details.severity}`,
+    `Type: ${details.type}`,
+    ...(details.details ?? []).map(detail => `${detail.area} — ${detail.label}: ${detail.value}`),
+  ].filter(Boolean).join("\n\n");
+}
+
 export function ReportProblemDialog({
   open,
   onOpenChange,
@@ -96,6 +115,12 @@ export function ReportProblemDialog({
   const { data: session } = useSession();
 
   const [issueType, setIssueType] = useState<"Bug" | "Enhancement">("Bug");
+  const [requestMode, setRequestMode] = useState<"feedback" | "service-desk">("feedback");
+  const [sdAreas, setSdAreas] = useState<string[]>([]);
+  const [sdDetails, setSdDetails] = useState<Record<string, string>>({});
+  const [sdSeverity, setSdSeverity] = useState("");
+  const [sdType, setSdType] = useState("");
+  const [sdDescription, setSdDescription] = useState("");
   const [title, setTitle] = useState("");
   const [values, setValues] = useState<Record<string, string>>({});
   const [options, setOptions] = useState<FeedbackOptions | null>(null);
@@ -123,11 +148,21 @@ export function ReportProblemDialog({
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [showDebug, setShowDebug] = useState(false);
   const [screenshotDataUrl, setScreenshotDataUrl] = useState<string | null>(null);
-  const canSubmit = Boolean(options) && (!screenshotDataUrl || options?.screenshotsEnabled !== false) && Boolean(title.trim()) && fields.every(field => !field.required || values[field.key]?.trim()) && validRelatedUrl;
+  const canOfferServiceDesk = Boolean(options?.serviceDesk) && !feedbackContext && !onBeforeSubmit;
+  const isServiceDesk = requestMode === "service-desk" && canOfferServiceDesk;
+  const unavailable = options?.feedbackEnabled === false && !canOfferServiceDesk;
+  const sdOptions = options?.serviceDesk;
+  const sdSeverityValue = sdSeverity || (sdOptions?.severities.includes("Medium") ? "Medium" : sdOptions?.severities[0] ?? "");
+  const sdTypeValue = sdType || (sdOptions?.types.includes("Ticket") ? "Ticket" : sdOptions?.types[0] ?? "");
+  const canSubmit = isServiceDesk ? Boolean(title.trim() && sdDescription.trim()) && sdAreas.length > 0 : Boolean(options) && options?.feedbackEnabled !== false && (!screenshotDataUrl || options?.screenshotsEnabled !== false) && Boolean(title.trim()) && fields.every(field => !field.required || values[field.key]?.trim()) && validRelatedUrl;
   const [isCapturing, setIsCapturing] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const submittedAttemptRef = useRef<{
+    request: TicketRequest;
+    prepare?: ReportProblemDialogProps["onBeforeSubmit"];
+  } | null>(null);
   const debugEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileInputId = useId();
@@ -147,6 +182,10 @@ export function ReportProblemDialog({
     typeof window !== "undefined"
       ? window.location.href
       : "";
+
+  useEffect(() => {
+    if (options && !isServiceDesk) setTitle(current => current.slice(0, 60));
+  }, [options, isServiceDesk]);
 
   useEffect(() => {
     if (!open) return;
@@ -189,6 +228,12 @@ export function ReportProblemDialog({
 
   const resetState = useCallback(() => {
     setIssueType("Bug");
+    setRequestMode("feedback");
+    setSdAreas([]);
+    setSdDetails({});
+    setSdSeverity("");
+    setSdType("");
+    setSdDescription("");
     setComponents([]);
     setComponentId(undefined);
     setOptions(null);
@@ -208,6 +253,7 @@ export function ReportProblemDialog({
     setIsCapturing(false);
     setLightboxOpen(false);
     abortControllerRef.current = null;
+    submittedAttemptRef.current = null;
   }, []);
 
   // Capture the tab using getDisplayMedia (browser screen share picker),
@@ -293,8 +339,9 @@ export function ReportProblemDialog({
     ]);
   }, []);
 
-  const handleSubmit = useCallback(async () => {
-    if (!canSubmit || abortControllerRef.current) return;
+  const handleSubmit = useCallback(async (retry = false) => {
+    const previousAttempt = retry ? submittedAttemptRef.current : null;
+    if ((!previousAttempt && !canSubmit) || abortControllerRef.current) return;
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -305,13 +352,30 @@ export function ReportProblemDialog({
     setTicketResult(null);
 
     const userEmail = session?.user?.email || "unknown";
+    const requestContextUrl = boundedContextUrl(contextUrl);
 
     appendLog("Submitting feedback...");
     appendLog(`Reporter: ${userEmail}`);
-    appendLog(`Context: ${contextUrl}`);
 
     try {
-      const request: TicketRequest = {
+      const request: TicketRequest = previousAttempt?.request ?? (isServiceDesk ? {
+        requestType: "service-desk",
+        description: sdDescription.trim(),
+        title: title.trim(),
+        serviceDesk: {
+          areas: sdAreas,
+          severity: sdSeverityValue,
+          type: sdTypeValue,
+          details: sdAreas.flatMap(area => (SERVICE_DESK_DETAILS[area] ?? []).flatMap(field => {
+            const value = sdDetails[`${area}|${field.label}`]?.trim();
+            return value ? [{ area, label: field.label, value }] : [];
+          })),
+        },
+        source: "header",
+        userEmail,
+        contextUrl: requestContextUrl,
+        componentId: null,
+      } : {
         description: reportDescription,
         title: title.trim(),
         issueType,
@@ -323,18 +387,23 @@ export function ReportProblemDialog({
         source: onBeforeSubmit || conversationId || feedbackContext ? "chat-feedback" : initialComponentId ? "app" : "header",
         appContext: options?.appId === initialComponentId ? appContext : undefined,
         userEmail,
-        contextUrl,
+        contextUrl: requestContextUrl,
         conversationId,
         componentId: options?.appId,
         feedbackContext,
         screenshotDataUrl: screenshotDataUrl ?? undefined,
         ...(includeChatContext && chatContext && chatContextDraft.trim()
           ? { chatContext: chatContextDraft.trim() } : {}),
-      };
-      const submittedContext = await onBeforeSubmit?.(request);
+      });
+      const attempt = previousAttempt ?? { request, prepare: onBeforeSubmit };
+      submittedAttemptRef.current = attempt;
+      appendLog(`Context: ${attempt.request.contextUrl}`);
+      const submittedContext = await attempt.prepare?.(attempt.request);
       if (controller.signal.aborted) return;
+      attempt.request = { ...attempt.request, feedbackContext: submittedContext ?? attempt.request.feedbackContext };
+      attempt.prepare = undefined;
       const result = await createTicketViaAgent({
-        request: { ...request, feedbackContext: submittedContext ?? request.feedbackContext },
+        request: attempt.request,
         signal: controller.signal,
         onEvent: (_event, logLine) => {
           appendLog(logLine);
@@ -369,6 +438,12 @@ export function ReportProblemDialog({
     }
   }, [
     canSubmit,
+    isServiceDesk,
+    sdAreas,
+    sdDetails,
+    sdSeverityValue,
+    sdTypeValue,
+    sdDescription,
     options,
     reportDescription,
     title,
@@ -398,8 +473,9 @@ export function ReportProblemDialog({
   }, [resetState]);
 
   const handleCopyDescription = useCallback(() => {
-    navigator.clipboard.writeText(reportDescription);
-  }, [reportDescription]);
+    const attempt = submittedAttemptRef.current;
+    if (attempt) navigator.clipboard.writeText(requestRecoveryDescription(attempt.request));
+  }, []);
 
   return (
     <>
@@ -415,7 +491,7 @@ export function ReportProblemDialog({
           </DialogTitle>
           <DialogDescription>
             {status === "idle" &&
-              "Tell us what happened. Fields marked * are required."}
+              (isServiceDesk ? "Tell us what you need. Fields marked * are required." : "Tell us what happened. Fields marked * are required.")}
             {status === "submitting" && "Creating your ticket..."}
             {status === "success" && "Your ticket has been created successfully."}
             {status === "error" && "We couldn't create the ticket. You can retry or copy your description."}
@@ -428,12 +504,13 @@ export function ReportProblemDialog({
             <div className="flex min-w-0 flex-col gap-3 sm:col-span-2 sm:flex-row sm:items-center sm:gap-4">
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <label htmlFor={`${fieldId}-component`} className="shrink-0 text-xs font-medium text-muted-foreground">Component *</label>
-                <Select id={`${fieldId}-component`} required disabled={!components.length} className="min-w-0 flex-1"
+                <Select id={`${fieldId}-component`} required disabled={!components.length} className={`min-w-0 flex-1${isServiceDesk ? ` ${REQUIRED_SELECT_CLASS}` : ""}`}
                   value={componentId === undefined ? "" : componentId === null ? "platform" : `app:${componentId}`}
                   onChange={event => {
                     const next = event.target.value === "platform" ? null : event.target.value.slice(4);
                     if (next !== componentId) {
                       setOptions(null);
+                      setRequestMode("feedback");
                       setFeature("Other");
                       setComponentId(next);
                     }
@@ -443,21 +520,30 @@ export function ReportProblemDialog({
                     value={item.appId === null ? "platform" : `app:${item.appId}`}>{item.label}</option>)}
                 </Select>
               </div>
-              <div className="flex min-w-0 flex-1 items-center gap-2">
+              {!isServiceDesk && !unavailable && <div className="flex min-w-0 flex-1 items-center gap-2">
                 <label htmlFor={`${fieldId}-feature`} className="shrink-0 text-xs font-medium text-muted-foreground">Feature</label>
                 <Select id={`${fieldId}-feature`} value={feature} disabled={!options} className="min-w-0 flex-1" onChange={event => setFeature(event.target.value)}>
                   {!options && <option value="Other">{optionsError ? "Categories unavailable" : "Loading categories…"}</option>}
                   {options?.features.map(item => <option key={item} value={item}>{item}</option>)}
                 </Select>
-              </div>
+              </div>}
             </div>
 
-            {options?.destination && (
+            {unavailable && (
+              <>
+                <div role="alert" className="rounded-md border border-border bg-muted/50 px-3 py-2 text-sm sm:col-span-2">
+                  Request help is unavailable for this component.
+                </div>
+                <Button className="w-full sm:col-span-2" onClick={() => handleOpenChange(false)}>Close</Button>
+              </>
+            )}
+            {!unavailable && (<>
+            {(isServiceDesk ? options?.serviceDesk : options?.destination) && (
               <p className="flex items-center gap-2 text-xs text-muted-foreground sm:col-span-2">
                 <GitBranch aria-hidden="true" className="h-4 w-4 shrink-0" />
-                <span className="break-all">{options.destination.provider === "github"
+                <span className="break-all">{isServiceDesk ? `→ GitHub issue in ${options?.serviceDesk?.repository}` : options?.destination?.provider === "github"
                   ? `→ GitHub issue in ${options.destination.repository}`
-                  : `→ Jira issue in ${options.destination.project}`}</span>
+                  : `→ Jira issue in ${options?.destination?.provider === "jira" ? options.destination.project : ""}`}</span>
               </p>
             )}
 
@@ -476,24 +562,97 @@ export function ReportProblemDialog({
               <legend className="text-xs font-medium text-muted-foreground">Type *</legend>
               <div className="flex flex-wrap gap-1.5">
                 {(["Bug", "Enhancement"] as const).map(type => (
-                  <button key={type} type="button" aria-pressed={issueType === type}
-                    onClick={() => setIssueType(type)}
-                    className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${issueType === type ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>
+                  <button key={type} type="button" disabled={options?.feedbackEnabled === false} aria-pressed={!isServiceDesk && issueType === type}
+                    onClick={() => { setIssueType(type); setRequestMode("feedback"); }}
+                    className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${!isServiceDesk && issueType === type ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>
                     {type}
                   </button>
                 ))}
+                {canOfferServiceDesk && (
+                  <button type="button" aria-pressed={isServiceDesk} onClick={() => setRequestMode("service-desk")}
+                    className={`rounded-full px-3 py-1 text-xs font-medium transition-all ${isServiceDesk ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}>
+                    Request help
+                  </button>
+                )}
               </div>
             </fieldset>
             {optionsError && <div role="alert" className="text-xs text-destructive sm:col-span-2">{optionsError} <button type="button" className="underline" onClick={() => components.length ? setOptionsAttempt(value => value + 1) : setRegistryAttempt(value => value + 1)}>Retry categories</button></div>}
 
             <div className="space-y-1 sm:col-span-2">
               <div className="flex items-baseline justify-between text-xs text-muted-foreground">
-                <label htmlFor={`${fieldId}-title`} className="font-medium">Short title *</label>
-                <span>{title.length}/60</span>
+                <label htmlFor={`${fieldId}-title`} className="font-medium">{isServiceDesk ? <>Ticket title<Required /></> : "Short title *"}</label>
+                <span>{title.length}/{isServiceDesk ? 120 : 60}</span>
               </div>
               <input id={`${fieldId}-title`} value={title} onChange={event => setTitle(event.target.value)}
-                maxLength={60} required autoFocus placeholder="One line that names the problem" className={FIELD_CLASS} />
+                maxLength={isServiceDesk ? 120 : 60} required autoFocus placeholder={isServiceDesk ? "What do you need?" : "One line that names the problem"} className={isServiceDesk ? REQUIRED_FIELD_CLASS : FIELD_CLASS} />
             </div>
+            {isServiceDesk && (<>
+              <div className="space-y-1 sm:col-span-2">
+                <label htmlFor={`${fieldId}-sd-description`} className="text-xs font-medium text-muted-foreground">Description<Required /></label>
+                <textarea id={`${fieldId}-sd-description`} required value={sdDescription} maxLength={4000}
+                  onChange={event => setSdDescription(event.target.value)}
+                  placeholder="What you need and why" className={`${REQUIRED_FIELD_CLASS} h-24 resize-y`} />
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <span className="block text-xs font-medium text-muted-foreground">Area of impact<Required /></span>
+                <MultiSelect options={sdOptions?.areas ?? []} selected={sdAreas} onChange={setSdAreas}
+                  ariaLabel="Area of impact" placeholder="Select one or more…" badgeLabel="areas" portalled={false}
+                  className={`${REQUIRED_SELECT_CLASS} h-9 w-full max-w-none`} wrapperClassName="w-full" contentClassName="w-full" />
+              </div>
+              <div className="space-y-1">
+                <label htmlFor={`${fieldId}-sd-severity`} className="text-xs font-medium text-muted-foreground">Severity<Required /></label>
+                <Select id={`${fieldId}-sd-severity`} className={REQUIRED_SELECT_CLASS} value={sdSeverityValue} onChange={event => setSdSeverity(event.target.value)}>
+                  {sdOptions?.severities.map(item => <option key={item} value={item}>{item}</option>)}
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <label htmlFor={`${fieldId}-sd-type`} className="text-xs font-medium text-muted-foreground">Type<Required /></label>
+                <Select id={`${fieldId}-sd-type`} className={REQUIRED_SELECT_CLASS} value={sdTypeValue} onChange={event => setSdType(event.target.value)}>
+                  {sdOptions?.types.map(item => <option key={item} value={item}>{item}</option>)}
+                </Select>
+              </div>
+              {sdAreas.some(area => SERVICE_DESK_DETAILS[area]) && (<>
+                <hr className="border-muted-foreground/30 sm:col-span-2" />
+                <div className="space-y-3 rounded-lg border border-dashed border-muted-foreground/40 bg-muted/40 p-3 sm:col-span-2">
+                  <div className="flex items-baseline justify-between gap-2 text-xs">
+                    <h3 className="font-semibold uppercase tracking-wide text-muted-foreground">Optional details</h3>
+                    <span className="text-muted-foreground">Skip any you do not need</span>
+                  </div>
+                  {sdAreas.filter(area => SERVICE_DESK_DETAILS[area]).map(area => {
+                    const headingId = `${fieldId}-sd-${area.replace(/[^A-Za-z0-9]+/g, "-")}-heading`;
+                    return (
+                      <div key={area} role="group" aria-labelledby={headingId} className="space-y-2">
+                        <h4 id={headingId} className="flex items-center gap-2 text-xs font-semibold">{area}<span aria-hidden="true" className="h-px flex-1 bg-muted-foreground/30" /></h4>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          {SERVICE_DESK_DETAILS[area].map(field => {
+                            const id = `${fieldId}-sd-${area}-${field.label}`.replace(/[^A-Za-z0-9-]+/g, "-");
+                            const key = `${area}|${field.label}`;
+                            return (
+                              <div key={key} className="space-y-1">
+                                <div className="flex items-baseline justify-between gap-2 text-xs text-muted-foreground">
+                                  <label htmlFor={id} className="font-medium">{field.label}</label>
+                                  <span className="italic">optional</span>
+                                </div>
+                                {field.options ? (
+                                  <Select id={id} className={OPTIONAL_SELECT_CLASS} value={sdDetails[key] ?? ""} onChange={event => setSdDetails(current => ({ ...current, [key]: event.target.value }))}>
+                                    <option value="">Select an option…</option>
+                                    {field.options.map(item => <option key={item} value={item}>{item}</option>)}
+                                  </Select>
+                                ) : (
+                                  <input id={id} value={sdDetails[key] ?? ""} maxLength={500} className={OPTIONAL_FIELD_CLASS}
+                                    onChange={event => setSdDetails(current => ({ ...current, [key]: event.target.value }))} />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>)}
+            </>)}
+            {!isServiceDesk && (<>
             {fields.map(field => (
               <div key={field.key} className={`space-y-1 ${field.required ? "sm:col-span-2" : ""}`}>
                 <label htmlFor={`${fieldId}-${field.key}`} className="text-xs font-medium text-muted-foreground">
@@ -611,20 +770,27 @@ export function ReportProblemDialog({
 
               </div>
             </details>
+            </>)}
 
-            <div className="space-y-3 sm:col-span-2">
+            <div className={`space-y-3 sm:col-span-2${isServiceDesk ? " sticky -bottom-5 z-10 -mb-5 bg-background pb-5 pt-2 sm:-bottom-6 sm:-mb-6 sm:pb-6" : ""}`}>
             <p className="text-center text-xs text-muted-foreground break-words">
               The current page URL and your email will be included in the ticket.
             </p>
+            {isServiceDesk && !canSubmit && (
+              <p role="status" className="text-center text-xs text-muted-foreground">
+                Still needed: {[!title.trim() && "ticket title", !sdDescription.trim() && "description", !sdAreas.length && "area of impact"].filter(Boolean).join(", ")}.
+              </p>
+            )}
 
             <Button
-              onClick={handleSubmit}
+              onClick={() => void handleSubmit()}
               disabled={!canSubmit}
               className="w-full gap-2"
             >
-              Submit Report
+              {isServiceDesk ? "Submit Request" : "Submit Report"}
             </Button>
             </div>
+            </>)}
           </div>
         )}
 
@@ -797,7 +963,7 @@ export function ReportProblemDialog({
                 <Copy className="h-3 w-3" />
                 Copy Description
               </Button>
-              <Button className="flex-1 gap-1" onClick={handleSubmit}>
+              <Button className="flex-1 gap-1" onClick={() => void handleSubmit(true)}>
                 <RefreshCw className="h-3 w-3" />
                 Retry
               </Button>

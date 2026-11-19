@@ -10,6 +10,35 @@ import userEvent from "@testing-library/user-event";
 import { MultiSelect } from "../multi-select";
 
 describe("MultiSelect", () => {
+  it("applies wrapperClassName to the wrapper and contentClassName to the open list", async () => {
+    const user = userEvent.setup();
+    render(
+      <MultiSelect
+        options={["one", "two"]}
+        selected={[]}
+        onChange={jest.fn()}
+        placeholder="Pick..."
+        wrapperClassName="w-full"
+        contentClassName="w-full"
+        portalled={false}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: /pick/i });
+    expect(trigger.parentElement).toHaveClass("w-full");
+    await user.click(trigger);
+    const content = document.querySelector("[data-popover-content]");
+    expect(content).toHaveClass("w-full");
+    expect(content).not.toHaveClass("w-[240px]");
+  });
+
+  it("keeps the 240px list width by default", async () => {
+    const user = userEvent.setup();
+    render(<MultiSelect options={["one"]} selected={[]} onChange={jest.fn()} placeholder="Pick..." portalled={false} />);
+    await user.click(screen.getByRole("button", { name: /pick/i }));
+    expect(document.querySelector("[data-popover-content]")).toHaveClass("w-[240px]");
+  });
+
   it("focuses and filters options from the search input", async () => {
     const user = userEvent.setup();
     const onChange = jest.fn();

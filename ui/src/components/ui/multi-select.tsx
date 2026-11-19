@@ -20,6 +20,10 @@ interface MultiSelectProps {
   emptyLabel?: string;
   badgeLabel?: string;
   className?: string;
+  /** Classes for the element wrapping the trigger and list (for example `w-full`). */
+  wrapperClassName?: string;
+  /** Classes for the open list; the default width is 240px. */
+  contentClassName?: string;
   portalled?: boolean;
   // When provided, `options` is assumed to already reflect the results for
   // the current query (e.g. fetched server-side) and is used as-is instead
@@ -40,6 +44,8 @@ export function MultiSelect({
   emptyLabel = "No results found",
   badgeLabel = "selected",
   className,
+  wrapperClassName,
+  contentClassName,
   portalled = true,
   onSearchChange,
   searchLoading = false,
@@ -94,7 +100,7 @@ export function MultiSelect({
   };
 
   return (
-    <Popover open={open} onOpenChange={(v) => { setOpen(v); if (!v) setSearch(""); }}>
+    <Popover className={wrapperClassName} open={open} onOpenChange={(v) => { setOpen(v); if (!v) setSearch(""); }}>
       <PopoverTrigger asChild>
         <button
           type="button"
@@ -126,7 +132,7 @@ export function MultiSelect({
           <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[240px] p-0" portalled={portalled}>
+      <PopoverContent align="start" className={cn("w-[240px] p-0", contentClassName)} portalled={portalled}>
         <div
           className="flex items-center gap-2 px-3 py-2 border-b border-border"
           onClick={() => inputRef.current?.focus()}

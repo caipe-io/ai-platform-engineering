@@ -8,6 +8,8 @@ const mockConversation = jest.fn();
 const mockResourcePermission = jest.fn();
 const mockPlatformFeedback = jest.fn();
 const mockPlatformCapabilities = jest.fn();
+const mockServiceDesk = jest.fn();
+const mockServiceDeskCapabilities = jest.fn();
 let mockPlatformHandler = "agent";
 let mockMongoConfigured = false;
 jest.mock("@/lib/feedback-github", () => ({
@@ -16,6 +18,8 @@ jest.mock("@/lib/feedback-github", () => ({
   platformFeedbackHandler: () => mockPlatformHandler,
   platformFeedbackCapabilities: () => mockPlatformCapabilities(),
   createPlatformGitHubFeedback: (...args: unknown[]) => mockPlatformFeedback(...args),
+  createServiceDeskTicket: (...args: unknown[]) => mockServiceDesk(...args),
+  serviceDeskCapabilities: () => mockServiceDeskCapabilities(),
 }));
 jest.mock("@/lib/da-proxy", () => ({ authenticateRequest: (...args: unknown[]) => mockAuth(...args) }));
 jest.mock("@/lib/agentic-apps/config", () => ({ loadConfiguredAgenticApps: () => mockApps() }));
@@ -53,6 +57,7 @@ beforeEach(() => {
   mockMongoConfigured = false;
   mockPlatformHandler = "agent";
   mockPlatformCapabilities.mockReset().mockReturnValue({});
+  mockServiceDeskCapabilities.mockReset().mockImplementation(() => mockPlatformCapabilities().serviceDesk);
   delete process.env.FEEDBACK_FEATURES;
   delete process.env.FEEDBACK_PLATFORM_LABEL;
   mockResourcePermission.mockResolvedValue(undefined);
@@ -340,4 +345,71 @@ it("returns the platform's destination independently of the calling app", async 
   mockPlatformCapabilities.mockReturnValue({ destination: { provider: "github", repository: "example/platform-feedback" } });
   const response = await componentOptions(null, "https://host.example.test/projects/example");
   expect((await response.json()).data.destination).toEqual({ provider: "github", repository: "example/platform-feedback" });
+});
+
+it("sends Request help to the service desk with the authenticated reporter", async () => {
+  mockPlatformHandler = "github";
+  mockPlatformCapabilities.mockReturnValue({ serviceDesk: { repository: "example/service-desk" } });
+  mockServiceDesk.mockResolvedValue({ id: "#7", provider: "github", url: "https://github.com/example/service-desk/issues/7" });
+  const response = await post({ requestType: "service-desk", componentId: null, userEmail: "spoof@example.test",
+    serviceDesk: { areas: ["Vault"], severity: "High", type: "Ticket" } });
+  expect((await response.json()).data.id).toBe("#7");
+  expect(mockServiceDesk).toHaveBeenCalledWith(expect.any(Object), caller.user.email, expect.any(AbortSignal));
+  expect(mockPlatformFeedback).not.toHaveBeenCalled();
+});
+it("rejects Request help when it is not configured or targets an app", async () => {
+  mockPlatformHandler = "github";
+  mockPlatformCapabilities.mockReturnValue({});
+  expect((await post({ requestType: "service-desk", componentId: null })).status).toBe(400);
+  mockPlatformCapabilities.mockReturnValue({ serviceDesk: { repository: "example/service-desk" } });
+  expect((await post({ requestType: "service-desk", componentId: "example" })).status).toBe(400);
+  expect(mockServiceDesk).not.toHaveBeenCalled();
+});
+it("reports the service desk destination with the platform options", async () => {
+  mockPlatformHandler = "github";
+  mockPlatformCapabilities.mockReturnValue({ destination: { provider: "github", repository: "example/feedback" },
+    serviceDesk: { repository: "example/service-desk", areas: ["Vault"], severities: ["High"], types: ["Ticket"] } });
+  const response = await GET(new NextRequest("https://host.example.test/api/tickets/report?contextUrl=https%3A%2F%2Fhost.example.test%2Fprojects&componentId="));
+  expect((await response.json()).data.serviceDesk).toEqual({ repository: "example/service-desk", areas: ["Vault"], severities: ["High"], types: ["Ticket"] });
+});
+
+
+it.each(["explicit", "context"])("rejects %s app-owned Request help before GitHub feedback dispatch", async ownership => {
+  mockApps.mockReturnValue([{ ...app(), installation: { ...app().installation, feedbackPath: undefined,
+    feedbackGitHub: { repository: "example/product", tokenEnv: "FEEDBACK_EXAMPLE_TOKEN" }, feedbackFeatures: ["Publishing"] } }]);
+  const response = await post({ requestType: "service-desk", feature: "Publishing",
+    ...(ownership === "explicit" ? { componentId: "example" } : {}) });
+  expect(response.status).toBe(400);
+  expect((await response.json()).error).toBe("Request help is not available for this component");
+  expect(mockPlatformFeedback).not.toHaveBeenCalled();
+  expect(mockServiceDesk).not.toHaveBeenCalled();
+  expect(mockProxy).not.toHaveBeenCalled();
+});
+
+
+it("lists and accepts dedicated Request help without ordinary GitHub feedback configuration", async () => {
+  const keys = ["FEEDBACK_HANDLER", "FEEDBACK_SERVICE_DESK_REPO", "FEEDBACK_SERVICE_DESK_TOKEN", "FEEDBACK_GITHUB_REPO", "FEEDBACK_GITHUB_TOKEN", "FEEDBACK_FEATURES"];
+  const saved = keys.map(key => process.env[key]);
+  try {
+    keys.forEach(key => delete process.env[key]);
+    process.env.FEEDBACK_HANDLER = "github";
+    process.env.FEEDBACK_SERVICE_DESK_REPO = "example/help";
+    process.env.FEEDBACK_SERVICE_DESK_TOKEN = "test-help-token";
+    process.env.FEEDBACK_FEATURES = "invalid ordinary feedback configuration";
+    const actual = jest.requireActual<typeof import("@/lib/feedback-github")>("@/lib/feedback-github");
+    mockPlatformCapabilities.mockImplementation(actual.platformFeedbackCapabilities);
+    mockServiceDeskCapabilities.mockImplementation(actual.serviceDeskCapabilities);
+    const metadata = await componentOptions(null);
+    expect(metadata.status).toBe(200);
+    expect((await metadata.json()).data).toMatchObject({ appId: null, feedbackEnabled: false,
+      features: ["Other"], serviceDesk: { repository: "example/help" }, components: expect.arrayContaining([{ appId: null, label: "Platform" }]) });
+    const components = await GET(new NextRequest("https://host.example.test/api/tickets/report?contextUrl=https%3A%2F%2Fhost.example.test%2F&view=components&componentId="));
+    expect((await components.json()).data.components).toContainEqual({ appId: null, label: "Platform" });
+    mockServiceDesk.mockResolvedValueOnce({ id: "#7", provider: "github", url: "https://example.test/issues/7" });
+    expect((await post({ requestType: "service-desk", componentId: null })).status).toBe(200);
+    expect(mockServiceDesk).toHaveBeenCalledTimes(1);
+    expect(mockPlatformFeedback).not.toHaveBeenCalled();
+  } finally {
+    keys.forEach((key, index) => { if (saved[index] === undefined) delete process.env[key]; else process.env[key] = saved[index]; });
+  }
 });

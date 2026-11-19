@@ -362,6 +362,26 @@ FEEDBACK_GITHUB_SCREENSHOTS_REPO=example/feedback-assets
   credential returns 503. `agent` requires an explicit operator opt-in.
 - Repository and token overrides are server-only. The handler uses only `FEEDBACK_GITHUB_REPO` and
   `FEEDBACK_GITHUB_TOKEN`; legacy provider settings are not fallbacks. Browser payloads cannot choose a repository or token.
+- **Request help** is an optional third report type for access, budget and setup
+  requests. It appears only with `FEEDBACK_HANDLER=github` and either
+  `FEEDBACK_SERVICE_DESK_ENABLED=true` or a dedicated `FEEDBACK_SERVICE_DESK_REPO`.
+  It uses `FEEDBACK_SERVICE_DESK_REPO` and `FEEDBACK_SERVICE_DESK_TOKEN` when set,
+  and otherwise `FEEDBACK_GITHUB_REPO` and `FEEDBACK_GITHUB_TOKEN`. Dedicated service-desk
+  credentials work without ordinary feedback credentials; in that setup the platform
+  offers Request help and disables Bug/Enhancement. Copy and Retry retain the original
+  submission and component even if the calling app changes while the request is pending.
+  The form has title, description (up to 4000 characters),
+  area of impact (a multi-select: choose one or more), severity and type fields. The issue title is
+  `[Area] title`, or `[Multiple areas] title` when more than one area is chosen,
+  capped at 120 characters (the tag is always kept). The body's Area cell lists
+  every chosen area, primary first. The body opens with
+  a table (Area, Reported severity, Type, Requested by), then `## Description` with
+  the user's text (@mentions neutralised outside code fences), then `## Details` when
+  any optional question was answered, then a footer with the page link. Each area can also show
+  optional extra questions (for example a Vault namespace); answers appear under
+  `## Details` as a bold area line with bold-label bullets. Labels are `service-desk`
+  (`FEEDBACK_SERVICE_DESK_LABEL` overrides it) and `caipe-reported`; no area or
+  severity labels are added. Registered apps do not offer it.
 - The issue includes the report text, type, feature, authenticated reporter,
   context URL and any explicitly included chat excerpt. Labels come from platform
   configuration and the selected issue type.

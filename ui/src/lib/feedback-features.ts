@@ -1,6 +1,38 @@
 export const FEEDBACK_SEVERITIES = ["Blocks my work", "Annoying", "Minor"] as const;
 export type FeedbackSeverity = (typeof FEEDBACK_SEVERITIES)[number];
 
+export const SERVICE_DESK_AREAS = [
+  "Compute", "ArgoCD", "Vault", "GitHub", "Directory groups", "Logging", "Kubernetes", "Platform", "SSO / IAM",
+  "CI / GitHub Actions", "Infrastructure as code", "Artifacts / Registries", "Data Services", "AI / ML",
+  "Networking / DNS / Certificates", "Sandboxes", "Applications", "Other",
+] as const;
+export const SERVICE_DESK_SEVERITIES = ["Urgent", "High", "Medium", "Low"] as const;
+export const SERVICE_DESK_TYPES = ["Bug", "Enhancement", "Ticket"] as const;
+
+export interface ServiceDeskDetailField { label: string; options?: readonly string[] }
+const ENVIRONMENTS = ["dev", "staging", "prod"] as const;
+/** Optional extra questions per area. They are added to the description, not to the classification. */
+export const SERVICE_DESK_DETAILS: Record<string, readonly ServiceDeskDetailField[]> = {
+  "AI / ML": [{ label: "Current monthly limit ($)" }, { label: "Requested monthly limit ($)" }, { label: "Key type", options: ["Individual", "Team"] }],
+  "GitHub": [{ label: "Org or repo" }, { label: "What changes", options: ["Add to team", "Single sign-on access", "Package access", "Pages"] }, { label: "Team name" }],
+  "CI / GitHub Actions": [{ label: "Repo" }, { label: "What changes", options: ["Allow an action", "Workflow is failing"] }],
+  "Compute": [{ label: "Account or role" }, { label: "Resource" }, { label: "Access level", options: ["Read", "Read and write", "Admin"] }, { label: "Environment", options: ENVIRONMENTS }],
+  "Vault": [{ label: "Namespace path" }, { label: "Role", options: ["Reader", "Writer", "Admin"] }, { label: "Environment", options: ENVIRONMENTS }],
+  "Data Services": [{ label: "Kind", options: ["PostgreSQL", "Managed PostgreSQL", "Other database"] }, { label: "Name" }, { label: "Environment", options: ENVIRONMENTS }],
+  "Networking / DNS / Certificates": [{ label: "Domain" }, { label: "What is wrong", options: ["Missing record", "Certificate expired", "Migrate domain"] }],
+  "Kubernetes": [{ label: "Cluster" }, { label: "Namespace" }, { label: "Environment", options: ENVIRONMENTS }],
+  "ArgoCD": [{ label: "Cluster" }, { label: "Namespace" }, { label: "Environment", options: ENVIRONMENTS }],
+};
+
+export interface ServiceDeskCapability { repository: string; areas: string[]; severities: string[]; types: string[] }
+
+export interface ServiceDeskRequest {
+  areas: string[];
+  severity: string;
+  type: string;
+  details?: Array<{ area: string; label: string; value: string }>;
+}
+
 export type FeedbackDestination =
   | { provider: "github"; repository: string }
   | { provider: "jira"; project: string };
@@ -35,4 +67,20 @@ export function describeFeedbackBrowser(ua: string): string {
     : /Version\/(\d+).*Safari/.exec(ua) ? ["Safari", /Version\/(\d+).*Safari/.exec(ua)![1]] : ["Unknown browser"];
   const os = /iPhone|iPad|iPod/.test(ua) ? "iOS" : /Android/.test(ua) ? "Android" : /Windows/.test(ua) ? "Windows" : /Mac OS X/.test(ua) ? "macOS" : /Linux/.test(ua) ? "Linux" : undefined;
   return browser.join(" ") + (os ? ` on ${os}` : "");
+}
+
+export const MAX_CONTEXT_URL_LENGTH = 2000;
+
+/** Keeps a page URL within the API limit, dropping the hash, then the query, before cutting the path. */
+export function boundedContextUrl(url: string): string {
+  if (url.length <= MAX_CONTEXT_URL_LENGTH) return url;
+  try {
+    const parsed = new URL(url);
+    for (const candidate of [parsed.origin + parsed.pathname + parsed.search, parsed.origin + parsed.pathname]) {
+      if (candidate.length <= MAX_CONTEXT_URL_LENGTH) return candidate;
+    }
+    return (parsed.origin + parsed.pathname).slice(0, MAX_CONTEXT_URL_LENGTH);
+  } catch {
+    return url.slice(0, MAX_CONTEXT_URL_LENGTH);
+  }
 }
