@@ -61,6 +61,32 @@ export async function inspectTemplate(bytes, profileInput) {
   }
   return { zip, profile, width, height, version: createHash('sha256').update(bytes).update(JSON.stringify(profile)).digest('hex') };
 }
+function fitPlaceholder(shape, body, style, text, fallbackSize) {
+  const extent = shape.getElementsByTagNameNS(A, 'ext')[0];
+  const bodyPr = body.getElementsByTagNameNS(A, 'bodyPr')[0];
+  const width = (Number(extent?.getAttribute('cx')) - Number(bodyPr?.getAttribute('lIns') || 0) - Number(bodyPr?.getAttribute('rIns') || 0)) / 12700;
+  const height = (Number(extent?.getAttribute('cy')) - Number(bodyPr?.getAttribute('tIns') || 0) - Number(bodyPr?.getAttribute('bIns') || 0)) / 12700;
+  let size = Number(style?.getAttribute('sz')) / 100 || fallbackSize;
+  if (!(width > 0 && height > 0)) return size; // Inherited geometry remains owned by the template.
+  function lines(fontSize) {
+    let count = 0;
+    for (const paragraph of String(text).split('\n')) {
+      let used = 0; count++;
+      for (const word of paragraph.split(/\s+/u)) {
+        // Conservative geometry estimate; PowerPoint retains editable, naturally wrapped text.
+        const length = [...word].reduce((sum, char) => sum + (/[^\u0000-\u024f]/u.test(char) ? 1 : /[ilI.,!:;'|]/u.test(char) ? .3 : .62), 0) * fontSize;
+        if (used && used + fontSize * .35 + length > width) { count++; used = 0; }
+        if (length > width) { count += Math.ceil(length / width) - 1; used = length % width || width; }
+        else used += (used ? fontSize * .35 : 0) + length;
+      }
+    }
+    return count;
+  }
+  while (size > 12 && lines(size) * size * 1.2 > height) size -= 1;
+  if (lines(size) * size * 1.2 > height) throw new Error('Template placeholder is too small; shorten its text');
+  if (style) style.setAttribute('sz', String(Math.round(size * 100)));
+  return size;
+}
 function fill(layout, values, profile, role) {
   const doc = parse(layout);
   return Array.from(doc.getElementsByTagNameNS(P, 'sp')).flatMap(shape => {
@@ -70,6 +96,7 @@ function fill(layout, values, profile, role) {
     if (values[index] === undefined) return [];
     const body = shape.getElementsByTagNameNS(P, 'txBody')[0];
     const style = shape.getElementsByTagNameNS(A, 'defRPr')[0];
+    const size = fitPlaceholder(shape, body, style, values[index], index === profile.placeholders.title ? 32 : 12);
     if (style && (index === profile.placeholders.eyebrow || index === profile.placeholders.status)) {
       const scheme = style.getElementsByTagNameNS(A, 'schemeClr')[0];
       if (scheme) scheme.setAttribute('val', index === profile.placeholders.status
@@ -78,7 +105,7 @@ function fill(layout, values, profile, role) {
     }
     for (const paragraph of Array.from(body.getElementsByTagNameNS(A, 'p'))) body.removeChild(paragraph);
     const color = index === profile.placeholders.eyebrow ? { context: 'accent1', actionable: 'accent2', exploration: 'accent3' }[role] : 'tx1';
-    const content = style ? `<a:p><a:r>${xml(style).replace(/a:defRPr/g, 'a:rPr')}<a:t>${esc(values[index])}</a:t></a:r></a:p>` : para(values[index], index === profile.placeholders.title ? 32 : 12, color, profile.font);
+    const content = style ? `<a:p><a:r>${xml(style).replace(/a:defRPr/g, 'a:rPr')}<a:t>${esc(values[index])}</a:t></a:r></a:p>` : para(values[index], size, color, profile.font);
     const fragment = parse(`<root xmlns:a="${A}" xmlns:r="${R}">${content}</root>`);
     body.appendChild(doc.importNode(fragment.documentElement.firstChild, true));
     return [xml(shape)];
@@ -99,11 +126,13 @@ export function planDeck(deckInput, profileInput) {
     const rows = slide.bullets.flatMap(bullet => {
       const tokens = bullet.text.match(/\S+\s*/gu) ?? [];
       const parts = []; let current = '';
+      const lineChars = Math.max(10, Math.floor((profile.canvas[2] - (profile.verify_style ? 1.1 : 0)) * 72 / size * 1.4));
+      const maxChars = Math.max(10, Math.floor((profile.canvas[3] - .28) / (size / 72 * 1.5)) * lineChars);
       for (const word of tokens) {
-        if (current && (current.length + word.length > 180 || current.trim().split(/\s+/u).length >= cap - 2)) { parts.push(current.trim()); current = ''; }
+        if (current && (current.length + word.length > maxChars || current.trim().split(/\s+/u).length >= cap - 2)) { parts.push(current.trim()); current = ''; }
         // Very long tokens must also fit and retain their full wording in notes.
-        for (let at = 0; at < word.length; at += 180) {
-          if (at || word.length > 180) { if (current) parts.push(current.trim()); current = word.slice(at, at + 180); }
+        for (let at = 0; at < word.length; at += maxChars) {
+          if (at || word.length > maxChars) { if (current) parts.push(current.trim()); current = word.slice(at, at + maxChars); }
           else current += word;
         }
       }
@@ -142,11 +171,11 @@ export async function renderDeck(bytes, profileInput, deckInput) {
     const { slide, rows } = page; const n = index + 1;
     const placeholders = plan.profile.placeholders;
     const sources = [...new Set(slide.bullets.flatMap(row => row.sources))];
-    const values = Object.assign(Object.create(null), { [placeholders.title]: slide.title.slice(0, 60), [placeholders.subtitle]: slide.subtitle });
+    const values = Object.assign(Object.create(null), { [placeholders.title]: slide.title, [placeholders.subtitle]: slide.subtitle });
     if (placeholders.status && !['cover', 'closing'].includes(slide.kind)) values[placeholders.status] = { draft: 'Draft', approved: 'Approved', 'needs decision': 'Needs decision' }[slide.status];
     if (placeholders.eyebrow) values[placeholders.eyebrow] = slide.role.toUpperCase();
     for (const [i, item] of slide.items.entries()) {
-      values[placeholders.items[i]] = item.text.slice(0, 90);
+      values[placeholders.items[i]] = item.text;
       if (placeholders.owners?.[i]) values[placeholders.owners[i]] = item.owner;
       if (placeholders.due?.[i]) values[placeholders.due[i]] = item.due;
     }
