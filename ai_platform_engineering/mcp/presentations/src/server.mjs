@@ -15,7 +15,7 @@ export async function readBody(request, max) {
   for await (const chunk of request) { size += chunk.length; if (size > max) throw new HttpError(413, 'Request too large'); chunks.push(chunk); }
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new HttpError(400, 'Invalid JSON'); }
 }
-export function createPresentationServer({ store, authenticate, profiles, basePath = '/apps/presentations', publicUrl }) {
+export function createPresentationServer({ store, authenticate, profiles, defaultProfileId, basePath = '/apps/presentations', publicUrl }) {
   function send(response, status, body, headers = {}) {
     response.writeHead(status, { 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer', 'content-type': 'application/json', ...headers });
@@ -37,6 +37,7 @@ export function createPresentationServer({ store, authenticate, profiles, basePa
       if (path === '/api/config' && request.method === 'GET') return send(response, 200, {
         teams: [...identity.teams].map(([slug, value]) => ({ slug, ...value })),
         profiles: profiles.map(profile => ({ id: profile.id, name: profile.name })),
+        default_profile_id: defaultProfileId,
       });
       if (path === '/api/templates' && request.method === 'GET') return send(response, 200, { templates: await store.list(identity) });
       if ((path === '/api/templates' && request.method === 'POST') || (/^\/api\/templates\/[^/]+$/.test(path) && request.method === 'PUT')) {
@@ -73,15 +74,19 @@ export async function main() {
   const profiles = JSON.parse(await readFile(required('PRESENTATION_PROFILES_FILE'), 'utf8'));
   if (!Array.isArray(profiles) || !profiles.length || new Set(profiles.map(p => p.id)).size !== profiles.length) throw new Error('Invalid template presets');
   for (const preset of profiles) { if (!/^[a-z0-9-]{1,64}$/.test(preset.id) || typeof preset.name !== 'string') throw new Error('Invalid preset'); preset.profile = profileSchema.parse(preset.profile); }
+  const defaultProfileId = process.env.PRESENTATION_DEFAULT_PROFILE_ID?.trim() || undefined;
+  if (defaultProfileId && !profiles.some(profile => profile.id === defaultProfileId)) throw new Error('Default preset is not configured');
+  const defaultTemplateId = process.env.PRESENTATION_DEFAULT_TEMPLATE_ID?.trim() || undefined;
+  if (defaultTemplateId) id.parse(defaultTemplateId);
   const client = new MongoClient(required('MONGODB_URI'));
   await client.connect();
   const downloadUrl = (process.env.PRESENTATION_DOWNLOAD_URL || publicUrl).replace(/\/$/, '');
   if (new URL(downloadUrl).origin !== publicUri.origin) throw new Error('Download URL must use the public application origin');
-  const store = new PresentationStore(client.db(required('MONGODB_DATABASE')), { publicUrl, downloadUrl });
+  const store = new PresentationStore(client.db(required('MONGODB_DATABASE')), { publicUrl, downloadUrl, defaultTemplateId });
   await store.initialize();
   const authenticate = createAuthenticator({ issuer: required('OIDC_ISSUER'), jwks: required('OIDC_JWKS_URL'),
     audience: required('PRESENTATION_TOKEN_AUDIENCE'), hostOrigin: required('CAIPE_API_ORIGIN').replace(/\/$/, '') });
-  const server = createPresentationServer({ store, authenticate, profiles, publicUrl, basePath: publicUri.pathname.replace(/\/$/, '') });
+  const server = createPresentationServer({ store, authenticate, profiles, defaultProfileId, publicUrl, basePath: publicUri.pathname.replace(/\/$/, '') });
   server.requestTimeout = 90_000; server.headersTimeout = 10_000;
   server.listen(Number(process.env.PORT || 8088), process.env.HOST || '0.0.0.0');
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => server.close(async () => { await client.close(); process.exit(0); }));

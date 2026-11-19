@@ -17,6 +17,9 @@ test('real Mongo: upload, planning, render and download enforce team, owner, ver
     const input = { name: 'Example template', owner_team: 'example-team', shared_with: [], profile };
     await assert.rejects(store.upload(member, input, bytes), /administration/);
     const item = await store.upload(admin, input, bytes);
+    assert.equal((await store.list(member))[0].is_default, false);
+    store.defaultTemplateId = item.id;
+    assert.equal((await store.list(member))[0].is_default, true);
     assert.equal((await store.list(member)).length, 1);
     const stranger = { subject: 'other-user', teams: new Map() };
     assert.equal((await store.list(stranger)).length, 0);

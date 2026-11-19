@@ -21,7 +21,7 @@ test('HTTP/MCP end-to-end: private upload → discovery → plan → render → 
   let entitled = true;
   const authenticate = createAuthenticator({ issuer, audience, hostOrigin: 'http://host.example.test' }, { keys, fetchImpl: async () => new Response(JSON.stringify({ success: true, data: entitled ? [{ slug: 'example-team', name: 'Example', user_role: 'admin' }] : [] })) });
   const store = new PresentationStore(db, { publicUrl: 'http://127.0.0.1/apps/presentations' }); await store.initialize();
-  const server = createPresentationServer({ store, authenticate, profiles: [{ id: 'example', name: 'Example', profile }], publicUrl: store.publicUrl });
+  const server = createPresentationServer({ store, authenticate, profiles: [{ id: 'example', name: 'Example', profile }], defaultProfileId: 'example', publicUrl: store.publicUrl });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`;
   store.publicUrl = `${base}/apps/presentations`; store.downloadUrl = store.publicUrl;
@@ -32,16 +32,19 @@ test('HTTP/MCP end-to-end: private upload → discovery → plan → render → 
     const ui = await fetch(`${base}/apps/presentations`, { headers });
     assert.match(await ui.text(), /Upload a template/);
     assert.match(ui.headers.get('content-security-policy'), /default-src 'none'/);
+    assert.equal((await (await fetch(`${base}/api/config`, { headers })).json()).default_profile_id, 'example');
     const fixture = await (await template()).generateAsync({ type: 'nodebuffer' });
     const upload = await fetch(`${base}/apps/presentations/api/templates`, { method: 'POST', headers,
       body: JSON.stringify({ name: 'Example template', owner_team: 'example-team', profile_id: 'example', file: fixture.toString('base64') }) });
     assert.equal(upload.status, 200); const uploaded = await upload.json();
     assert.ok(uploaded.version); assert.equal(uploaded.bytes, undefined);
+    store.defaultTemplateId = uploaded.id;
     await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers } }));
     const tools = (await client.listTools()).tools.map(tool => tool.name);
     assert.deepEqual(tools.sort(), ['presentations_list_templates', 'presentations_plan', 'presentations_render']);
     const list = await client.callTool({ name: 'presentations_list_templates', arguments: {} });
     assert.equal(list.structuredContent.templates[0].id, uploaded.id);
+    assert.equal(list.structuredContent.templates[0].is_default, true);
     const input = { template_id: uploaded.id, version: uploaded.version, deck };
     const plan = await client.callTool({ name: 'presentations_plan', arguments: input });
     assert.equal(plan.structuredContent.slide_count, 3);

@@ -8,7 +8,7 @@ export async function handleMcp(request, response, body, identity, store) {
     catch (error) { return { isError: true, content: [{ type: 'text', text: error.status ? error.message : 'Invalid deck or rendering failed. Check the schema and template profile.' }] }; }
   };
   server.registerTool('presentations_list_templates', {
-    description: 'List presentation templates the signed-in user can use. Returns IDs, immutable content/profile versions and supported modes; never template bytes.',
+    description: 'List presentation templates the signed-in user can use. Prefer the is_default template when the user has not chosen one; an explicit user choice takes precedence. Returns IDs, immutable content/profile versions and supported modes; never template bytes. A default never grants access.',
     inputSchema: {}, annotations: { readOnlyHint: true },
   }, () => result(async () => ({ templates: await store.list(identity) })));
   server.registerTool('presentations_plan', {

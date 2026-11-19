@@ -42,7 +42,37 @@
       {
         "action": "proxy:GET",
         "method": "GET",
-        "path": "/*",
+        "path": "/",
+        "defaultEffect": "allow"
+      },
+      {
+        "action": "proxy:GET",
+        "method": "GET",
+        "path": "/client.js",
+        "defaultEffect": "allow"
+      },
+      {
+        "action": "proxy:GET",
+        "method": "GET",
+        "path": "/api/config",
+        "defaultEffect": "allow"
+      },
+      {
+        "action": "proxy:GET",
+        "method": "GET",
+        "path": "/api/templates",
+        "defaultEffect": "allow"
+      },
+      {
+        "action": "proxy:GET",
+        "method": "GET",
+        "path": "/api/artifacts",
+        "defaultEffect": "allow"
+      },
+      {
+        "action": "proxy:GET",
+        "method": "GET",
+        "path": "/artifacts/:id",
         "defaultEffect": "allow"
       },
       {
@@ -52,9 +82,15 @@
         "defaultEffect": "allow"
       },
       {
+        "action": "proxy:POST",
+        "method": "POST",
+        "path": "/mcp",
+        "defaultEffect": "allow"
+      },
+      {
         "action": "proxy:PUT",
         "method": "PUT",
-        "path": "/api/templates/*",
+        "path": "/api/templates/:id",
         "defaultEffect": "allow"
       }
     ]

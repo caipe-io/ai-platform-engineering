@@ -20,6 +20,7 @@ async function refresh() {
   for (const item of config.teams.filter(item => item.role === 'admin')) team.append(option(item.slug,item.name));
   const preset = document.querySelector('#preset'); preset.replaceChildren();
   for (const item of config.profiles) preset.append(option(item.id,item.name));
+  if (config.default_profile_id) preset.value=config.default_profile_id;
   const sharing = document.querySelector('#sharing'); sharing.replaceChildren();
   for (const item of config.teams) {
     const label = document.createElement('label'); const input = document.createElement('input'); input.type='checkbox'; input.value=item.slug;
@@ -29,7 +30,7 @@ async function refresh() {
   if (!team.options.length) message.textContent = 'Ask a team administrator to upload templates. You can use templates already shared with your teams.';
   const list = document.querySelector('#templates'); list.replaceChildren();
   for (const template of templates.templates) {
-    const item=document.createElement('div'); item.className='item'; const name=document.createElement('strong'); name.textContent=template.name;
+    const item=document.createElement('div'); item.className='item'; const name=document.createElement('strong'); name.textContent=template.name+(template.is_default?' · Default':'');
     const info=document.createElement('p'); info.className='muted'; info.textContent=template.owner_team+' · '+template.modes.join(', ');
     item.append(name,info); list.append(item);
   }

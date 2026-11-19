@@ -62,6 +62,14 @@ spec:
                   key: MONGODB_URI
             - name: PRESENTATION_PROFILES_FILE
               value: /config/profiles.json
+            {{- with .Values.defaultProfileId }}
+            - name: PRESENTATION_DEFAULT_PROFILE_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.defaultTemplateId }}
+            - name: PRESENTATION_DEFAULT_TEMPLATE_ID
+              value: {{ . | quote }}
+            {{- end }}
           volumeMounts:
             - name: profiles
               mountPath: /config

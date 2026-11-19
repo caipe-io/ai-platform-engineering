@@ -72,7 +72,14 @@ cleanup is asynchronous. Sharing a chat does not share its files.
 | `PRESENTATION_PUBLIC_URL` | Hosted app URL, e.g. `https://example.test/apps/presentations` |
 | `PRESENTATION_DOWNLOAD_URL` | Same-origin authenticated binary download base; defaults to public URL |
 | `PRESENTATION_PROFILES_FILE` | JSON file of operator-owned template presets |
+| `PRESENTATION_DEFAULT_PROFILE_ID` | Optional preset preselected in the upload form; must exist in the configured presets |
+| `PRESENTATION_DEFAULT_TEMPLATE_ID` | Optional UUID marked `is_default` in authorized template lists; an explicit user selection takes precedence |
 | `PORT`, `HOST` | Defaults to `8088`, `0.0.0.0` |
+
+Defaults are deployment configuration, with no bundled brand or template. Upload a
+template first, then configure its ID as the default. This preference never grants
+access: callers outside its teams do not see it. Agents must still list templates
+and use the current version before planning or rendering.
 
 Presets are `{id, name, profile}` entries. A profile supplies named modes mapping
 one-based master/layout numbers for `cover`, `content`, `closing`, optional

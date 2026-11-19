@@ -4,19 +4,19 @@ import { canRead, HttpError, requireWriter } from './auth.mjs';
 import { planDeck } from './renderer.mjs';
 import { runRenderWorker } from './render-worker.mjs';
 import { renderSchema, uploadSchema } from './schema.mjs';
-export const metadata = template => ({ id: template._id, name: template.name, owner_team: template.owner_team,
+export const metadata = (template, defaultTemplateId) => ({ id: template._id, name: template.name, owner_team: template.owner_team, is_default: template._id === defaultTemplateId,
   shared_with: template.shared_with, version: template.version, modes: Object.keys(template.profile.modes), updated_at: template.updated_at });
 export class PresentationStore {
-  constructor(db, { publicUrl, downloadUrl = publicUrl, artifactDays = 7, renderer = (bytes, profile, deck) => runRenderWorker('render', bytes, profile, deck) } = {}) {
+  constructor(db, { publicUrl, downloadUrl = publicUrl, defaultTemplateId, artifactDays = 7, renderer = (bytes, profile, deck) => runRenderWorker('render', bytes, profile, deck) } = {}) {
     this.db = db;
     this.templates = db.collection('presentation_templates');
     this.artifacts = db.collection('presentation_artifacts');
-    this.publicUrl = publicUrl; this.downloadUrl = downloadUrl; this.artifactDays = artifactDays; this.renderer = renderer;
+    this.publicUrl = publicUrl; this.downloadUrl = downloadUrl; this.defaultTemplateId = defaultTemplateId; this.artifactDays = artifactDays; this.renderer = renderer;
   }
   async ready() { await this.db.command({ ping: 1 }); }
   async initialize() { await this.artifacts.createIndex({ expires_at: 1 }, { expireAfterSeconds: 0 }); }
   async list(identity) {
-    return (await this.templates.find({ $or: [{ owner_team: { $in: [...identity.teams.keys()] } }, { shared_with: { $in: [...identity.teams.keys()] } }] }, { projection: { bytes: 0 } }).limit(200).toArray()).map(metadata);
+    return (await this.templates.find({ $or: [{ owner_team: { $in: [...identity.teams.keys()] } }, { shared_with: { $in: [...identity.teams.keys()] } }] }, { projection: { bytes: 0 } }).limit(200).toArray()).map(template => metadata(template, this.defaultTemplateId)).sort((a, b) => Number(b.is_default) - Number(a.is_default) || a.name.localeCompare(b.name));
   }
   async get(identity, id) {
     const template = await this.templates.findOne({ _id: id });
@@ -37,7 +37,7 @@ export class PresentationStore {
       bytes: new Binary(bytes), bytes_sha256: createHash('sha256').update(bytes).digest('hex'),
       updated_at: new Date(), uploaded_by: identity.subject };
     await this.templates.replaceOne({ _id: template._id }, template, { upsert: !templateId });
-    return metadata(template);
+    return metadata(template, this.defaultTemplateId);
   }
   async plan(identity, input) {
     const parsed = renderSchema.omit({ approved: true }).parse(input);

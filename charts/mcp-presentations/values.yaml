@@ -16,6 +16,9 @@ mongodbDatabase: presentations
 credentialsSecret: ""
 # Secret containing profiles.json. Presets contain layout mappings, never template bytes.
 profilesSecret: ""
+# Optional operator defaults; template IDs are returned only after team authorization.
+defaultProfileId: ""
+defaultTemplateId: ""
 resources:
   requests:
     cpu: 100m
