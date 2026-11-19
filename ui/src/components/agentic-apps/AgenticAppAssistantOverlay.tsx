@@ -86,6 +86,7 @@ export function AgenticAppAssistantOverlay({
   const [assistantConversation, setAssistantConversation] = useState<{
     key: string;
     id: string;
+    requestKey: string;
   } | null>(null);
   const { requestOptions, composerHeader } = useAssistantComposerOptions(options, configuration,
     `${appId}:${assistantAgentId}:${assistantConversation?.id ?? ""}`);
@@ -109,8 +110,9 @@ export function AgenticAppAssistantOverlay({
   const conversationKey = `${appId}:${assistantAgentId}`;
   const requestedId = deepLink.id;
   const requestKey = JSON.stringify([conversationKey, deepLink.error ?? (deepLink.createNew ? "new" : requestedId)]);
-  const hasSelectedConversation = !deepLink.error && !deepLink.createNew && assistantConversation?.key === conversationKey &&
-    (!requestedId || assistantConversation.id === requestedId);
+  const hasSelectedConversation = !deepLink.error && assistantConversation?.key === conversationKey &&
+    (assistantConversation.requestKey === requestKey ||
+      (!deepLink.createNew && (!requestedId || assistantConversation.id === requestedId)));
   const conversationTitle = `${appName} Assistant`.slice(0, 120);
   const conversationMetadata = useMemo(
     () => ({
@@ -205,6 +207,13 @@ export function AgenticAppAssistantOverlay({
 
     if (hasSelectedConversation && assistantConversation) {
       conversationRequestRef.current = null;
+      // Next navigation can commit after the conversation promise. Keep the
+      // completed request selected until the URL catches up, then re-arm it.
+      if (assistantConversation.requestKey !== requestKey) {
+        queueMicrotask(() => {
+          if (!cancelled) setAssistantConversation({ ...assistantConversation, requestKey });
+        });
+      }
       activate(assistantConversation.id, session);
       return () => {
         cancelled = true;
@@ -223,7 +232,7 @@ export function AgenticAppAssistantOverlay({
     request.promise
       .then((id) => {
         if (cancelled || conversationRequestRef.current !== request || !activate(id, session)) return;
-        setAssistantConversation({ key: conversationKey, id });
+        setAssistantConversation({ key: conversationKey, id, requestKey });
         if (deepLink.requested) updateAssistantDeepLink(id, options?.legacyConversationQueryParams);
       })
       .catch((error: unknown) => {
@@ -268,7 +277,7 @@ export function AgenticAppAssistantOverlay({
       setView("chat");
       conversationRequestRef.current = { key: requestKey, promise: Promise.resolve(id) };
       if (activate(id, session)) {
-        setAssistantConversation({ key: conversationKey, id });
+        setAssistantConversation({ key: conversationKey, id, requestKey });
         updateAssistantDeepLink(id, options?.legacyConversationQueryParams);
       }
     } catch (error: unknown) {
@@ -297,7 +306,7 @@ export function AgenticAppAssistantOverlay({
     if (!activate(restoredId, session)) return;
     conversationRequestRef.current = { key: requestKey, promise: Promise.resolve(restoredId) };
     setConversationError(null);
-    setAssistantConversation({ key: conversationKey, id: restoredId });
+    setAssistantConversation({ key: conversationKey, id: restoredId, requestKey });
     updateAssistantDeepLink(restoredId, options?.legacyConversationQueryParams);
     setView("chat");
   }
