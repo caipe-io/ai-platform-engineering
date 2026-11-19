@@ -25,7 +25,7 @@ export function readHostAppearance(event, origin, parent) {
 }
 
 export function page(basePath) {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>My PowerPoints</title>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Presentation Generator</title>
 <style>
 :root{color-scheme:dark;--background:230 25% 5%;--foreground:210 40% 98%;--card:230 25% 7%;--muted:230 20% 12%;--muted-foreground:215 18% 66%;--border:230 20% 18%;--primary:215 48% 64%;--primary-foreground:230 25% 5%;--success:160 65% 64%;--shadow:0 4px 20px #00000012}
 :root[data-theme=light]{color-scheme:light;--background:220 18% 94%;--foreground:224 35% 13%;--card:0 0% 100%;--muted:220 14% 96%;--muted-foreground:220 9% 43%;--border:220 13% 88%;--primary:215 48% 45%;--primary-foreground:0 0% 100%;--success:160 75% 28%;--shadow:0 4px 20px #18223206}
@@ -42,7 +42,7 @@ dialog{color:inherit;background:hsl(var(--card));border:1px solid hsl(var(--bord
 @media(max-width:560px){main{padding:24px 16px}.page-header{display:block}.page-header>.button{margin-top:18px}.sidebar{grid-template-columns:1fr}.toolbar{padding:14px;gap:8px}.sort{max-width:125px;font-size:12px}.deck-row{align-items:flex-start;flex-wrap:wrap}.deck-info{flex-basis:calc(100% - 58px)}.deck-row>.download{margin-left:57px}.deck-title{align-items:flex-start}.deck-title h3{white-space:normal;overflow-wrap:anywhere}.field-row{grid-template-columns:1fr}.dialog-heading,.form-body,.dialog-actions{padding-left:18px;padding-right:18px}.file-icon{width:40px;height:46px}}
 </style></head>
 <body data-base="${escapeHtml(basePath)}"><main>
-<header class="page-header"><div><div class="eyebrow">Your workspace</div><h1>My PowerPoints</h1><p class="muted">Download presentations created by your agents, all in one place.</p></div><button id="open-upload" class="button" type="button" hidden>${svg('plus')}Add template</button></header>
+<header class="page-header"><div><div class="eyebrow">Your workspace</div><h1>Presentation Generator</h1><p class="muted">Download presentations created by your agents, all in one place.</p></div><button id="open-upload" class="button" type="button" hidden>${svg('plus')}Add template</button></header>
 <div class="privacy">${svg('lock')}<span><strong>Private to you.</strong> Only you can see and download your generated PowerPoints.</span><span class="retention">${svg('clock')}Available for 7 days</span></div>
 <div id="message" role="status" aria-live="polite"></div>
 <div class="workspace"><section class="panel" aria-labelledby="decks-heading"><div class="panel-title"><h2 id="decks-heading">My PowerPoints</h2><span id="deck-count" class="count" aria-live="polite">—</span><button id="refresh" class="button icon-only ghost" type="button" aria-label="Refresh PowerPoints" title="Refresh PowerPoints">${svg('refresh')}</button></div>

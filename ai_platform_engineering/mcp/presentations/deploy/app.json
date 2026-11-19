@@ -1,6 +1,6 @@
 {
   "id": "presentations",
-  "displayName": "My PowerPoints",
+  "displayName": "Presentation Generator",
   "description": "Your private PowerPoint downloads and shared team templates.",
   "apiVersion": "2.0",
   "ui": {

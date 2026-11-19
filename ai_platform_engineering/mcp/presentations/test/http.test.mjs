@@ -30,7 +30,7 @@ test('HTTP/MCP end-to-end: private upload → discovery → plan → render → 
   try {
     assert.equal((await fetch(`${base}/apps/presentations`)).status, 401);
     const ui = await fetch(`${base}/apps/presentations`, { headers });
-    assert.match(await ui.text(), /<h1>My PowerPoints<\/h1>/);
+    assert.match(await ui.text(), /<h1>Presentation Generator<\/h1>/);
     assert.match(ui.headers.get('content-security-policy'), /default-src 'none'/);
     assert.equal((await (await fetch(`${base}/api/config`, { headers })).json()).default_profile_id, 'example');
     const fixture = await (await template()).generateAsync({ type: 'nodebuffer' });
