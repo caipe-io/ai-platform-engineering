@@ -19,9 +19,6 @@ const rels = body => `${HEAD}<Relationships xmlns="http://schemas.openxmlformats
 function para(text, size = 18, color = 'tx1', font = '+mn-lt', link) {
   return `<a:p><a:pPr><a:buNone/></a:pPr><a:r><a:rPr sz="${size * 100}"><a:solidFill><a:schemeClr val="${color}"/></a:solidFill><a:latin typeface="${esc(font)}"/>${link ? `<a:hlinkClick r:id="${link}"/>` : ''}</a:rPr><a:t xml:space="preserve">${esc(text)}</a:t></a:r></a:p>`;
 }
-function verifyTag(id, x, y, font, style) {
-  return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Verify"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="${emu(x)}" y="${emu(y)}"/><a:ext cx="${emu(.95)}" cy="${emu(.3)}"/></a:xfrm><a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom><a:solidFill><a:schemeClr val="${style.fill}"/></a:solidFill><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr anchor="ctr" lIns="0" rIns="0" tIns="0" bIns="0"/><a:lstStyle/><a:p><a:pPr algn="ctr"/><a:r><a:rPr sz="1100"><a:solidFill><a:schemeClr val="${style.text}"/></a:solidFill><a:latin typeface="${esc(font)}"/></a:rPr><a:t>Verify</a:t></a:r></a:p></p:txBody></p:sp>`;
-}
 function box(id, text, x, y, w, h, size, font, color = 'tx1', link) {
   return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="Evidence"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="${emu(x)}" y="${emu(y)}"/><a:ext cx="${emu(w)}" cy="${emu(h)}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr wrap="square" lIns="0" rIns="0" tIns="0" bIns="0"><a:noAutofit/></a:bodyPr><a:lstStyle/>${para(text, size, color, font, link)}</p:txBody></p:sp>`;
 }
@@ -137,10 +134,10 @@ export function planDeck(deckInput, profileInput) {
     const rows = slide.bullets.flatMap(bullet => {
       const tokens = bullet.text.match(/\S+\s*/gu) ?? [];
       const parts = []; let current = '';
-      const lineChars = Math.max(10, Math.floor((profile.canvas[2] - (profile.verify_style ? 1.1 : 0)) * 72 / size * 1.4));
+      const lineChars = Math.max(10, Math.floor(profile.canvas[2] * 72 / size * 1.4));
       const maxChars = Math.max(10, Math.floor((profile.canvas[3] - .28) / (size / 72 * 1.5)) * lineChars);
       for (const word of tokens) {
-        if (current && (current.length + word.length > maxChars || current.trim().split(/\s+/u).length >= cap - 2)) { parts.push(current.trim()); current = ''; }
+        if (current && (current.length + word.length > maxChars || current.trim().split(/\s+/u).length >= cap)) { parts.push(current.trim()); current = ''; }
         // Very long tokens must also fit and retain their full wording in notes.
         for (let at = 0; at < word.length; at += maxChars) {
           if (at || word.length > maxChars) { if (current) parts.push(current.trim()); current = word.slice(at, at + maxChars); }
@@ -152,8 +149,8 @@ export function planDeck(deckInput, profileInput) {
     });
     let current = [], words = 0, used = 0;
     for (const row of rows) {
-      const count = row.text.split(/\s+/u).length + (row.verify ? 2 : 0);
-      const lines = Math.ceil(row.text.length / Math.max(10, Math.floor((profile.canvas[2] - (row.verify && profile.verify_style ? 1.1 : 0)) * 72 / size * 1.4)));
+      const count = row.text.split(/\s+/u).length;
+      const lines = Math.ceil(row.text.length / Math.max(10, Math.floor(profile.canvas[2] * 72 / size * 1.4)));
       const h = lines * size / 72 * 1.5 + .28;
       if (h > profile.canvas[3]) throw new Error('Template canvas is too small for the chosen density');
       if (current.length && (words + count > cap || used + h > profile.canvas[3] || current.length >= (deck.density === 'dense' ? 7 : deck.density === 'spacious' ? 3 : 4))) {
@@ -213,16 +210,12 @@ export async function renderDeck(bytes, profileInput, deckInput) {
     let extra = '', y = plan.profile.canvas[1];
     for (const [i, row] of rows.entries()) {
       const [x, , w] = plan.profile.canvas;
-      const tag = row.verify && plan.profile.verify_style;
-      extra += box(200 + i, `${row.verify && !tag ? 'Verify — ' : ''}${row.text}`, x, y, w - (tag ? 1.1 : 0), row.h, plan.size, plan.profile.font);
-      if (tag) extra += verifyTag(600 + i, x + w - .95, y, plan.profile.font, plan.profile.verify_style);
+      extra += box(200 + i, row.text, x, y, w, row.h, plan.size, plan.profile.font);
       y += row.h;
     }
     if (page.visual) {
       extra += page.visual.lines.map((line, i) => connector(1000 + i, line)).join('');
-      extra += page.visual.boxes.map((shape, i) => shape.tag && plan.profile.verify_style
-        ? verifyTag(1200 + i, shape.x, shape.y, plan.profile.font, plan.profile.verify_style)
-        : box(1200 + i, shape.tag ? 'Verify' : shape.text, shape.x, shape.y, shape.w, shape.h, shape.tag ? 11 : shape.size, plan.profile.font, shape.color || 'tx2')).join('');
+      extra += page.visual.boxes.map((shape, i) => box(1200 + i, shape.text, shape.x, shape.y, shape.w, shape.h, shape.size, plan.profile.font, shape.color || 'tx2')).join('');
     }
     for (const [i, source] of sources.slice(0, 1).entries()) extra += box(400 + i, `[${i + 1}] Source`, plan.profile.canvas[0], plan.profile.footer_y, plan.profile.canvas[2], .22, 11, plan.profile.font, 'tx2', `source${i}`);
     const layoutNumber = plan.mode[slide.kind === 'open_items' ? 'open_items' : slide.kind];

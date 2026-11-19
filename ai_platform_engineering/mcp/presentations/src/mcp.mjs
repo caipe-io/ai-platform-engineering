@@ -16,7 +16,7 @@ export async function handleMcp(request, response, body, identity, store) {
     inputSchema: renderSchema.omit({ approved: true }).shape, annotations: { readOnlyHint: true },
   }, args => result(() => store.plan(identity, args)));
   server.registerTool('presentations_render', {
-    description: 'Generate an editable PowerPoint with native editable visual groups or text from user-approved deck JSON and an accessible private template. Call presentations_plan before outline approval. Set approved only after user approval. Citations are source URLs supplied by the agent, never fetched. Mark unsupported statements verify=true. Return the actual slide count, review warnings and authenticated download URL. No project required. Does not perform visual QA. Never claim it does.',
+    description: 'Generate an editable PowerPoint with native editable visual groups or text from user-approved deck JSON and an accessible private template. Call presentations_plan before outline approval. Set approved only after user approval. Citations are source URLs supplied by the agent, never fetched. Mark unsupported statements verify=true to preserve review flags in speaker notes; do not add visible Verify badges or prefixes. Return the actual slide count, review warnings and authenticated download URL. No project required. Does not perform visual QA. Never claim it does.',
     inputSchema: renderSchema.shape, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   }, args => result(() => store.render(identity, args)));
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });

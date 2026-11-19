@@ -20,7 +20,8 @@ test('plans density splits before approval and preserves all words in notes', as
   assert.ok(planDeck(long, profile).slide_count > 1);
   const result = await renderDeck(await (await template()).generateAsync({ type: 'nodebuffer' }), profile, long);
   const zip = await JSZip.loadAsync(result.bytes);
-  assert.match(await zip.file('ppt/slides/slide1.xml').async('string'), /Verify/);
+  assert.doesNotMatch(await zip.file('ppt/slides/slide1.xml').async('string'), /Verify/);
+  assert.match(await zip.file('ppt/notesSlides/notesSlide1.xml').async('string'), /Verify: A word/);
   assert.match(await zip.file('ppt/notesSlides/notesSlide1.xml').async('string'), /A word A word/);
 });
 test('notes inherit their master color map through a dedicated theme part', async () => {

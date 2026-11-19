@@ -17,7 +17,7 @@ source; no project, knowledge application or model runtime is required here.
 `approved` records the agent's assertion, not a cryptographic human approval.
 Agents must obtain the user's approval before calling. Sources are links provided
 by the agent; the renderer does not retrieve evidence or verify claims. Mark
-unsupported wording `verify: true`. Text, structured visual groups, source links and full notes remain editable. Font files are not embedded. Automatic visual QA, charts and images are
+unsupported wording `verify: true`; review flags stay in speaker notes, with no generated Verify badges or prefixes on slides. Text, structured visual groups, source links and full notes remain editable. Font files are not embedded. Automatic visual QA, charts and images are
 not implemented; review the generated file before presenting.
 
 A deck contains `title`, `mode`, `density` and `slides`. A slide has `kind`

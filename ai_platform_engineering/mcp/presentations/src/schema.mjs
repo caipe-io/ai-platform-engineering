@@ -15,6 +15,7 @@ export const profileSchema = z.object({
   canvas: z.tuple([z.number().min(0), z.number().min(0), z.number().positive(), z.number().positive()]),
   font: z.string().min(1).max(100).default('+mn-lt'),
   footer_y: z.number().positive(),
+  // Accepted for existing stored profiles; review flags render only in speaker notes.
   verify_style: z.object({ fill: z.enum(['accent1','accent2','accent3','accent4','accent5','accent6']), text: z.enum(['dk1','dk2','lt1','lt2','tx1','tx2']) }).strict().optional(),
 }).strict();
 const text = z.string().max(2000);

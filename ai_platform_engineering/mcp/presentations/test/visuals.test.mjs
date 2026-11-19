@@ -39,15 +39,23 @@ test('visuals fail closed on unsupported inputs, excess density, missing values 
   assert.throws(() => planDeck(input({ ...slide.visual, image_url: 'https://example.test/remote' }), profile));
 });
 
-test('unverified visual claims are labeled and their complete wording remains in notes', async () => {
+test('review flags stay in notes without visible badges for every visual layout', async () => {
   const input = { ...deck, slides: [{ title: 'Example review', visual: { layout: 'comparison', groups: [
     { label: '<First>', items: ['Unconfirmed & editable'], sources: [] },
     { label: 'Second', items: ['Source exists; review required'], sources: ['https://example.test/evidence'], verify: true },
   ] } }] };
-  const result = await renderDeck(await (await template()).generateAsync({ type: 'nodebuffer' }), { ...profile, verify_style: { fill: 'accent6', text: 'dk1' } }, input);
-  const zip = await JSZip.loadAsync(result.bytes);
-  const slide = await zip.file('ppt/slides/slide1.xml').async('string');
-  assert.match(slide, /&lt;First&gt;/);
-  assert.equal((slide.match(/<a:t>Verify<\/a:t>/g) || []).length, 2);
-  assert.match(await zip.file('ppt/notesSlides/notesSlide1.xml').async('string'), /Verify: &lt;First&gt;/);
+  for (const layout of ['metrics', 'comparison', 'flow', 'timeline', 'layers', 'ledger']) {
+    for (const style of [undefined, { fill: 'accent6', text: 'dk1' }]) {
+      const visual = { ...input.slides[0].visual, layout, groups: input.slides[0].visual.groups.map(group => ({ ...group, value: '12' })) };
+      const result = await renderDeck(await (await template()).generateAsync({ type: 'nodebuffer' }), { ...profile, verify_style: style }, { ...input, slides: [{ ...input.slides[0], visual }] });
+      const zip = await JSZip.loadAsync(result.bytes);
+      const slide = await zip.file('ppt/slides/slide1.xml').async('string');
+      assert.match(slide, /&lt;First&gt;/);
+      assert.doesNotMatch(slide, /Verify/);
+      const notes = await zip.file('ppt/notesSlides/notesSlide1.xml').async('string');
+      assert.match(notes, /Verify: &lt;First&gt;/);
+      assert.match(notes, /Verify: Second/);
+      assert.match(notes, /https:\/\/example.test\/evidence/);
+    }
+  }
 });

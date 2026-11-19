@@ -6,7 +6,7 @@ export function planVisual(visual, profile, density, role) {
   const size = density === 'dense' ? 16 : 18;
   const boxes = [], lines = [];
   const groups = visual.groups;
-  const words = groups.flatMap(group => [group.label, group.value || '', ...group.items, ...(group.verify || !group.sources.length ? ['Verify'] : [])]).join(' ').trim().split(/\s+/u).length;
+  const words = groups.flatMap(group => [group.label, group.value || '', ...group.items]).join(' ').trim().split(/\s+/u).length;
   if (words > { spacious: 35, balanced: 60, dense: 130 }[density]) throw new Error('Visual exceeds the selected density; shorten labels or split its evidence before approval');
   if (['metrics', 'comparison'].includes(visual.layout) && groups.length > 3) throw new Error('Use two or three groups for metrics or comparison');
   if (visual.layout === 'metrics' && groups.some(group => !group.value?.trim())) throw new Error('Metrics require explicit sourced values; never infer a number');
@@ -25,9 +25,6 @@ export function planVisual(visual, profile, density, role) {
     boxes.push({ text: value, x: left, y: top, w, h, size: fontSize, color: ink });
     return top + h;
   }
-  function review(group, left, top) {
-    if (group.verify || !group.sources.length) boxes.push({ tag: true, x: left, y: top, w: .95, h: .3 });
-  }
   if (['ledger', 'layers'].includes(visual.layout)) {
     const row = height / groups.length;
     groups.forEach((group, i) => {
@@ -36,9 +33,8 @@ export function planVisual(visual, profile, density, role) {
       text(String(i + 1).padStart(2, '0'), x, top + .14, .5, 20, color);
       text(group.label, x + .7, top + .14, width * .36 - .7, 22);
       const detailX = x + width * .39;
-      const detailW = width * .61 - 1.12;
+      const detailW = width * .61;
       text([group.value, ...group.items].filter(Boolean).join(' · '), detailX, top + .14, detailW, size);
-      review(group, x + width - .95, top + .15);
       if (visual.layout === 'layers' && i < groups.length - 1) lines.push({ x: x + .2, y: top + row - .25, w: 0, h: .2, color, arrow: true });
       const rowBoxes = boxes.filter(box => box.y >= top && box.y < top + row);
       if (rowBoxes.some(box => box.y + box.h > top + row - .06)) throw new Error('Visual row is too dense; shorten its labels or use fewer groups');
@@ -60,7 +56,6 @@ export function planVisual(visual, profile, density, role) {
       if (group.value && visual.layout !== 'metrics') top = text(group.value, left, top, w, size, color) + .12;
       top = text(group.label, left, top, w, 24) + .18;
       for (const item of group.items) top = text(item, left, top, w, size) + .12;
-      review(group, left, top + .04);
     });
   }
   // Reject overflow rather than silently shrinking text, dropping content or rasterizing it.
