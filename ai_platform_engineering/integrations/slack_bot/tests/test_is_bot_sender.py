@@ -37,3 +37,20 @@ def test_user_differs_from_bot_user_is_human(bots_info):
 def test_bots_info_failure_fails_safe_to_bot(bots_info):
     bots_info("", "")
     assert utils.is_bot_sender({"bot_id": "B1", "user": "UHUMAN"}) is True
+
+
+def test_author_info_resolves_user_token_post_via_users_info(bots_info):
+    bots_info("dev-login", "")
+
+    class _Client:
+        def users_info(self, user):
+            return {"user": {"real_name": "Simon", "profile": {"email": "s@example.com"}}}
+
+    event = {"bot_id": "B1", "user": "WHUMAN"}
+    assert utils.get_message_author_info(event, _Client()) == ("Simon", "s@example.com")
+
+
+def test_author_info_keeps_bot_name_for_real_bot(bots_info):
+    bots_info("GitLab", "UBOT")
+    event = {"bot_id": "B1", "user": "UBOT"}
+    assert utils.get_message_author_info(event, object()) == ("GitLab", None)

@@ -66,7 +66,7 @@ def get_bot_info_by_id(bot_id):
   payload = "bot={}".format(bot_id)
 
   try:
-    response = requests.request("POST", url, headers=headers, data=payload)
+    response = requests.request("POST", url, headers=headers, data=payload, timeout=10)
   except requests.exceptions.RequestException as e:
     logger.warning(e)
     return ("", "")
@@ -116,7 +116,7 @@ def get_message_author_info(event, client):
   user_id = event.get("user")
   bot_id = event.get("bot_id")
 
-  if bot_id:
+  if is_bot_sender(event):
     user_name = get_username_by_bot_id(bot_id)
     user_email = None
   else:
