@@ -112,7 +112,7 @@ enough to determine which kind of evidence they provide.
 | CHAT-05 | core | Archive/restore and permanent delete act only on owned fixtures; messages, runtime state and every conversation grant are cleaned; failed deletion remains visible |
 | WF-01 | core | Run a baseline-created workflow on the candidate; preserve inputs, agent/tool bindings, variables, outputs and saved history |
 | WF-02 | core | Create/edit/save/reload/run a disposable multi-step workflow; verify actual step outputs and data handoff using harmless tools |
-| WF-03 | core | Exercise workflow interruption/approval/resume, failure, retry and cancellation; no duplicate tool side effects; unauthorized run/edit/share/revoke is denied |
+| WF-03 | core | Exercise workflow interruption/approval/resume, failure, retry and cancellation; bound silent streams, detect lost workers, fence late results and avoid replaying uncertain tool actions; unauthorized run/edit/share/revoke is denied |
 | WF-04 | core | Create an owned schedule; verify timezone/next run and one bounded real invocation; disable prevents another run; delete cleans jobs and grants |
 | SKL-01 | core | Discover/filter/preview/import or clone a safe skill; edit/save/reload/update/remove it; invalid/flagged packages fail without partial install |
 | SKL-02 | core | Private/team/global skill access and revoke hold in catalog, direct API and execution; installed baseline skills survive upgrade |

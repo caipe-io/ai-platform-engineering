@@ -442,6 +442,38 @@ retrying. Workflow step-agent validation runs before persistence or workflow acc
 reconciliation. Dynamic-agent saves reconcile access before skill admission and
 attempt to roll back those access changes if admission or persistence fails.
 
+## Workflow execution and recovery
+
+- A worker claims each execution atomically. Duplicate form resumes return 409.
+- The worker renews its MongoDB lease every 15 seconds. Polling marks a lost
+  worker and its current step failed after the 90-second lease expires.
+- Waiting for human input releases the worker lease; it is not worker failure.
+- Cancellation is persisted before aborting local execution. Writes from a late
+  or replaced worker cannot complete the run or admit its next step.
+- Tool events are persisted as they arrive. The native conversation ID is saved
+  before starting the agent, including when the connection later fails.
+
+| Setting | Default | Scope |
+|---|---|---|
+| `WORKFLOW_STEP_IDLE_TIMEOUT_SECONDS` | 300 | Time without semantic stream progress, including waiting for HTTP headers |
+| `WORKFLOW_STEP_TIMEOUT_SECONDS` | 1800 | Absolute duration of one step stream, regardless of keep-alives |
+
+These settings belong to the UI worker. Artifact requests have a 30-second
+deadline. Invalid or nonpositive step timeout values use the defaults.
+
+If a stream disconnects or times out, its external outcome may be unknown even
+when no tool-start event arrived. Automatic retry and skip stop in that case,
+and when an explicit agent error follows a tool action. Inspect saved events, native
+checkpoint and external state before recovery. A successful external write does
+not prove the workflow received its result.
+
+Execution still runs in the UI process: a deployment can interrupt it. Leases
+detect that interruption; they do not migrate execution, automatically replay
+tools, or provide exactly-once external writes. Runs started before leases were
+introduced retain the existing maximum-run-duration check. Use an isolated
+restart test for acceptance before rollout, and avoid deployments during active
+production workflows.
+
 ## Model provider credential choices
 
 - `GET/PATCH /api/credentials/llm-providers` reads and writes the authenticated

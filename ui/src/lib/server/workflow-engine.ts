@@ -11,6 +11,7 @@
  */
 
 import { getCollection } from "@/lib/mongodb";
+import { ApiError } from "@/lib/api-error";
 import { readEvents } from "@/lib/server/event-store";
 import { consumeAgentStream,type ConsumeResult } from "@/lib/streaming/clients/server-agui-consumer";
 import { isToolStartData } from "@/lib/streaming/types";
@@ -18,6 +19,7 @@ import type { WorkflowConfig,WorkflowStep } from "@/types/workflow-config";
 import { flattenStepEntries } from "@/types/workflow-config";
 import { authorize, type Subject } from "@/lib/authz";
 import { buildTemplateContext,renderPrompt,type StepContext } from "./workflow-templating";
+import { cancelLocalWorkflow, launchWorkflowExecution, WORKFLOW_EXECUTION_LEASE_MS, type WorkflowExecution } from "./workflow-execution";
 
 /**
  * Decode the run owner's subject from the forwarded Bearer token. Per-step
@@ -102,15 +104,26 @@ export interface WorkflowRunDocument {
   trigger_info?: WorkflowRunTriggerInfo | null;
   started_at: Date;
   completed_at: Date | null;
+  execution_id?: string;
+  heartbeat_at?: Date;
+  lease_expires_at?: Date;
 }
 
 const RUNS_COLLECTION = "workflow_runs";
 
 // ═══════════════════════════════════════════════════════════════
-// In-memory abort controllers (for cancellation)
+// Execution deadlines
 // ═══════════════════════════════════════════════════════════════
 
-const activeAbortControllers = new Map<string, AbortController>();
+const STREAM_LIMITS = {
+  idleTimeoutMs: positiveSeconds(process.env.WORKFLOW_STEP_IDLE_TIMEOUT_SECONDS, 300) * 1000,
+  maxDurationMs: positiveSeconds(process.env.WORKFLOW_STEP_TIMEOUT_SECONDS, 1800) * 1000,
+};
+
+function positiveSeconds(value: string | undefined, fallback: number): number {
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : fallback;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Public API
@@ -152,7 +165,8 @@ export async function startWorkflowRun(
     _id: runId,
     workflow_config_id: config._id,
     owner_subject: runOwner,
-    status: "running",
+    status: "pending",
+    lease_expires_at: new Date(Date.now() + WORKFLOW_EXECUTION_LEASE_MS),
     steps: stepRuns,
     current_step_index: 0,
     user_context: userContext,
@@ -166,9 +180,8 @@ export async function startWorkflowRun(
 
   // Fire-and-forget
   const flatWorkflowSteps = flatSteps.map(({ step }) => step);
-  executeSteps(runId, config._id, config.name, config.description, flatWorkflowSteps, userContext, authHeaders, 0, runOwner).catch((err) => {
-    console.error(`[WorkflowEngine] Unhandled error in run ${runId}:`, err);
-  });
+  await launchWorkflowExecution(runId, "pending", (execution) =>
+    executeSteps(runId, config._id, config.name, config.description, flatWorkflowSteps, userContext, authHeaders, 0, runOwner, execution));
 
   return runId;
 }
@@ -186,12 +199,12 @@ export async function resumeWorkflowRun(
   const run = await col.findOne({ _id: runId });
   if (!run) throw new Error(`Run ${runId} not found`);
   if (run.status !== "waiting_for_input") {
-    throw new Error(`Run ${runId} is not waiting for input (status: ${run.status})`);
+    throw new ApiError(`Run ${runId} is not waiting for input (status: ${run.status})`, 409);
   }
 
   const step = run.steps[stepIndex];
   if (!step || step.status !== "waiting_for_input") {
-    throw new Error(`Step ${stepIndex} is not waiting for input`);
+    throw new ApiError(`Step ${stepIndex} is not waiting for input`, 409);
   }
 
   // Load config to get step definitions
@@ -202,53 +215,60 @@ export async function resumeWorkflowRun(
   const flatSteps = flattenStepEntries(config.steps).map(({ step: s }) => s);
 
   // Fire-and-forget: resume current step then continue
-  resumeAndContinue(runId, run.workflow_config_id, config.name, config.description, stepIndex, resumeData, flatSteps, run.user_context, authHeaders, run.owner_subject ?? null).catch(
-    (err) => {
-      console.error(`[WorkflowEngine] Resume error in run ${runId}:`, err);
-    },
-  );
+  await launchWorkflowExecution(runId, "waiting_for_input", (execution) =>
+    resumeAndContinue(runId, run.workflow_config_id, config.name, config.description, stepIndex, resumeData, flatSteps, run.user_context, authHeaders, run.owner_subject ?? null, execution));
 }
 
 /**
  * Cancel a running workflow.
  */
 export async function cancelWorkflowRun(runId: string): Promise<void> {
-  // Abort any active stream
-  const ac = activeAbortControllers.get(runId);
-  if (ac) {
-    ac.abort();
-    activeAbortControllers.delete(runId);
-  }
-
   const col = await getCollection<WorkflowRunDocument>(RUNS_COLLECTION);
   await col.updateOne(
-    { _id: runId },
+    { _id: runId, status: { $in: ["pending", "running", "waiting_for_input"] } },
     { $set: { status: "cancelled" as WorkflowRunStatus, completed_at: new Date() } },
   );
+  cancelLocalWorkflow(runId);
 }
 
 /**
- * Check if a run has exceeded its max duration and mark it failed.
+ * Detect expired worker ownership or maximum duration and mark the run failed.
  * Called during polling (GET).
  */
 export async function detectStaleRun(run: WorkflowRunDocument): Promise<boolean> {
-  if (run.status !== "running" && run.status !== "waiting_for_input") return false;
+  if (run.status !== "pending" && run.status !== "running" && run.status !== "waiting_for_input") return false;
 
+  const now = new Date();
+  const leaseExpired = (run.status === "pending" || (run.status === "running" && run.execution_id)) && run.lease_expires_at &&
+    new Date(run.lease_expires_at).getTime() <= now.getTime();
   const elapsed = (Date.now() - new Date(run.started_at).getTime()) / 1000;
-  if (elapsed <= MAX_RUN_DURATION_SECONDS) return false;
+  if (!leaseExpired && elapsed <= MAX_RUN_DURATION_SECONDS) return false;
 
   const col = await getCollection<WorkflowRunDocument>(RUNS_COLLECTION);
-  await col.updateOne(
-    { _id: run._id },
+  const message = leaseExpired
+    ? "Workflow worker admission or heartbeat expired, possibly after a restart. External actions may already have completed; inspect saved progress before recovery."
+    : "Run exceeded maximum duration";
+  const expiredLeaseFilter = leaseExpired ? {
+    ...(run.execution_id ? { execution_id: run.execution_id } : {}),
+    lease_expires_at: { $lte: now },
+  } : {};
+  const result = await col.updateOne(
+    { _id: run._id, status: run.status, ...expiredLeaseFilter },
     {
       $set: {
         status: "failed",
         completed_at: new Date(),
         [`steps.${run.current_step_index}.status`]: "failed",
-        [`steps.${run.current_step_index}.error`]: "Run exceeded maximum duration",
+        [`steps.${run.current_step_index}.error`]: message,
+        [`steps.${run.current_step_index}.completed_at`]: now,
       },
     },
   );
+  if (result.matchedCount !== 1) return false;
+  run.status = "failed";
+  run.completed_at = now;
+  const step = run.steps[run.current_step_index];
+  if (step) { step.status = "failed"; step.error = message; step.completed_at = now; }
   return true;
 }
 
@@ -266,8 +286,10 @@ async function executeSteps(
   authHeaders: Record<string, string>,
   startFrom: number,
   ownerSubject: Subject | null,
+  execution: WorkflowExecution,
 ): Promise<void> {
   const col = await getCollection<WorkflowRunDocument>(RUNS_COLLECTION);
+  const runFilter = { _id: runId, status: "running" as const, execution_id: execution.id };
   const completedSteps: StepContext[] = [];
 
   // Reconstruct completed step contexts if resuming
@@ -289,6 +311,7 @@ async function executeSteps(
   }
 
   for (let i = startFrom; i < steps.length; i++) {
+    execution.signal.throwIfAborted();
     const step = steps[i];
 
     // Per-step authorization gate (CAS) — the @subbaksh fix: workflow agent-use
@@ -310,15 +333,15 @@ async function executeSteps(
         { correlationId: runId },
       );
       if (decision.decision !== "ALLOW") {
-        await markStepFailed(col, runId, i, `Not authorized to use agent "${step.agent_id}" (${decision.reason})`);
-        await markRunFailed(col, runId);
+        await markStepFailed(col, runId, i, `Not authorized to use agent "${step.agent_id}" (${decision.reason})`, execution.id);
+        await markRunFailed(col, runId, execution.id);
         return;
       }
     }
 
     // Mark step running
-    await col.updateOne(
-      { _id: runId },
+    const started = await col.updateOne(
+      runFilter,
       {
         $set: {
           current_step_index: i,
@@ -327,6 +350,7 @@ async function executeSteps(
         },
       },
     );
+    if (started.matchedCount !== 1) return;
 
     // Render prompt
     const templateCtx = buildTemplateContext(completedSteps, userContext);
@@ -334,9 +358,9 @@ async function executeSteps(
     try {
       renderedPrompt = renderPrompt(step.prompt, templateCtx);
     } catch (err) {
-      await markStepFailed(col, runId, i, `Template error: ${(err as Error).message}`);
+      await markStepFailed(col, runId, i, `Template error: ${(err as Error).message}`, execution.id);
       if (step.on_error !== "skip") {
-        await markRunFailed(col, runId);
+        await markRunFailed(col, runId, execution.id);
         return;
       }
       completedSteps.push({
@@ -352,7 +376,7 @@ async function executeSteps(
 
     // Update prompt_sent
     await col.updateOne(
-      { _id: runId },
+      runFilter,
       { $set: { [`steps.${i}.prompt_sent`]: renderedPrompt } },
     );
 
@@ -380,17 +404,17 @@ async function executeSteps(
         await deleteStepArtifacts(fsNamespace, i, step.agent_id, authHeaders);
       }
 
+      execution.signal.throwIfAborted();
       await col.updateOne(
-        { _id: runId },
+        runFilter,
         { $set: { [`steps.${i}.attempts`]: attempt } },
       );
-
-      const abortController = new AbortController();
-      activeAbortControllers.set(runId, abortController);
 
       // Each attempt gets a fresh conversation
       const conversationId = `wf-${runId}-s${i}-a${attempt}`;
       lastConversationId = conversationId;
+      const saved = await col.updateOne(runFilter, { $set: { [`steps.${i}.conversation_id`]: conversationId } });
+      if (saved.matchedCount !== 1) return;
 
       // On retries, prepend context about the previous failure
       let attemptPrompt = enrichedPrompt;
@@ -423,10 +447,10 @@ async function executeSteps(
         },
         sourceType: "workflow_step",
         sourceId: sourceId,
-        signal: abortController.signal,
+        signal: execution.signal,
+        ...STREAM_LIMITS,
       });
-
-      activeAbortControllers.delete(runId);
+      execution.signal.throwIfAborted();
 
       // If interrupted, break immediately (not retriable)
       if (result.interrupted) break;
@@ -450,13 +474,16 @@ async function executeSteps(
       // No error — success, break out
       if (!stepError) break;
 
+      // A disconnected tool may have committed its action before the response was lost.
+      if (result.retryable === false) break;
+
       // If last attempt, don't retry
       if (attempt === maxAttempts) break;
     }
 
     if (!result) {
-      await markStepFailed(col, runId, i, "No result from stream consumer");
-      await markRunFailed(col, runId);
+      await markStepFailed(col, runId, i, "No result from stream consumer", execution.id);
+      await markRunFailed(col, runId, execution.id);
       return;
     }
 
@@ -467,8 +494,9 @@ async function executeSteps(
       await writeStepArtifactsToFs(fsNamespace, i, step.agent_id, renderedPrompt, toolCalls, fullOutput, authHeaders);
       const stepResponse = await resolveStepResponseText(sourceId, result.text);
 
+      execution.signal.throwIfAborted();
       await col.updateOne(
-        { _id: runId },
+        runFilter,
         {
           $set: {
             status: "waiting_for_input",
@@ -484,7 +512,7 @@ async function executeSteps(
 
     // Handle failure (after all retries exhausted)
     if (stepError) {
-      await markStepFailed(col, runId, i, stepError);
+      await markStepFailed(col, runId, i, stepError, execution.id);
 
       // Write artifacts if we haven't already (stream-level errors)
       if (!stepFilesWritten) {
@@ -494,7 +522,7 @@ async function executeSteps(
         stepFilesWritten = filesWritten;
       }
 
-      if (step.on_error === "skip") {
+      if (step.on_error === "skip" && result.retryable !== false) {
         // Only "skip" continues to next step
         const stepResponse = await resolveStepResponseText(sourceId, result.text);
         completedSteps.push({
@@ -507,21 +535,21 @@ async function executeSteps(
           filesWritten: stepFilesWritten,
         });
         await col.updateOne(
-          { _id: runId },
+          runFilter,
           { $set: { [`steps.${i}.status`]: "skipped" } },
         );
         continue;
       }
 
       // "abort" and "retry" (after exhaustion) both terminate the workflow
-      await markRunFailed(col, runId);
+      await markRunFailed(col, runId, execution.id);
       return;
     }
 
     // Success
     const stepResponse = await resolveStepResponseText(sourceId, result.text);
     await col.updateOne(
-      { _id: runId },
+      runFilter,
       {
         $set: {
           [`steps.${i}.status`]: "completed",
@@ -543,8 +571,9 @@ async function executeSteps(
   }
 
   // All steps completed
+  execution.signal.throwIfAborted();
   await col.updateOne(
-    { _id: runId },
+    runFilter,
     { $set: { status: "completed", completed_at: new Date() } },
   );
 }
@@ -560,8 +589,10 @@ async function resumeAndContinue(
   userContext: string | null,
   authHeaders: Record<string, string>,
   ownerSubject: Subject | null,
+  execution: WorkflowExecution,
 ): Promise<void> {
   const col = await getCollection<WorkflowRunDocument>(RUNS_COLLECTION);
+  const runFilter = { _id: runId, status: "running" as const, execution_id: execution.id };
   const step = steps[stepIndex];
   const runDoc = await col.findOne({ _id: runId });
   const attempt = runDoc!.steps[stepIndex].attempts || 1;
@@ -569,8 +600,9 @@ async function resumeAndContinue(
   const conversationId = runDoc!.steps[stepIndex].conversation_id!;
 
   // Mark running again
-  await col.updateOne(
-    { _id: runId },
+  execution.signal.throwIfAborted();
+  const started = await col.updateOne(
+    runFilter,
     {
       $set: {
         status: "running",
@@ -579,9 +611,7 @@ async function resumeAndContinue(
       },
     },
   );
-
-  const abortController = new AbortController();
-  activeAbortControllers.set(runId, abortController);
+  if (started.matchedCount !== 1) return;
 
   const result = await consumeAgentStream({
     url: `${DA_SERVER_BASE_URL}/api/v1/chat/stream/resume`,
@@ -608,15 +638,16 @@ async function resumeAndContinue(
     },
     sourceType: "workflow_step",
     sourceId: sourceId,
-    signal: abortController.signal,
+    signal: execution.signal,
+    ...STREAM_LIMITS,
   });
-
-  activeAbortControllers.delete(runId);
+  execution.signal.throwIfAborted();
 
   if (result.interrupted) {
     const stepResponse = await resolveStepResponseText(sourceId, result.text);
+    execution.signal.throwIfAborted();
     await col.updateOne(
-      { _id: runId },
+      runFilter,
       {
         $set: {
           status: "waiting_for_input",
@@ -630,16 +661,16 @@ async function resumeAndContinue(
   }
 
   if (result.error) {
-    await markStepFailed(col, runId, stepIndex, result.error);
+    await markStepFailed(col, runId, stepIndex, result.error, execution.id);
     const fsNamespace = [workflowConfigId, runId, "filesystem"];
     const { toolCalls, fullOutput } = await extractStepArtifacts(sourceId);
     const promptSent = runDoc!.steps[stepIndex]?.prompt_sent || "";
     await writeStepArtifactsToFs(fsNamespace, stepIndex, step.agent_id, promptSent, toolCalls, fullOutput, authHeaders);
 
-    if (step.on_error === "skip") {
+    if (step.on_error === "skip" && result.retryable !== false) {
       // Continue to remaining steps
     } else {
-      await markRunFailed(col, runId);
+      await markRunFailed(col, runId, execution.id);
       return;
     }
   } else {
@@ -651,17 +682,17 @@ async function resumeAndContinue(
     // Check if agent self-reported failure via error.txt
     const agentError = await checkAgentErrorFile(fsNamespace, stepIndex, step.agent_id, authHeaders);
     if (agentError) {
-      await markStepFailed(col, runId, stepIndex, agentError);
+      await markStepFailed(col, runId, stepIndex, agentError, execution.id);
       if (step.on_error === "skip") {
         // Continue to remaining steps
       } else {
-        await markRunFailed(col, runId);
+        await markRunFailed(col, runId, execution.id);
         return;
       }
     } else {
       const stepResponse = await resolveStepResponseText(sourceId, result.text);
       await col.updateOne(
-        { _id: runId },
+        runFilter,
         {
           $set: {
             [`steps.${stepIndex}.status`]: "completed",
@@ -674,7 +705,7 @@ async function resumeAndContinue(
   }
 
   // Continue with remaining steps
-  await executeSteps(runId, workflowConfigId, workflowName, workflowDescription, steps, userContext, authHeaders, stepIndex + 1, ownerSubject);
+  await executeSteps(runId, workflowConfigId, workflowName, workflowDescription, steps, userContext, authHeaders, stepIndex + 1, ownerSubject, execution);
 }
 
 function ownerSubjectFromAuthHeaders(authHeaders: Record<string, string>): Subject | null {
@@ -780,6 +811,7 @@ async function writeStepArtifactsToFs(
     try {
       const response = await fetch(`${DA_SERVER_BASE_URL}/api/v1/files/content`, {
         method: "PUT",
+        signal: AbortSignal.timeout(30_000),
         headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({ fs_namespace: fsNamespace, path: f.path, content: f.content }),
       });
@@ -788,6 +820,7 @@ async function writeStepArtifactsToFs(
       }
     } catch (err) {
       console.error(`[WorkflowEngine] Failed to write artifact ${f.path}:`, err);
+      throw err;
     }
   }
 }
@@ -889,14 +922,16 @@ async function checkAgentErrorFile(
     try {
       const res = await fetch(
         `${DA_SERVER_BASE_URL}/api/v1/files/content?fs_namespace=${encodeURIComponent(JSON.stringify(fsNamespace))}&path=${encodeURIComponent(path)}`,
-        { headers: authHeaders },
+        { headers: authHeaders, signal: AbortSignal.timeout(30_000) },
       );
       if (res.ok) {
         const body = await res.json();
         return body?.content || "Agent reported failure (no details)";
       }
-    } catch {
-      // File not found or network error — continue to next path
+      if (res.status !== 404) throw new Error(`Cannot check workflow failure marker: HTTP ${res.status}`);
+    } catch (error) {
+      console.error(`[WorkflowEngine] Cannot read failure marker ${path}:`, error);
+      throw error;
     }
   }
   return null;
@@ -917,12 +952,14 @@ async function deleteStepArtifacts(
   for (const prefix of prefixes) {
     for (const filename of filenames) {
       try {
-        await fetch(
+        const response = await fetch(
           `${DA_SERVER_BASE_URL}/api/v1/files/content?fs_namespace=${encodeURIComponent(JSON.stringify(fsNamespace))}&path=${encodeURIComponent(prefix + filename)}`,
-          { method: "DELETE", headers: authHeaders },
+          { method: "DELETE", headers: authHeaders, signal: AbortSignal.timeout(30_000) },
         );
-      } catch {
-        // Ignore — file may not exist
+        if (!response.ok && response.status !== 404) throw new Error(`Artifact cleanup returned HTTP ${response.status}`);
+      } catch (error) {
+        console.error(`[WorkflowEngine] Failed to clean artifact ${prefix + filename}:`, error);
+        throw error;
       }
     }
   }
@@ -944,10 +981,11 @@ async function markStepFailed(
   runId: string,
   stepIndex: number,
   error: string,
+  executionId: string,
 ): Promise<void> {
   console.error(`[WorkflowEngine] Step ${stepIndex} failed in run ${runId}: ${error}`);
   await col.updateOne(
-    { _id: runId },
+    { _id: runId, status: "running", execution_id: executionId },
     {
       $set: {
         [`steps.${stepIndex}.status`]: "failed",
@@ -961,9 +999,10 @@ async function markStepFailed(
 async function markRunFailed(
   col: Awaited<ReturnType<typeof getCollection<WorkflowRunDocument>>>,
   runId: string,
+  executionId: string,
 ): Promise<void> {
   await col.updateOne(
-    { _id: runId },
+    { _id: runId, status: "running", execution_id: executionId },
     { $set: { status: "failed", completed_at: new Date() } },
   );
 }
