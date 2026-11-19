@@ -51,7 +51,7 @@ export function createPresentationServer({ store, authenticate, profiles, defaul
       }
       if (path === '/api/artifacts' && request.method === 'GET') {
         const artifacts = await store.history(identity);
-        return send(response, 200, { artifacts: artifacts.map(artifact => ({ id: artifact._id, filename: artifact.filename, expires_at: artifact.expires_at, download_url: `${store.downloadUrl}/artifacts/${artifact._id}` })) });
+        return send(response, 200, { artifacts: artifacts.map(artifact => ({ id: artifact._id, title: artifact.title, filename: artifact.filename, created_at: artifact.created_at, expires_at: artifact.expires_at, download_url: `${store.downloadUrl}/artifacts/${artifact._id}` })) });
       }
       if (/^\/artifacts\/[^/]+$/.test(path) && request.method === 'GET') {
         const artifact = await store.download(identity, id.parse(path.split('/').pop()));

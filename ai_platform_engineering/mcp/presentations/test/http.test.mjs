@@ -30,7 +30,7 @@ test('HTTP/MCP end-to-end: private upload → discovery → plan → render → 
   try {
     assert.equal((await fetch(`${base}/apps/presentations`)).status, 401);
     const ui = await fetch(`${base}/apps/presentations`, { headers });
-    assert.match(await ui.text(), /Upload a template/);
+    assert.match(await ui.text(), /<h1>My PowerPoints<\/h1>/);
     assert.match(ui.headers.get('content-security-policy'), /default-src 'none'/);
     assert.equal((await (await fetch(`${base}/api/config`, { headers })).json()).default_profile_id, 'example');
     const fixture = await (await template()).generateAsync({ type: 'nodebuffer' });
@@ -51,6 +51,12 @@ test('HTTP/MCP end-to-end: private upload → discovery → plan → render → 
     const render = await client.callTool({ name: 'presentations_render', arguments: { ...input, approved: true } });
     assert.equal(render.isError, undefined); assert.equal(render.structuredContent.slide_count, 3);
     const link = render.structuredContent.download_url;
+    const history = await (await fetch(`${base}/api/artifacts`, { headers })).json();
+    assert.equal(history.artifacts[0].title, deck.title);
+    assert.ok(Number.isFinite(Date.parse(history.artifacts[0].created_at)));
+    assert.equal(history.artifacts[0].bytes, undefined);
+    assert.equal(history.artifacts[0].owner, undefined);
+    assert.deepEqual((await (await fetch(`${base}/api/artifacts`, { headers: { authorization: `Bearer ${stranger}` } })).json()).artifacts, []);
     assert.equal((await fetch(link)).status, 401);
     assert.equal((await fetch(link, { headers: { authorization: `Bearer ${stranger}` } })).status, 404);
     const download = await fetch(link, { headers });

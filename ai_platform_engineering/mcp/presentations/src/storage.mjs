@@ -61,7 +61,7 @@ export class PresentationStore {
     const id = randomUUID(); const expires_at = new Date(Date.now() + this.artifactDays * 86400_000);
     const filename = `${parsed.deck.title.toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 80) || 'presentation'}.pptx`;
     await this.artifacts.insertOne({ _id: id, template_id: template._id, template_version: template.version,
-      owner: identity.subject, bytes: new Binary(result.bytes), expires_at, filename, created_at: new Date() });
+      owner: identity.subject, bytes: new Binary(result.bytes), expires_at, filename, title: parsed.deck.title, created_at: new Date() });
     return { artifact_id: id, filename, slide_count: result.slide_count, warnings: result.warnings,
       template_version: template.version, expires_at, download_url: `${this.downloadUrl}/artifacts/${id}` };
   }

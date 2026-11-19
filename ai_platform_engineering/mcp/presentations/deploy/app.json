@@ -1,7 +1,7 @@
 {
   "id": "presentations",
-  "displayName": "Presentations",
-  "description": "Private team templates and editable PowerPoint downloads for any agent.",
+  "displayName": "My PowerPoints",
+  "description": "Your private PowerPoint downloads and shared team templates.",
   "apiVersion": "2.0",
   "ui": {
     "profiles": [
