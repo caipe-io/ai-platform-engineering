@@ -32,6 +32,15 @@ jobs:
         env:
           PRESENTATION_TEST_MONGO: '1'
       - run: node ui/app-sdk/bin/check-manifest.mjs ai_platform_engineering/mcp/presentations/deploy/app.json
+      - name: Generate schema validation fixtures
+        run: node ai_platform_engineering/mcp/presentations/test/generate-schema-fixtures.mjs "$RUNNER_TEMP/presentation-openxml-fixtures"
+      - name: Validate packages with Microsoft Open XML SDK
+        run: |
+          docker run --rm -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 \
+            -v "$GITHUB_WORKSPACE/ai_platform_engineering/mcp/presentations/test/openxml:/validator:ro" \
+            -v "$RUNNER_TEMP/presentation-openxml-fixtures:/fixtures:ro" \
+            mcr.microsoft.com/dotnet/sdk:10.0-noble@sha256:bef136a371963aaa46ec97882845ef6f54dec15728bb4b128b1c2a400ffbc9b4 \
+            sh -c 'cp -R /validator /tmp/validator && cd /tmp/validator && dotnet run --project Validator.csproj -- /fixtures/*.pptx'
   image:
     needs: test
     runs-on: ubuntu-latest

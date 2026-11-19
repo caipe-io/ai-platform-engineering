@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import JSZip from 'jszip';
+import { DOMParser } from '@xmldom/xmldom';
 import { inspectTemplate, planDeck, renderDeck, MAX_FILE } from '../src/renderer.mjs';
 import { deck, profile, template } from './fixture.mjs';
 test('renders editable content, full notes, source URLs and inherited masters without extra slides', async () => {
@@ -21,6 +22,29 @@ test('plans density splits before approval and preserves all words in notes', as
   const zip = await JSZip.loadAsync(result.bytes);
   assert.match(await zip.file('ppt/slides/slide1.xml').async('string'), /Verify/);
   assert.match(await zip.file('ppt/notesSlides/notesSlide1.xml').async('string'), /A word A word/);
+});
+test('notes inherit their master color map through a dedicated theme part', async () => {
+  const input = await template();
+  const masterPath = 'ppt/slideMasters/slideMaster1.xml';
+  input.file(masterPath, (await input.file(masterPath).async('string')).replace('bg1="lt1" tx1="dk1"', 'bg1="dk1" tx1="lt1"'));
+  const result = await renderDeck(await input.generateAsync({ type: 'nodebuffer' }), profile, deck);
+  const zip = await JSZip.loadAsync(result.bytes);
+  const parse = text => new DOMParser().parseFromString(text, 'application/xml');
+  const master = parse(await zip.file('ppt/notesMasters/notesMaster1.xml').async('string'));
+  const map = master.getElementsByTagNameNS('http://schemas.openxmlformats.org/presentationml/2006/main', 'clrMap')[0];
+  assert.equal(map.getAttribute('bg1'), 'dk1');
+  assert.equal(map.getAttribute('tx1'), 'lt1');
+  const noteMasterRels = parse(await zip.file('ppt/notesMasters/_rels/notesMaster1.xml.rels').async('string'));
+  const notesTheme = [...noteMasterRels.getElementsByTagName('Relationship')].find(entry => entry.getAttribute('Type').endsWith('/theme')).getAttribute('Target');
+  assert.notEqual(notesTheme, '../theme/theme1.xml');
+  assert.equal(await zip.file(`ppt/${notesTheme.slice(3)}`).async('string'), await input.file('ppt/theme/theme1.xml').async('string'));
+  for (let i = 1; i <= 3; i++) {
+    const relationships = parse(await zip.file(`ppt/notesSlides/_rels/notesSlide${i}.xml.rels`).async('string'));
+    const entries = [...relationships.getElementsByTagName('Relationship')];
+    assert.deepEqual(entries.map(entry => [entry.getAttribute('Type').split('/').pop(), entry.getAttribute('Target')]).sort(), [
+      ['notesMaster', '../notesMasters/notesMaster1.xml'], ['slide', `../slides/slide${i}.xml`],
+    ]);
+  }
 });
 test('keeps full long titles and naturally wraps a fitting paragraph without arbitrary character splits', async () => {
   const title = 'A longer briefing title that preserves every approved word through the final milestone';

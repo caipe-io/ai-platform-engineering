@@ -118,5 +118,12 @@ and `PRESENTATION_TEST_PROFILE` to its external preset JSON. Optionally set
 presets are intentionally absent from source and normal CI. Render and inspect
 all slides with the template's fonts; a successful package test is not visual QA.
 
+CI generates complete synthetic packages for all three densities and validates
+them with Microsoft's pinned Open XML SDK checker in `test/openxml`. Notes retain
+the selected master's color map and a separate copy of its theme: sharing the
+slide theme with the notes master can pass schema validation but trigger a
+PowerPoint repair prompt. Configured-host acceptance must also open the exported
+file in PowerPoint without repair; a LibreOffice render alone is insufficient.
+
 Acceptance cases: MCP-06.01–03, with MCP-05, SEC-04 and APP-05 at the configured host
 boundary. No enabled deployment or live model workflow is implied by unit tests.

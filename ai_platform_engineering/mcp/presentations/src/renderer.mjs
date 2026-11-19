@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { posix } from 'node:path';
 import JSZip from 'jszip';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 import { deckSchema, profileSchema } from './schema.mjs';
@@ -164,8 +165,24 @@ export async function renderDeck(bytes, profileInput, deckInput) {
   const plan = planDeck(deckInput, template.profile);
   const { zip } = template;
   const slideIds = [], relationships = [], overrides = [];
-  zip.file('ppt/notesMasters/notesMaster1.xml', `${HEAD}<p:notesMaster xmlns:p="${P}" xmlns:a="${A}" xmlns:r="${R}"><p:cSld><p:spTree>${GROUP}</p:spTree></p:cSld><p:notesStyle/></p:notesMaster>`);
-  zip.file('ppt/notesMasters/_rels/notesMaster1.xml.rels', rels(rel('theme', 'theme', '../theme/theme1.xml')));
+  const master = parse(await zip.file(`ppt/slideMasters/slideMaster${plan.mode.master}.xml`).async('string'));
+  const colorMap = master.getElementsByTagNameNS(P, 'clrMap')[0];
+  const masterRels = parse(await zip.file(`ppt/slideMasters/_rels/slideMaster${plan.mode.master}.xml.rels`)?.async('string'));
+  const theme = Array.from(masterRels.getElementsByTagName('Relationship')).find(node => node.getAttribute('Type') === `${R}/theme`);
+  if (!colorMap || !theme) throw new Error('Template master must include a color map and theme');
+  const themeTarget = theme.getAttribute('Target');
+  const themePath = themeTarget.startsWith('/') ? themeTarget.slice(1) : posix.normalize(`ppt/slideMasters/${themeTarget}`);
+  const themeBytes = await zip.file(themePath)?.async('nodebuffer');
+  if (!themeBytes) throw new Error('Template master theme is missing');
+  let themeNumber = 1;
+  while (zip.file(`ppt/theme/notesTheme${themeNumber}.xml`)) themeNumber++;
+  const notesThemePath = `ppt/theme/notesTheme${themeNumber}.xml`;
+  // A dedicated notes theme avoids PowerPoint repair caused by sharing the
+  // slide master's Theme part, even when that shared graph passes schema checks.
+  zip.file(notesThemePath, themeBytes);
+  overrides.push(`<Override PartName="/${notesThemePath}" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>`);
+  zip.file('ppt/notesMasters/notesMaster1.xml', `${HEAD}<p:notesMaster xmlns:p="${P}" xmlns:a="${A}" xmlns:r="${R}"><p:cSld><p:spTree>${GROUP}</p:spTree></p:cSld>${xml(colorMap)}<p:notesStyle/></p:notesMaster>`);
+  zip.file('ppt/notesMasters/_rels/notesMaster1.xml.rels', rels(rel('rId1', 'theme', `../theme/notesTheme${themeNumber}.xml`)));
   overrides.push('<Override PartName="/ppt/notesMasters/notesMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml"/>');
   for (const [index, page] of plan.pages.entries()) {
     const { slide, rows } = page; const n = index + 1;
@@ -194,7 +211,7 @@ export async function renderDeck(bytes, profileInput, deckInput) {
     zip.file(`ppt/slides/_rels/slide${n}.xml.rels`, rels(rel('layout', 'slideLayout', `../slideLayouts/slideLayout${layoutNumber}.xml`) + rel('notes', 'notesSlide', `../notesSlides/notesSlide${n}.xml`) + sources.slice(0, 1).map((source, i) => rel(`source${i}`, 'hyperlink', source, true)).join('')));
     const notes = [slide.title, slide.subtitle, slide.notes, ...slide.bullets.map(row => `${row.verify || !row.sources.length ? 'Verify: ' : ''}${row.text}`), ...slide.items.map(item => `${item.text} | ${item.owner} | ${item.due}`), ...sources, ...plan.warnings].join('\n');
     zip.file(`ppt/notesSlides/notesSlide${n}.xml`, `${HEAD}<p:notes xmlns:p="${P}" xmlns:a="${A}" xmlns:r="${R}"><p:cSld><p:spTree>${GROUP}<p:sp><p:nvSpPr><p:cNvPr id="2" name="Notes"/><p:cNvSpPr/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>${notes.split('\n').map(line => para(line, 12)).join('')}</p:txBody></p:sp></p:spTree></p:cSld></p:notes>`);
-    zip.file(`ppt/notesSlides/_rels/notesSlide${n}.xml.rels`, rels(rel('slide', 'slide', `../slides/slide${n}.xml`) + rel('master', 'notesMaster', '../notesMasters/notesMaster1.xml')));
+    zip.file(`ppt/notesSlides/_rels/notesSlide${n}.xml.rels`, rels(rel('rId1', 'notesMaster', '../notesMasters/notesMaster1.xml') + rel('rId2', 'slide', `../slides/slide${n}.xml`)));
     slideIds.push(`<p:sldId id="${256 + index}" r:id="presentationSlide${n}"/>`);
     relationships.push(rel(`presentationSlide${n}`, 'slide', `slides/slide${n}.xml`));
     overrides.push(`<Override PartName="/ppt/slides/slide${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/><Override PartName="/ppt/notesSlides/notesSlide${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>`);
