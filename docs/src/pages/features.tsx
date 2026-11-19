@@ -24,8 +24,39 @@ const FEATURE_DEMOS = [
 
 const FEATURES = [
   {
+    title: 'Harness Engine & Harness Gateway',
+    icon: '⚡',
+    since: '1.4.0',
+    color: '#0284c7',
+    to: '/docs/features/harness-runtimes',
+    items: [
+      'LangChain Deep Agents — stable runtime with tools, skills, and subagents',
+      'Claude Agent SDK — experimental support for local execution or a remote worker',
+      'Claude Code remote agents — use a configured Claude Code CLI worker over ACP (experimental)',
+      'Amazon Bedrock AgentCore — connect an existing deployment for remote sessions (experimental)',
+      'Persist sessions and replay events for runs that continue after a client disconnects',
+      'Use the existing CAIPE chat experience with Harness-backed agents',
+      'Enable Harness Gateway transport for Slack and Webex',
+    ],
+  },
+  {
+    title: 'Enterprise-Grade Security',
+    icon: '🔒',
+    since: '0.5.x',
+    color: '#dc2626',
+    to: '/docs/security/rbac/architecture',
+    items: [
+      'Single sign-on with Keycloak and OIDC identity providers',
+      'Fine-grained OpenFGA authorization for agents, tools, and knowledge bases',
+      'Scoped, team-owned service accounts and encrypted credential storage',
+      'Caller-scoped MCP access through AgentGateway, with authorization audit records',
+      'Human approval steps for sensitive workflow actions',
+    ],
+  },
+  {
     title: 'Agent Builder',
     icon: '🛠️',
+    since: '0.5.x',
     color: '#0284c7',
     to: '/docs/features/agent-builder',
     items: [
@@ -39,6 +70,7 @@ const FEATURES = [
   {
     title: 'Workflows',
     icon: '🔁',
+    since: '0.5.x',
     color: '#0d9488',
     to: '/docs/features/workflows',
     items: [
@@ -52,6 +84,7 @@ const FEATURES = [
   {
     title: 'BYO Agents & MCP Servers',
     icon: '🔌',
+    since: '0.2.x',
     color: '#7c3aed',
     to: '/docs/development/',
     items: [
@@ -64,12 +97,14 @@ const FEATURES = [
     ],
   },
   {
-    title: 'External Apps',
+    title: 'Agentic Apps',
     icon: '🧩',
+    since: '1.3.0',
     color: '#9333ea',
     to: '/docs/features/agentic-apps',
     items: [
-      'Publish independently deployed web apps in the CAIPE Apps hub',
+      'Launch hosted and native apps from the CAIPE Apps catalog',
+      'Work with app-owned assistants in the shared chat experience',
       'Reuse the signed-in CAIPE session for app-scoped access',
       'Protect routes with explicit roles and token scopes',
       'Keep app data, UI, and domain authorization independent',
@@ -79,6 +114,7 @@ const FEATURES = [
   {
     title: 'Credentials & Secrets',
     icon: '🔑',
+    since: '0.5.x',
     color: '#0d9488',
     to: '/docs/ui/features',
     items: [
@@ -92,6 +128,7 @@ const FEATURES = [
   {
     title: 'Multi-Agent Orchestration',
     icon: '🤖',
+    since: '0.2.x',
     color: '#0284c7',
     to: '/docs/agents/',
     items: [
@@ -105,6 +142,7 @@ const FEATURES = [
   {
     title: 'Rich Web UI',
     icon: '🎨',
+    since: '1.0.0',
     color: '#7c3aed',
     items: [
       'Rich/Contextual Home Page',
@@ -117,6 +155,7 @@ const FEATURES = [
   {
     title: 'Skills',
     icon: '🧰',
+    since: '0.5.x',
     color: '#7c3aed',
     to: '/docs/features/skills/',
     items: [
@@ -124,12 +163,13 @@ const FEATURES = [
       'Import, revise, and attach skills to agents',
       'Scan skills for prompt injection and unsafe tool behavior',
       'Use scan gates to warn or block flagged skills',
-      'Install catalog skills into supported coding agents through the Gateway',
+      'Skills Gateway — create catalog API keys and install skills into supported coding agents',
     ],
   },
   {
     title: 'Settings & Admin',
     icon: '⚙️',
+    since: '0.5.x',
     color: '#475569',
     to: '/docs/features/admin-settings',
     items: [
@@ -143,6 +183,7 @@ const FEATURES = [
   {
     title: 'Knowledge Bases',
     icon: '🧠',
+    since: '0.4.x',
     color: '#0891b2',
     to: '/docs/knowledge_bases/',
     items: [
@@ -156,6 +197,7 @@ const FEATURES = [
   {
     title: 'Agent Memory',
     icon: '💾',
+    since: '0.5.x',
     color: '#059669',
     to: '/docs/api/chat-conversations',
     items: [
@@ -164,23 +206,26 @@ const FEATURES = [
     ],
   },
   {
-    title: 'Scheduled Runs & External Triggers',
+    title: 'Autonomous Agents & Scheduled Runs',
     icon: '📡',
+    since: '0.5.x',
     color: '#d97706',
     to: '/docs/architecture/autonomous-agents',
     items: [
-      'Webhook-based agent triggers for event-driven workflows',
-      'Scheduled/cron-based agent runs',
-      'Integration with alerting systems (PagerDuty, VictorOps, Splunk)',
-      'Event stream consumption — trigger agents from platform events',
+      'Run agents on a cron schedule, at fixed intervals, or on demand',
+      'Start runs from signed webhooks from supported services',
+      'Manage tasks and inspect run history from the Autonomous workspace',
     ],
   },
   {
     title: 'Agent and Tool Communications',
     icon: '🔗',
+    since: '0.4.x',
     color: '#d97706',
-    to: '/docs/api/dynamic-agents-mcp',
+    to: '/docs/features/remote-agents',
     items: [
+      'Agent-to-Agent (A2A) — delegate work to registered remote agents from Agent Builder (since 1.3.0)',
+      'Agent Client Protocol (ACP) — chat with configured Claude Agent SDK or Claude Code workers (experimental in 1.4.0)',
       'MCP (Model Context Protocol)',
       'Dynamic Agents API',
       'AG-UI / SSE streaming — real-time event handling across all agent types',
@@ -188,20 +233,9 @@ const FEATURES = [
     ],
   },
   {
-    title: 'Enterprise Security',
-    icon: '🔒',
-    color: '#dc2626',
-    to: '/docs/security/',
-    items: [
-      'OAuth 2.0 integration with OIDC compatible IdPs',
-      'OIDC/Okta groups base RBAC',
-      'Team based access',
-      'Policy based tool restrictions',
-    ],
-  },
-  {
     title: 'Deployment',
     icon: '🚀',
+    since: '0.2.x',
     color: '#2563eb',
     to: '/docs/installation/',
     items: [
@@ -216,6 +250,7 @@ const FEATURES = [
   {
     title: 'Integrations',
     icon: '🔌',
+    since: '0.5.x',
     color: '#0891b2',
     to: '/docs/getting-started/user-interfaces',
     items: [
@@ -240,7 +275,7 @@ export default function FeaturesPage() {
     <>
       <Layout
       title="Features · CAIPE"
-      description="Full feature list for CAIPE — multi-agent orchestration, rich web UI, knowledge bases, enterprise security, and more."
+      description="Explore CAIPE support for Deep Agents, Claude Agent SDK, remote Claude Code agents, and Amazon Bedrock AgentCore, with A2A, ACP, and enterprise-grade security."
     >
       <main>
         <section className={styles.hero}>
@@ -249,9 +284,11 @@ export default function FeaturesPage() {
               CAIPE Features
             </Heading>
             <p className={styles.heroSubtitle}>
-              Everything you need to run AI-powered platform engineering at
-              enterprise scale — from multi-agent orchestration to RAG knowledge
-              bases, skills, and production-grade deployment.
+              Run agents with LangChain Deep Agents or the Claude Agent SDK, and connect remote
+              Claude Code agents over ACP and Amazon Bedrock AgentCore deployments.
+              Delegate work to registered remote agents over A2A. CAIPE provides
+              {' '}<strong>enterprise-grade security</strong> with single sign-on, fine-grained
+              authorization, and auditable tool access.
             </p>
             <div className={styles.heroCtas}>
               <Link className={styles.primaryBtn} to="/docs/getting-started/quick-start">
@@ -318,7 +355,10 @@ export default function FeaturesPage() {
                 <div key={f.title} className={styles.card} style={target ? {cursor: 'pointer'} : undefined}>
                   <div className={styles.cardHeader} style={{'--card-color': f.color} as React.CSSProperties}>
                     <span className={styles.cardIcon}>{f.icon}</span>
-                    <Heading as="h2" className={styles.cardTitle}>{f.title}</Heading>
+                    <div>
+                      <Heading as="h2" className={styles.cardTitle}>{f.title}</Heading>
+                      <span className={styles.cardSince}>Since {f.since}</span>
+                    </div>
                   </div>
                   <ul className={styles.cardList}>
                     {f.items.map((item) => (

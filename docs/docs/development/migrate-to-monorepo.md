@@ -1,13 +1,10 @@
 ---
-slug: migrate-to-monorepo
 title: Migrating Agent Repos to the Monorepo
-authors: [sriaradhyula]
-tags: [articles]
 ---
 
-Instructions to migrate agent repos to mono repo
+*Originally published by Sri Aradhyula on July 4, 2025.*
 
-<!-- truncate -->
+Instructions to migrate agent repos to mono repo
 
 ```bash
 export AGENT_NAME=foo
@@ -66,4 +63,3 @@ read -p "Delete ../agent-$AGENT_NAME-temp and all contents? [y/N] " ans && [[ $a
 ```
 git push origin migrate_agent_$AGENT_NAME
 ```
-<!-- truncate -->

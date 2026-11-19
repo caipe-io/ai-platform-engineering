@@ -49,6 +49,18 @@ loads all tasks from MongoDB into APScheduler or the webhook registry. Creating,
 editing, disabling, or deleting a task updates those process-local runtimes
 without a restart.
 
+### Manual runs with context
+
+In CAIPE 1.4.0, an authenticated caller can submit bounded JSON context when
+manually running an enabled task. Send a UUID as `request_id` and the context as
+a JSON object of at most 16 KiB. Use the same request ID when retrying the same
+submission. The service scopes deduplication to the task and request ID and
+returns the run ID. The context is treated as untrusted agent input.
+
+![The Autonomous API checks task access and claims a task-scoped request ID before queueing a contextual run. The runner records results in MongoDB.](/diagrams/autonomous-manual-runs.svg)
+
+[Download editable Excalidraw](/diagrams/autonomous-manual-runs.excalidraw)
+
 ## Access and enablement
 
 Autonomous access has two independent checks:

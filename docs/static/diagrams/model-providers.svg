@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1064 467" role="img" aria-labelledby="title desc">
+<title id="title">Model provider connections</title>
+<desc id="desc">Connection testing and agent chat resolve provider settings and credentials.</desc>
+<rect width="1064" height="467" rx="20" fill="#f8faff"/>
+<g font-family="Inter, Helvetica, Arial, sans-serif">
+<text x="40" y="53" fill="#172644" font-size="31" font-weight="750">Model provider connections</text>
+<text x="40" y="78" fill="#465978" font-size="16" font-weight="500">Connection testing and agent chat resolve provider settings and credentials.</text>
+<rect x="40" y="105" width="264" height="110" rx="12" fill="#e8f3ff" stroke="#2162a7" stroke-width="1.4"/>
+<text x="58" y="126" fill="#2162a7" font-size="12" font-weight="750">USER INTERFACE</text>
+<text x="58" y="154" fill="#172644" font-size="19" font-weight="720">Model Providers</text>
+<text x="58" y="181" fill="#465978" font-size="15" font-weight="500">Choose an endpoint and models</text>
+<text x="58" y="200" fill="#465978" font-size="15" font-weight="500">Save or test a connection</text>
+<rect x="400" y="105" width="264" height="110" rx="12" fill="#e9edff" stroke="#5243a9" stroke-width="1.4"/>
+<text x="418" y="126" fill="#5243a9" font-size="12" font-weight="750">CAIPE SERVICE</text>
+<text x="418" y="154" fill="#172644" font-size="19" font-weight="720">CAIPE backend</text>
+<text x="418" y="181" fill="#465978" font-size="15" font-weight="500">Authorize config access</text>
+<text x="418" y="200" fill="#465978" font-size="15" font-weight="500">Save connection and model IDs</text>
+<rect x="760" y="105" width="264" height="110" rx="12" fill="#def6ee" stroke="#14705c" stroke-width="1.4"/>
+<text x="778" y="126" fill="#14705c" font-size="12" font-weight="750">STORE</text>
+<text x="778" y="154" fill="#172644" font-size="19" font-weight="720">Model and secret records</text>
+<text x="778" y="181" fill="#465978" font-size="15" font-weight="500">Model IDs and connection config</text>
+<text x="778" y="200" fill="#465978" font-size="15" font-weight="500">References to encrypted secrets</text>
+<rect x="40" y="285" width="264" height="110" rx="12" fill="#e8f3ff" stroke="#2162a7" stroke-width="1.4"/>
+<text x="58" y="306" fill="#2162a7" font-size="12" font-weight="750">USER INTERFACE</text>
+<text x="58" y="334" fill="#172644" font-size="19" font-weight="720">Agent Builder and Chat</text>
+<text x="58" y="361" fill="#465978" font-size="15" font-weight="500">Select a registered model</text>
+<text x="58" y="380" fill="#465978" font-size="15" font-weight="500">Send a test conversation</text>
+<rect x="400" y="285" width="264" height="110" rx="12" fill="#e9edff" stroke="#5243a9" stroke-width="1.4"/>
+<text x="418" y="306" fill="#5243a9" font-size="12" font-weight="750">CAIPE SERVICE</text>
+<text x="418" y="334" fill="#172644" font-size="19" font-weight="720">Runtime / test path</text>
+<text x="418" y="361" fill="#465978" font-size="15" font-weight="500">Resolve permitted credentials</text>
+<text x="418" y="380" fill="#465978" font-size="15" font-weight="500">Apply the selected model config</text>
+<rect x="760" y="285" width="264" height="110" rx="12" fill="#fff3df" stroke="#895209" stroke-width="1.4"/>
+<text x="778" y="306" fill="#895209" font-size="12" font-weight="750">EXTERNAL</text>
+<text x="778" y="334" fill="#172644" font-size="19" font-weight="720">Model provider</text>
+<text x="778" y="361" fill="#465978" font-size="15" font-weight="500">Deployment or saved credentials</text>
+<text x="778" y="380" fill="#465978" font-size="15" font-weight="500">Completion or provider error</text>
+<path d="M304,160 L400,160 M391.1,164.6 L400,160 L391.1,155.4" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="308" y="151" fill="#465978" font-size="12" font-weight="600">Save / test</text>
+<path d="M664,160 L760,160 M751.1,164.6 L760,160 L751.1,155.4" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="668" y="151" fill="#465978" font-size="12" font-weight="600">Save records</text>
+<path d="M532,215 L532,285 M527.4,276.1 L532,285 L536.6,276.1" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="542" y="252" fill="#465978" font-size="12" font-weight="600">Test completion</text>
+<path d="M304,340 L400,340 M391.1,344.6 L400,340 L391.1,335.4" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="308" y="331" fill="#465978" font-size="12" font-weight="600">Invoke</text>
+<path d="M664,340 L760,340 M751.1,344.6 L760,340 L751.1,335.4" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="668" y="331" fill="#465978" font-size="12" font-weight="600">Call model</text>
+<path d="M532,285 L892,215 M884.2,221.2 L892,215 L882.4,212.2" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="40" x2="1024" y1="407" y2="407" stroke="#d5deef"/>
+<text x="40" y="437" fill="#465978" font-size="15" font-weight="500">Shared models still require model read access and permission to use each referenced credential.</text>
+</g></svg>

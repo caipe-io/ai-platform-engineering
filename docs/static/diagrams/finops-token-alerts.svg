@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1064 467" role="img" aria-labelledby="title desc">
+<title id="title">LiteLLM token-usage alerts</title>
+<desc id="desc">The optional scanner evaluates configured targets before sending a Webex alert.</desc>
+<rect width="1064" height="467" rx="20" fill="#f8faff"/>
+<g font-family="Inter, Helvetica, Arial, sans-serif">
+<text x="40" y="53" fill="#172644" font-size="31" font-weight="750">LiteLLM token-usage alerts</text>
+<text x="40" y="78" fill="#465978" font-size="16" font-weight="500">The optional scanner evaluates configured targets before sending a Webex alert.</text>
+<rect x="40" y="105" width="264" height="110" rx="12" fill="#fff3df" stroke="#895209" stroke-width="1.4"/>
+<text x="58" y="126" fill="#895209" font-size="12" font-weight="750">EXTERNAL</text>
+<text x="58" y="154" fill="#172644" font-size="19" font-weight="720">LiteLLM usage API</text>
+<text x="58" y="181" fill="#465978" font-size="15" font-weight="500">Daily user or API-key activity</text>
+<rect x="400" y="105" width="264" height="110" rx="12" fill="#e9edff" stroke="#5243a9" stroke-width="1.4"/>
+<text x="418" y="126" fill="#5243a9" font-size="12" font-weight="750">CAIPE SERVICE</text>
+<text x="418" y="154" fill="#172644" font-size="19" font-weight="720">Token alert scanner</text>
+<text x="418" y="181" fill="#465978" font-size="15" font-weight="500">Poll configured targets</text>
+<text x="418" y="200" fill="#465978" font-size="15" font-weight="500">Evaluate threshold</text>
+<rect x="760" y="105" width="264" height="110" rx="12" fill="#fff3df" stroke="#895209" stroke-width="1.4"/>
+<text x="778" y="126" fill="#895209" font-size="12" font-weight="750">EXTERNAL</text>
+<text x="778" y="154" fill="#172644" font-size="19" font-weight="720">Webex</text>
+<text x="778" y="181" fill="#465978" font-size="15" font-weight="500">Deliver to allowlisted recipients</text>
+<text x="778" y="200" fill="#465978" font-size="15" font-weight="500">when notification is enabled</text>
+<rect x="40" y="285" width="264" height="110" rx="12" fill="#def6ee" stroke="#14705c" stroke-width="1.4"/>
+<text x="58" y="306" fill="#14705c" font-size="12" font-weight="750">STORE</text>
+<text x="58" y="334" fill="#172644" font-size="19" font-weight="720">Deployment settings</text>
+<text x="58" y="361" fill="#465978" font-size="15" font-weight="500">Targets, limits, thresholds,</text>
+<text x="58" y="380" fill="#465978" font-size="15" font-weight="500">and recipient allowlist</text>
+<rect x="400" y="285" width="264" height="110" rx="12" fill="#def6ee" stroke="#14705c" stroke-width="1.4"/>
+<text x="418" y="306" fill="#14705c" font-size="12" font-weight="750">STORE</text>
+<text x="418" y="334" fill="#172644" font-size="19" font-weight="720">Deduplication file</text>
+<text x="418" y="361" fill="#465978" font-size="15" font-weight="500">Track sent alert keys</text>
+<text x="418" y="380" fill="#465978" font-size="15" font-weight="500">for the configured time window</text>
+<path d="M400,160 L304,160 M312.9,155.4 L304,160 L312.9,164.6" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="308" y="151" fill="#465978" font-size="12" font-weight="600">Read activity</text>
+<path d="M664,160 L760,160 M751.1,164.6 L760,160 L751.1,155.4" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="668" y="151" fill="#465978" font-size="12" font-weight="600">Send alert</text>
+<path d="M172,285 L532,215 M524.2,221.2 L532,215 L522.4,212.2" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M532,215 L532,285 M527.4,276.1 L532,285 L536.6,276.1" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="542" y="252" fill="#465978" font-size="12" font-weight="600">Check / record</text>
+<line x1="40" x2="1024" y1="407" y2="407" stroke="#d5deef"/>
+<text x="40" y="437" fill="#465978" font-size="15" font-weight="500">Use dry run to verify thresholds. Alerting reports usage and does not block model requests.</text>
+</g></svg>

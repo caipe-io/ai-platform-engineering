@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1064 467" role="img" aria-labelledby="title desc">
+<title id="title">SharePoint MCP integration</title>
+<desc id="desc">CAIPE calls a read-only server scoped to one configured SharePoint Online site.</desc>
+<rect width="1064" height="467" rx="20" fill="#f8faff"/>
+<g font-family="Inter, Helvetica, Arial, sans-serif">
+<text x="40" y="53" fill="#172644" font-size="31" font-weight="750">SharePoint MCP integration</text>
+<text x="40" y="78" fill="#465978" font-size="16" font-weight="500">CAIPE calls a read-only server scoped to one configured SharePoint Online site.</text>
+<rect x="40" y="105" width="264" height="110" rx="12" fill="#e9edff" stroke="#5243a9" stroke-width="1.4"/>
+<text x="58" y="126" fill="#5243a9" font-size="12" font-weight="750">CAIPE SERVICE</text>
+<text x="58" y="154" fill="#172644" font-size="19" font-weight="720">CAIPE agent</text>
+<text x="58" y="181" fill="#465978" font-size="15" font-weight="500">Select an enabled MCP tool</text>
+<text x="58" y="200" fill="#465978" font-size="15" font-weight="500">Request search or content</text>
+<rect x="400" y="105" width="264" height="110" rx="12" fill="#f5eafa" stroke="#783f92" stroke-width="1.4"/>
+<text x="418" y="126" fill="#783f92" font-size="12" font-weight="750">ACCESS CONTROL</text>
+<text x="418" y="154" fill="#172644" font-size="19" font-weight="720">AgentGateway</text>
+<text x="418" y="181" fill="#465978" font-size="15" font-weight="500">Authenticate caller</text>
+<text x="418" y="200" fill="#465978" font-size="15" font-weight="500">Enforce MCP tool access</text>
+<rect x="760" y="105" width="264" height="110" rx="12" fill="#e9edff" stroke="#5243a9" stroke-width="1.4"/>
+<text x="778" y="126" fill="#5243a9" font-size="12" font-weight="750">CAIPE SERVICE</text>
+<text x="778" y="154" fill="#172644" font-size="19" font-weight="720">SharePoint MCP server</text>
+<text x="778" y="181" fill="#465978" font-size="15" font-weight="500">Validate configured site scope</text>
+<text x="778" y="200" fill="#465978" font-size="15" font-weight="500">Use Entra application identity</text>
+<rect x="400" y="285" width="264" height="110" rx="12" fill="#fff3df" stroke="#895209" stroke-width="1.4"/>
+<text x="418" y="306" fill="#895209" font-size="12" font-weight="750">EXTERNAL</text>
+<text x="418" y="334" fill="#172644" font-size="19" font-weight="720">SharePoint Online</text>
+<text x="418" y="361" fill="#465978" font-size="15" font-weight="500">One configured site</text>
+<text x="418" y="380" fill="#465978" font-size="15" font-weight="500">Libraries, lists, and pages</text>
+<rect x="760" y="285" width="264" height="110" rx="12" fill="#fff3df" stroke="#895209" stroke-width="1.4"/>
+<text x="778" y="306" fill="#895209" font-size="12" font-weight="750">EXTERNAL</text>
+<text x="778" y="334" fill="#172644" font-size="19" font-weight="720">Microsoft Graph</text>
+<text x="778" y="361" fill="#465978" font-size="15" font-weight="500">Read-only requests</text>
+<text x="778" y="380" fill="#465978" font-size="15" font-weight="500">Apply app site permissions</text>
+<path d="M304,160 L400,160 M391.1,164.6 L400,160 L391.1,155.4" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="308" y="151" fill="#465978" font-size="12" font-weight="600">Call tool</text>
+<path d="M664,160 L760,160 M751.1,164.6 L760,160 L751.1,155.4" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="668" y="151" fill="#465978" font-size="12" font-weight="600">Allow call</text>
+<path d="M892,215 L892,285 M887.4,276.1 L892,285 L896.6,276.1" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="902" y="252" fill="#465978" font-size="12" font-weight="600">Read</text>
+<path d="M760,340 L664,340 M672.9,335.4 L664,340 L672.9,344.6" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="668" y="331" fill="#465978" font-size="12" font-weight="600">Scoped access</text>
+<line x1="40" x2="1024" y1="407" y2="407" stroke="#d5deef"/>
+<text x="40" y="437" fill="#465978" font-size="15" font-weight="500">Site-specific Entra grants limit the server application identity to the approved site.</text>
+</g></svg>

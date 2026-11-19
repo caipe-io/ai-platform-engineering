@@ -55,7 +55,8 @@ const releaseRedirects = [
     to: `/releases/${slug}`,
     from: [`/blog/releases/${slug}`],
   })),
-  {from: '/blog/releases', to: '/releases'},
+  {from: ['/blog', '/blog/releases'], to: '/releases'},
+  {from: '/blog/whats-new-in-0-5', to: '/releases/whats-new-in-0-5'},
 ];
 
 const config: Config = {
@@ -117,6 +118,9 @@ const config: Config = {
           {from: '/docs/features/custom-agents', to: `${currentDocsPrefix}/features/agent-builder`},
           // /docs/index has no real page; redirect to Quick Start
           {from: '/docs/index', to: '/docs/getting-started/quick-start'},
+          {from: '/blog/2026/03/04/cncf-sandbox-application', to: `${currentDocsPrefix}/community/cncf-sandbox-application`},
+          {from: '/blog/ai-agent-vs-mcp-server', to: `${currentDocsPrefix}/architecture/ai-agent-vs-mcp-server`},
+          {from: '/blog/migrate-to-monorepo', to: `${currentDocsPrefix}/development/migrate-to-monorepo`},
           ...releaseRedirects,
         ],
       },
@@ -155,21 +159,7 @@ const config: Config = {
               }
             : {}),
         },
-        blog: {
-          showReadingTime: true,
-          feedOptions: {
-            type: ['rss', 'atom'],
-            xslt: true,
-          },
-          // Please change this to your repo.
-          // Remove this to remove the "edit this page" links.
-          editUrl:
-            'https://github.com/caipe-io/ai-platform-engineering/tree/main/docs',
-          // Useful options to enforce blogging best practices
-          onInlineTags: 'warn',
-          onInlineAuthors: 'warn',
-          onUntruncatedBlogPosts: 'warn',
-        },
+        blog: false,
         theme: {
           customCss: './src/css/custom.css',
         },
@@ -201,7 +191,6 @@ const config: Config = {
         {to: '/roadmap', label: 'Roadmap', position: 'left'},
         {to: '/community', label: 'Community', position: 'left'},
         {to: '/releases', label: 'Releases', position: 'left'},
-        {to: '/blog', label: 'Blog', position: 'left'},
         ...(versionsConfig ? [{
           type: 'docsVersionDropdown' as const,
           position: 'right' as const,

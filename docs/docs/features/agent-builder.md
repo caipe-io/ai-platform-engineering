@@ -45,6 +45,9 @@ SDK negotiates JSON-RPC or HTTP+JSON from the Agent Card.
 
 ## Unified agent catalog
 
+See [Remote agents over A2A and ACP](./remote-agents.md) for setup steps and
+each protocol's execution path. For runtime selection, see [Harness Engine and runtimes](./harness-runtimes.md).
+
 Open **Agents** for CAIPE-created assistants and connected A2A specialists.
 Configured ACP agents appear once, as their existing CAIPE configuration.
 Use **Grid** for compact cards with a soft gradient header or **List** for
