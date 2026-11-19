@@ -66,7 +66,7 @@ def get_bot_info_by_id(bot_id):
   payload = "bot={}".format(bot_id)
 
   try:
-    response = requests.request("POST", url, headers=headers, data=payload)
+    response = requests.request("POST", url, headers=headers, data=payload, timeout=10)
   except requests.exceptions.RequestException as e:
     logger.warning(e)
     return ("", "")
@@ -78,6 +78,26 @@ def get_bot_info_by_id(bot_id):
   else:
     logger.info(response_dict)
     return ("", "")
+
+
+def is_bot_sender(event):
+  """True if the event was authored by a bot/app rather than a human.
+
+  Slack sets `bot_id` on messages an app posts with a *user token* (e.g. a CLI
+  posting as the person), but `event["user"]` is then the human, not the app's
+  bot user. Treat that as human so identity linking/OBO applies. Fails safe to
+  "bot" when bots.info can't be resolved.
+  """
+  bot_id = event.get("bot_id")
+  if not bot_id:
+    return False
+  user = event.get("user")
+  if not user:
+    return True
+  bot_name, bot_user_id = get_bot_info_by_id(bot_id)
+  if not (bot_name or bot_user_id):
+    return True
+  return user == bot_user_id
 
 
 def get_username_by_bot_id(bot_id):
@@ -96,7 +116,7 @@ def get_message_author_info(event, client):
   user_id = event.get("user")
   bot_id = event.get("bot_id")
 
-  if bot_id:
+  if is_bot_sender(event):
     user_name = get_username_by_bot_id(bot_id)
     user_email = None
   else:
