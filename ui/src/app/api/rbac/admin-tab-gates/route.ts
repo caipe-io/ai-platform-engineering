@@ -7,6 +7,7 @@ import {
 adminSurfaceObject,
 BASELINE_ADMIN_SURFACES,
 baselineBootstrapTuples,
+baselineMemberTuples,
 getBaselineFgaProfile,
 } from "@/lib/rbac/baseline-access";
 import { batchCheckOpenFgaTuples,checkOpenFgaTuple,listOpenFgaObjects,writeOpenFgaTuples } from "@/lib/rbac/openfga";
@@ -203,7 +204,7 @@ interface WebexSpaceMapping {
 const _baselineRepairSeen = new Map<string, number>();
 const BASELINE_REPAIR_TTL_MS = 60_000;
 
-async function repairCurrentUserBaseline(subject: string, isAdmin: boolean): Promise<void> {
+async function repairCurrentUserBaseline(subject: string): Promise<void> {
   if (process.env.NODE_ENV !== "test") {
     const now = Date.now();
     const last = _baselineRepairSeen.get(subject);
@@ -213,7 +214,9 @@ async function repairCurrentUserBaseline(subject: string, isAdmin: boolean): Pro
   try {
     const profile = await getBaselineFgaProfile();
     await writeOpenFgaTuples({
-      writes: baselineBootstrapTuples(subject, isAdmin, profile),
+      // Effective/cached admin status is not an explicit independent grant.
+      // Only login reconciliation may repair privileged login baselines.
+      writes: baselineMemberTuples(subject, profile),
       deletes: [],
     });
   } catch {
@@ -474,7 +477,7 @@ async function getAdminTabGates(request?: NextRequest) {
     // Single HTTP round-trip for all primary checks + baseline repair in parallel.
     const [batchResults] = await Promise.all([
       batchCheckOpenFgaTuples(batchEntries.map((e) => e.tuple)),
-      repairCurrentUserBaseline(currentSubject!, isAdmin),
+      repairCurrentUserBaseline(currentSubject!),
     ]);
 
     const primaryAllowed = new Map<AdminTabKey, boolean>();
@@ -586,7 +589,7 @@ async function getAdminTabGates(request?: NextRequest) {
   const [tabResults] = await Promise.all([
     Promise.all(ALL_TABS.map(evaluateTab)),
     currentSubject && !simulatedUser
-      ? repairCurrentUserBaseline(currentSubject, isAdmin)
+      ? repairCurrentUserBaseline(currentSubject)
       : Promise.resolve(),
   ]);
 

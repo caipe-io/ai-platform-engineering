@@ -312,6 +312,16 @@ describe("dynamic agents RBAC routes", () => {
     });
   });
 
+  it("repairs member access without writing administrator grants from a cached admin session", async () => {
+    mockGetCollection.mockResolvedValue({ find: jest.fn().mockReturnValue({ sort: jest.fn().mockReturnThis(), toArray: jest.fn().mockResolvedValue([]) }) });
+    const { GET } = await import("../available/route");
+    expect((await GET(request("/api/dynamic-agents/available"))).status).toBe(200);
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalled();
+    const writes = mockWriteOpenFgaTuples.mock.calls.flatMap(([diff]) => diff.writes);
+    expect(writes).toContainEqual({ user: `user:${session.sub}`, relation: "member", object: "organization:caipe" });
+    expect(writes.some((tuple: { relation: string }) => ["admin", "manager"].includes(tuple.relation))).toBe(false);
+  });
+
   it("filters chat-available agents through OpenFGA can_use instead of legacy visibility", async () => {
     const agents = [
       {

@@ -18,7 +18,7 @@ withErrorHandler,
 import { getCollection } from "@/lib/mongodb";
 import { projectAgentAppIdentity } from "@/lib/agentic-apps/agent-catalog";
 import { filterAgentsByOwnershipScopeForSession } from "@/lib/rbac/agent-ownership-scope";
-import { baselineBootstrapTuples,getBaselineFgaProfile } from "@/lib/rbac/baseline-access";
+import { baselineMemberTuples,getBaselineFgaProfile } from "@/lib/rbac/baseline-access";
 import { writeOpenFgaTuples } from "@/lib/rbac/openfga";
 import { filterResourcesByPermission } from "@/lib/rbac/resource-authz";
 import {
@@ -39,12 +39,14 @@ function normalizeDefaultAgentId(value: unknown): string | null {
   return trimmed && OPENFGA_ID_PATTERN.test(trimmed) ? trimmed : null;
 }
 
-async function ensureBaselineAccess(session: { sub?: unknown; role?: string }): Promise<void> {
+async function ensureBaselineAccess(session: { sub?: unknown }): Promise<void> {
   if (typeof session.sub !== "string" || !session.sub.trim()) return;
   try {
     const profile = await getBaselineFgaProfile();
     await writeOpenFgaTuples({
-      writes: baselineBootstrapTuples(session.sub.trim(), session.role === "admin", profile),
+      // Privileged baseline ownership belongs to login reconciliation. A read
+      // repair must never manufacture an independent administrator grant.
+      writes: baselineMemberTuples(session.sub.trim(), profile),
       deletes: [],
     });
   } catch (error) {
