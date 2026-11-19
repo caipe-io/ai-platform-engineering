@@ -92,6 +92,18 @@
         "method": "PUT",
         "path": "/api/templates/:id",
         "defaultEffect": "allow"
+      },
+      {
+        "action": "proxy:PUT",
+        "method": "PUT",
+        "path": "/api/artifacts/:id/retention",
+        "defaultEffect": "allow"
+      },
+      {
+        "action": "proxy:DELETE",
+        "method": "DELETE",
+        "path": "/api/artifacts/:id",
+        "defaultEffect": "allow"
       }
     ]
   },

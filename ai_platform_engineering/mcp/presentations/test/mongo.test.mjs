@@ -37,5 +37,30 @@ test('real Mongo: upload, planning, render and download enforce team, owner, ver
     await assert.rejects(store.render(member, { ...request, version: '0'.repeat(64), approved: true }), /changed/);
     await db.collection('presentation_artifacts').updateOne({ _id: rendered.artifact_id }, { $set: { expires_at: new Date(0) } });
     await assert.rejects(store.download(member, rendered.artifact_id), /expired/);
+    await assert.rejects(store.retain(member, rendered.artifact_id, true), /expired/);
+    assert.equal((await store.history(member)).length, 0);
+    // The TTL monitor is asynchronous: the HTTP/store boundary must deny immediately.
+    const indexes = await store.artifacts.indexes();
+    assert.ok(indexes.some(index => index.key.expires_at === 1 && index.expireAfterSeconds === 0));
+    const kept = await store.render(member, { ...request, approved: true });
+    const other = { ...member, subject: 'other-user' };
+    await assert.rejects(store.retain(other, kept.artifact_id, true), /not found/);
+    await assert.rejects(store.deleteArtifact(other, kept.artifact_id), /not found/);
+    await store.retain(member, kept.artifact_id, true);
+    const stored = await store.artifacts.findOne({ _id: kept.artifact_id });
+    assert.equal(stored.kept, true);
+    assert.equal(Object.hasOwn(stored, 'expires_at'), false); // No indexed date means no TTL deletion.
+    await store.artifacts.updateOne({ _id: kept.artifact_id }, { $set: { created_at: new Date(0) } });
+    assert.equal((await store.history(member))[0].kept, true);
+    assert.ok(await store.download(member, kept.artifact_id));
+    await assert.rejects(store.download({ ...member, teams: new Map() }, kept.artifact_id), /not found/);
+    const resumed = await store.retain(member, kept.artifact_id, false);
+    assert.ok(resumed.expires_at.getTime() > Date.now() + 6.99 * 86400_000);
+    assert.equal(resumed.kept, false);
+    assert.equal((await store.retain(member, kept.artifact_id, false)).expires_at.getTime(), resumed.expires_at.getTime());
+    await store.retain(member, kept.artifact_id, true);
+    await store.deleteArtifact(member, kept.artifact_id);
+    assert.equal(await store.artifacts.findOne({ _id: kept.artifact_id }), null);
+    await assert.rejects(store.download(member, kept.artifact_id), /not found/);
   } finally { await db.dropDatabase(); await client.close(); }
 });

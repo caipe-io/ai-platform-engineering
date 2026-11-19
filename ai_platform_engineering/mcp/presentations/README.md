@@ -58,8 +58,17 @@ using the host's canonical membership adapter. Untrusted identity headers and JW
 team hints cannot grant access. Authorization failures/outages fail closed.
 Team admins can upload/replace their team's templates; members of the owner or
 shared teams can render. Generated downloads additionally require the rendering
-subject and current template access. Expiry is checked immediately; Mongo TTL
-cleanup is asynchronous. Sharing a chat does not share its files.
+subject and current template access. New decks expire after seven days. **Keep**
+removes the expiry date so MongoDB’s TTL index leaves that file intact. **Kept**
+turns auto-delete back on with a fresh seven-day countdown. Repeating that request
+does not extend an existing countdown. Expired files cannot be kept or downloaded,
+even while asynchronous TTL cleanup is pending.
+
+**Delete** permanently removes the creator’s stored deck after an in-app
+confirmation; its download link stops working. Only the creator can keep, resume
+expiry or delete a deck, including when template access has been removed. Keeping
+a deck never bypasses current template access for downloads. Templates themselves
+persist. Sharing a chat does not share its files.
 
 ## Configuration
 
@@ -90,7 +99,7 @@ Keep proprietary presets, templates and fonts in deployment-owned private storag
 not generic source or images. The UI presents preset names rather than raw JSON.
 
 The Mongo user needs read/insert/update on `presentation_templates` and
-read/insert/update/createIndex on `presentation_artifacts`, plus database ping.
+read/insert/update/remove/createIndex on `presentation_artifacts`, plus database ping.
 Templates are capped at 8 MiB and outputs at 12 MiB. The parser limits ZIP expansion
 and entries, rejects sample slides, macros, embedded objects, remote embedded
 content and XML entities. Two bounded worker threads permit 192 MiB heap and

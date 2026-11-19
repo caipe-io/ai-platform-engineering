@@ -10,6 +10,7 @@ test('host policies allow actual app requests and reject undeclared writes', asy
     ['GET', '/'], ['GET', '/client.js'], ['GET', '/api/config'], ['GET', '/api/templates'],
     ['GET', '/api/artifacts'], ['GET', '/artifacts/example-id'], ['POST', '/api/templates'],
     ['PUT', '/api/templates/example-id'], ['POST', '/mcp'],
+    ['PUT', '/api/artifacts/example-id/retention'], ['DELETE', '/api/artifacts/example-id'],
   ]) assert.equal(resolveAgenticAppHttpPolicyAction(manifest, method, path)?.defaultEffect, 'allow', `${method} ${path}`);
   for (const [method, path] of [['POST', '/api/artifacts'], ['DELETE', '/api/templates/example-id'], ['PUT', '/api/templates']]) {
     assert.equal(resolveAgenticAppHttpPolicyAction(manifest, method, path), undefined, `${method} ${path}`);

@@ -6,6 +6,9 @@ import { runRenderWorker } from './render-worker.mjs';
 import { renderSchema, uploadSchema } from './schema.mjs';
 export const metadata = (template, defaultTemplateId) => ({ id: template._id, name: template.name, owner_team: template.owner_team, is_default: template._id === defaultTemplateId,
   shared_with: template.shared_with, version: template.version, modes: Object.keys(template.profile.modes), updated_at: template.updated_at });
+// Kept files have no TTL date. A stale expired file can never be kept or downloaded.
+const activeArtifact = (identity, now = new Date()) => ({ owner: identity.subject,
+  $or: [{ expires_at: { $gt: now } }, { kept: true, expires_at: { $exists: false } }] });
 export class PresentationStore {
   constructor(db, { publicUrl, downloadUrl = publicUrl, defaultTemplateId, artifactDays = 7, renderer = (bytes, profile, deck) => runRenderWorker('render', bytes, profile, deck) } = {}) {
     this.db = db;
@@ -61,17 +64,31 @@ export class PresentationStore {
     const id = randomUUID(); const expires_at = new Date(Date.now() + this.artifactDays * 86400_000);
     const filename = `${parsed.deck.title.toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 80) || 'presentation'}.pptx`;
     await this.artifacts.insertOne({ _id: id, template_id: template._id, template_version: template.version,
-      owner: identity.subject, bytes: new Binary(result.bytes), expires_at, filename, title: parsed.deck.title, created_at: new Date() });
+      owner: identity.subject, bytes: new Binary(result.bytes), kept: false, expires_at, filename, title: parsed.deck.title, created_at: new Date() });
     return { artifact_id: id, filename, slide_count: result.slide_count, warnings: result.warnings,
       template_version: template.version, expires_at, download_url: `${this.downloadUrl}/artifacts/${id}` };
   }
   async download(identity, id) {
-    const artifact = await this.artifacts.findOne({ _id: id, owner: identity.subject, expires_at: { $gt: new Date() } });
+    const artifact = await this.artifacts.findOne({ _id: id, ...activeArtifact(identity) });
     if (!artifact) throw new HttpError(404, 'Artifact not found or expired');
     await this.get(identity, artifact.template_id);
     return artifact;
   }
   async history(identity) {
-    return this.artifacts.find({ owner: identity.subject, expires_at: { $gt: new Date() } }, { projection: { bytes: 0 } }).sort({ created_at: -1 }).limit(50).toArray();
+    return this.artifacts.find(activeArtifact(identity), { projection: { bytes: 0 } }).sort({ created_at: -1 }).limit(50).toArray();
+  }
+  async retain(identity, id, keep) {
+    const now = new Date();
+    const artifact = await this.artifacts.findOneAndUpdate({ _id: id, ...activeArtifact(identity, now) }, [
+      { $set: { kept: keep, expires_at: keep ? '$$REMOVE' : {
+        $cond: [{ $eq: ['$kept', true] }, new Date(now.getTime() + this.artifactDays * 86400_000), '$expires_at'],
+      } } },
+    ], { returnDocument: 'after', projection: { bytes: 0 } });
+    if (!artifact) throw new HttpError(404, 'Artifact not found or expired');
+    return artifact;
+  }
+  async deleteArtifact(identity, id) {
+    const result = await this.artifacts.deleteOne({ _id: id, owner: identity.subject });
+    if (!result.deletedCount) throw new HttpError(404, 'Artifact not found');
   }
 }

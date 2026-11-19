@@ -6,9 +6,12 @@ import { ZodError } from 'zod';
 import { createAuthenticator, HttpError } from './auth.mjs';
 import { PresentationStore } from './storage.mjs';
 import { handleMcp } from './mcp.mjs';
-import { profileSchema, id } from './schema.mjs';
+import { profileSchema, id, retentionSchema } from './schema.mjs';
 import { page, clientScript } from './ui.mjs';
 const PPTX = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+const artifactMetadata = (artifact, store) => ({ id: artifact._id, title: artifact.title, filename: artifact.filename,
+  created_at: artifact.created_at, kept: artifact.kept === true, expires_at: artifact.expires_at ?? null,
+  download_url: `${store.downloadUrl}/artifacts/${artifact._id}` });
 export async function readBody(request, max) {
   const chunks = []; let size = 0;
   if (Number(request.headers['content-length']) > max) throw new HttpError(413, 'Request too large');
@@ -38,6 +41,7 @@ export function createPresentationServer({ store, authenticate, profiles, defaul
         teams: [...identity.teams].map(([slug, value]) => ({ slug, ...value })),
         profiles: profiles.map(profile => ({ id: profile.id, name: profile.name })),
         default_profile_id: defaultProfileId,
+        artifact_days: store.artifactDays,
       });
       if (path === '/api/templates' && request.method === 'GET') return send(response, 200, { templates: await store.list(identity) });
       if ((path === '/api/templates' && request.method === 'POST') || (/^\/api\/templates\/[^/]+$/.test(path) && request.method === 'PUT')) {
@@ -51,7 +55,16 @@ export function createPresentationServer({ store, authenticate, profiles, defaul
       }
       if (path === '/api/artifacts' && request.method === 'GET') {
         const artifacts = await store.history(identity);
-        return send(response, 200, { artifacts: artifacts.map(artifact => ({ id: artifact._id, title: artifact.title, filename: artifact.filename, created_at: artifact.created_at, expires_at: artifact.expires_at, download_url: `${store.downloadUrl}/artifacts/${artifact._id}` })) });
+        return send(response, 200, { artifacts: artifacts.map(artifact => artifactMetadata(artifact, store)) });
+      }
+      if (/^\/api\/artifacts\/[^/]+\/retention$/.test(path) && request.method === 'PUT') {
+        const { keep } = retentionSchema.parse(await readBody(request, 1024));
+        const artifact = await store.retain(identity, id.parse(path.split('/')[3]), keep);
+        return send(response, 200, artifactMetadata(artifact, store));
+      }
+      if (/^\/api\/artifacts\/[^/]+$/.test(path) && request.method === 'DELETE') {
+        await store.deleteArtifact(identity, id.parse(path.split('/').pop()));
+        return send(response, 200, { deleted: true });
       }
       if (/^\/artifacts\/[^/]+$/.test(path) && request.method === 'GET') {
         const artifact = await store.download(identity, id.parse(path.split('/').pop()));

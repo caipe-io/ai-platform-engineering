@@ -1,5 +1,6 @@
 import { z } from 'zod';
 export const id = z.string().uuid();
+export const retentionSchema = z.object({ keep: z.boolean() }).strict();
 const placeholder = z.string().regex(/^\d{1,3}$/);
 const layout = z.number().int().min(1).max(200);
 export const profileSchema = z.object({
