@@ -335,3 +335,6 @@ COMMIT_BODY.md
 reports/
 
 *.drawio
+
+# Local nginx maintenance state and upgrade lock.
+/.caipe-maintenance/
