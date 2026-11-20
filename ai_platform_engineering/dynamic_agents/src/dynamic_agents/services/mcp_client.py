@@ -13,6 +13,7 @@ import re
 import ssl
 import time
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any, Callable
 
 import httpx
@@ -298,12 +299,21 @@ def build_mcp_connection_config(
             if agent_gateway_url and healed_endpoint
             else healed_endpoint
         )
-        return attach_headers(
-            {
-                "url": url,
-                "transport": "streamable_http",
-            }
-        )
+        config: dict[str, Any] = {"url": url, "transport": "streamable_http"}
+        raw_overrides = os.getenv("MCP_SSE_READ_TIMEOUT_OVERRIDES", "")
+        if raw_overrides:
+            try:
+                overrides = json.loads(raw_overrides)
+            except json.JSONDecodeError as exc:
+                raise ValueError("MCP_SSE_READ_TIMEOUT_OVERRIDES must be a JSON object") from exc
+            if not isinstance(overrides, dict):
+                raise ValueError("MCP_SSE_READ_TIMEOUT_OVERRIDES must be a JSON object")
+            seconds = overrides.get(server.id)
+            if seconds is not None:
+                if isinstance(seconds, bool) or not isinstance(seconds, int) or not 1 <= seconds <= 3600:
+                    raise ValueError("MCP SSE read timeout must be an integer from 1 to 3600 seconds")
+                config["sse_read_timeout"] = timedelta(seconds=seconds)
+        return attach_headers(config)
     config: dict[str, Any] = {
         "command": server.command,
         "transport": "stdio",
