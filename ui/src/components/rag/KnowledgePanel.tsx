@@ -10,7 +10,7 @@
 
 import { Button } from "@/components/ui/button";
 import { useRAGHealth } from "@/hooks/use-rag-health";
-import { config } from "@/lib/config";
+import { config, getLogoFilterClass } from "@/lib/config";
 import Image from "next/image";
 import {
 Loader2,
@@ -87,7 +87,14 @@ export function KnowledgePanel() {
             />
             {/* Logo container */}
             <div className="relative w-16 h-16 rounded-2xl gradient-primary-br flex items-center justify-center shadow-2xl">
-              <Image src="/logo.svg" alt={config.appName} width={40} height={40} className="h-10 w-10" />
+              <Image
+                src={config.logoUrl}
+                alt={config.appName}
+                width={40}
+                height={40}
+                unoptimized
+                className={`h-10 w-10 ${getLogoFilterClass(config.logoStyle)}`}
+              />
             </div>
           </div>
           {/* Spinner */}
