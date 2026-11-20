@@ -114,6 +114,37 @@ describe("AgenticAppShell", () => {
     });
   });
 
+  it("reserves content space only while an assistant launcher is available", async () => {
+    const view = render(<AgenticAppShell appId="example-app" path={[]} />);
+    const frame = await screen.findByTitle("Example App");
+    await screen.findByTestId("assistant-overlay");
+    expect(frame.parentElement?.style.paddingBottom).toBe("calc(var(--app-assistant-bottom) + 3.5rem)");
+    view.unmount();
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ item: app({ assistantEnabled: false }) }) });
+    render(<AgenticAppShell appId="example-app" path={[]} />);
+    const withoutAssistant = await screen.findByTitle("Example App");
+    expect(screen.queryByTestId("assistant-overlay")).not.toBeInTheDocument();
+    expect(withoutAssistant.parentElement?.style.paddingBottom).toBe("");
+  });
+
+  it.each([0, 120])("tracks configured launcher inset %s and releases hidden space without remounting", async (bottomInset) => {
+    render(<AgenticAppShell appId="example-app" path={[]} />);
+    const frame = await screen.findByTitle("Example App") as HTMLIFrameElement;
+    await screen.findByTestId("assistant-overlay");
+    const configure = (visible: boolean) => act(() => window.dispatchEvent(new MessageEvent("message", {
+      origin: window.location.origin, source: frame.contentWindow,
+      data: { type: "caipe.agenticApp.assistant.configure.v1", version: "1.0", appId: "example-app", configuration: { version: "1.0", visible, bottomInset } },
+    })));
+    configure(true);
+    expect(frame.parentElement?.style.getPropertyValue("--app-assistant-bottom")).toBe(`${bottomInset}px`);
+    configure(false);
+    expect(screen.queryByTestId("assistant-overlay")).not.toBeInTheDocument();
+    expect(frame.parentElement?.style.paddingBottom).toBe("");
+    configure(true);
+    expect(screen.getByTitle("Example App")).toBe(frame);
+    expect(frame.parentElement?.style.paddingBottom).not.toBe("");
+  });
+
   it("renders the app and its configured assistant", async () => {
     render(<AgenticAppShell appId="example-app" path={[]} />);
 

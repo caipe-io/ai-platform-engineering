@@ -228,6 +228,7 @@ Do not renumber existing children when inserting a new assertion.
 | SEC-01.04 | Two approved tabs: revoke/expire fixture session, then replay/read/send from stale tab | Every protected operation denies according to declared policy; stale UI cannot authorize a write; request/stream evidence |
 | SEC-01.05 | Anonymous/invalid fixture credentials: read and mutate representative protected endpoints | Contract-appropriate denial or safe login redirect; no persisted mutation or protected payload; API/state evidence |
 | SEC-01.06 | Approved fixture operations: inspect responses, errors, audit and generated artifacts | Tokens/secrets remain redacted; record checks and sanitized evidence without copying secret values |
+| APP-01.01 | Generic hosted iframe at desktop and narrow viewport: pointer-activate a bottom-right primary action with assistant closed, hidden and a custom bottom inset | App action receives the click without opening the assistant; launcher still opens by pointer and keyboard; frame/form state persists |
 | RBAC-01.01 | Disposable subject: CAS grant `manage` on `system_config:platform_settings` before and after login promotion, then repeat demotion | Independent grant survives; explicit revoke followed by demotion never restores it. Adapter: `ui/src/lib/rbac/__tests__/admin-grant-ownership.test.ts`; source/service evidence is distinct from browser acceptance |
 | RBAC-01.02 | Same subject: CAS revoke while a valid login reason remains, then remove the login reason twice | Login access remains until demotion; both ownership reasons and effective access end revoked. Same ownership test adapter; retain tuple/ledger and decision evidence |
 | RBAC-01.03 | Inject existence-read failure, lost write response before/after commit, and ownership-confirmation failure for a new independent grant | Rows retaining `independent_pending` do not activate the new reason and block later reconciliation. A lost confirmation response may already have committed ownership: verify persisted state and report pending without assuming rollback; both grant APIs return `AUTHZ_WRITE_PENDING`, HTTP 503, no automatic retry; audit uses `PDP_WRITE_PENDING`. Adapters: ownership suite, `ui/src/lib/authz/__tests__/{index,write-pending-http}.test.ts`; these are fault-injection tests, not live SSO acceptance |
@@ -252,3 +253,9 @@ Record adapter gaps explicitly. This register and inventory do not restore the o
 Playwright runners, synthetic-cookie helpers or monolithic app endpoints. Port
 only compatible assertions to current owning suites; track every remaining gap
 in the run report and feature plan.
+
+### External-app footer reachability (APP-01)
+
+- At 1280×720 and a narrow viewport, place a primary action at an example iframe's bottom-right edge. With the assistant closed, pointer activation must invoke the app action without opening the assistant.
+- Repeat with the assistant hidden, unavailable, re-enabled and a configured bottom inset. Confirm the frame stays mounted and its form state survives.
+- Open/close the assistant by pointer and keyboard; the closed launcher must remain available outside the iframe content area. Component layout contracts alone do not establish browser hit-testing.
