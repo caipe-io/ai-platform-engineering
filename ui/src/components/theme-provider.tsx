@@ -34,7 +34,13 @@ function readSystemTheme(): "dark" | "light" {
 function subscribeTheme(onStoreChange: () => void): () => void {
   const media = window.matchMedia("(prefers-color-scheme: dark)");
   const onStorage = (event: StorageEvent) => {
-    if (event.key === "theme") onStoreChange();
+    if (event.key !== "theme") return;
+    const preference = event.newValue && CAIPE_THEMES.includes(event.newValue) ? event.newValue : "system";
+    const root = document.documentElement;
+    root.setAttribute("data-theme-preference", preference);
+    root.setAttribute("data-theme", preference === "system" ? readSystemTheme() : preference);
+    root.style.removeProperty("color-scheme");
+    onStoreChange();
   };
   window.addEventListener(THEME_EVENT, onStoreChange);
   window.addEventListener("storage", onStorage);
