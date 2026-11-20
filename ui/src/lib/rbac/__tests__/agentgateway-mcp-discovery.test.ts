@@ -117,6 +117,59 @@ describe("AgentGateway MCP discovery", () => {
     ]);
   });
 
+  it("uses the route ID when AgentGateway normalizes the backend target name", () => {
+    const config = {
+      binds: [
+        {
+          listeners: [
+            {
+              routes: [
+                {
+                  matches: [{ path: { pathPrefix: "/mcp/webex_meetings_pam" } }],
+                  backends: [
+                    {
+                      mcp: {
+                        targets: [
+                          {
+                            name: "webex-meetings-pam",
+                            mcp: { host: "http://mcp-webex-meetings:8000/mcp" },
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(extractAgentGatewayMcpTargets(config)).toEqual([
+      {
+        id: "webex_meetings_pam",
+        route_path: "/mcp/webex_meetings_pam",
+        target_endpoint: "http://mcp-webex-meetings:8000/mcp",
+      },
+    ]);
+
+    process.env.AGENT_GATEWAY_URL = "http://agentgateway:4000";
+    expect(
+      buildAgentGatewayMcpDiscovery(config, [
+        existingServer(
+          "webex_meetings_pam",
+          "http://agentgateway:4000/mcp/webex_meetings_pam",
+        ),
+      ]).targets,
+    ).toEqual([
+      expect.objectContaining({
+        id: "webex_meetings_pam",
+        status: "existing",
+      }),
+    ]);
+  });
+
   it.each(["config.yaml", "config.caipe-rbac.yaml"])(
     "keeps %s populated with the dev MCP services",
     (filename) => {
