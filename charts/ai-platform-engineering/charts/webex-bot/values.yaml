@@ -5,6 +5,9 @@ image:
   tag: ""
   pullPolicy: Always
 
+# -- References to existing registry Secrets in the release namespace.
+imagePullSecrets: []
+
 nameOverride: ""
 fullnameOverride: ""
 
