@@ -20,6 +20,8 @@ interface WebexBotSetting {
 }
 
 interface MockOptions {
+  failedPreferenceReads?: number;
+  failedAgentReads?: number;
   failWrites?: boolean;
   integrations?: { slack: boolean;webex: boolean };
   platformDefault?: string | null;
@@ -39,6 +41,8 @@ const DEFAULT_WEBEX_BOT: WebexBotSetting = {
 };
 
 function installFetchMock({
+  failedPreferenceReads = 0,
+  failedAgentReads = 0,
   failWrites = false,
   integrations = { slack: true,webex: true },
   platformDefault = "sre",
@@ -48,6 +52,9 @@ function installFetchMock({
   const mock = jest.fn(async (input: RequestInfo | URL,init?: RequestInit) => {
     const path = String(input);
     if (path.includes("/api/user/accessible-agents")) {
+      if (failedAgentReads-- > 0) {
+        return { ok: false, status: 503, json: async () => ({ success: false, error: "Agent service unavailable" }) } as Response;
+      }
       return {
         ok: true,
         status: 200,
@@ -67,6 +74,9 @@ function installFetchMock({
       } as Response;
     }
     if (path.includes("/api/user/preferences")) {
+      if (failedPreferenceReads-- > 0) {
+        return { ok: false, status: 503, json: async () => ({ success: false, error: "Preference service unavailable" }) } as Response;
+      }
       return {
         ok: true,
         status: 200,
@@ -236,5 +246,47 @@ describe("UserDefaultAgentsPanel",() => {
       "/api/user/preferences",
       expect.objectContaining({ method: "PUT" }),
     );
+  });
+
+  it("retries failed preference reads without refetching healthy agents or writing defaults", async () => {
+    const fetchMock = installFetchMock({ failedPreferenceReads: 1, preferences: { web_default_agent_id: "kb" } });
+    render(<UserDefaultAgentsPanel />);
+    await screen.findByText("Failed to load defaults: Preference service unavailable");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("combobox", { name: "Web default agent" })).toHaveTextContent("Knowledge Base Agent");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/user/accessible-agents"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/user/preferences")).toHaveLength(2);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(false);
+  });
+
+  it("retries only the agent lookup when preferences loaded successfully", async () => {
+    const fetchMock = installFetchMock({ failedAgentReads: 1 });
+    render(<UserDefaultAgentsPanel />);
+    await screen.findByText("Failed to load defaults: Agent service unavailable");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("combobox", { name: "Web default agent" })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/user/accessible-agents"))).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/user/preferences")).toHaveLength(1);
+  });
+
+  it("recovers both lookups when agents and preferences initially fail", async () => {
+    const fetchMock = installFetchMock({ failedAgentReads: 1, failedPreferenceReads: 1 });
+    render(<UserDefaultAgentsPanel />);
+    await screen.findByText("Failed to load defaults: Agent service unavailable");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("combobox", { name: "Web default agent" })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/user/accessible-agents"))).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/user/preferences")).toHaveLength(2);
+  });
+
+  it("keeps retry available after repeated preference-read failures", async () => {
+    const fetchMock = installFetchMock({ failedPreferenceReads: 2 });
+    render(<UserDefaultAgentsPanel />);
+    await screen.findByText("Failed to load defaults: Preference service unavailable");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Failed to load defaults: Preference service unavailable");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("combobox", { name: "Web default agent" })).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/user/preferences")).toHaveLength(3);
   });
 });
