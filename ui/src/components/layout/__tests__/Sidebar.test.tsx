@@ -154,13 +154,6 @@ jest.mock('@/components/ui/scroll-area', () => ({
   }) => <div ref={viewportRef} {...props}>{children}</div>,
 }))
 
-jest.mock('@/components/ui/tooltip', () => ({
-  Tooltip: ({ children }: unknown) => <>{children}</>,
-  TooltipContent: ({ children }: unknown) => <>{children}</>,
-  TooltipProvider: ({ children }: unknown) => <>{children}</>,
-  TooltipTrigger: ({ children }: unknown) => <>{children}</>,
-}))
-
 const mockToast = jest.fn()
 jest.mock('@/components/ui/toast', () => ({
   useToast: () => ({ toast: mockToast }),
@@ -1212,7 +1205,7 @@ describe('Sidebar — Live Status Indicator', () => {
       render(<Sidebar {...defaultProps} collapsed={true} />)
 
       expect(screen.getByRole('button', { name: /Hidden Title/ })).toBeInTheDocument()
-      expect(screen.getByText('Hidden Title')).toBeInTheDocument()
+      expect(screen.queryByText('Hidden Title')).not.toBeInTheDocument()
     })
 
     it('does not render "Live" or "New response" text when collapsed', () => {
@@ -1248,11 +1241,45 @@ describe('Sidebar — Live Status Indicator', () => {
 
       render(<Sidebar {...defaultProps} collapsed={true} />)
 
-      expect(await screen.findByText('Example Agent')).toBeInTheDocument()
-      expect(screen.getByLabelText('Execution harness: Claude Agent SDK')).toBeInTheDocument()
-      expect(
-        screen.getByRole('button', { name: /Review deployment\. Example Agent/ }),
-      ).toBeInTheDocument()
+      const row = await screen.findByRole('button', { name: /Review deployment\. Example Agent/ })
+      expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+      fireEvent.focus(row)
+      const tooltip = await screen.findByRole('tooltip')
+      expect(tooltip).toHaveTextContent('Example Agent')
+      expect(within(tooltip).getByLabelText('Execution harness: Claude Agent SDK')).toBeInTheDocument()
+    })
+
+    it.each(['Enter', ' '])('opens a collapsed conversation with %p', async (key) => {
+      mockConversations = [makeConv('conv-1', 'Keyboard target')]
+      render(<Sidebar {...defaultProps} collapsed={true} />)
+      const row = screen.getByRole('button', { name: /Keyboard target/ })
+      expect(row).toHaveAttribute('tabindex', '0')
+      fireEvent.keyDown(row, { key })
+      expect(mockSetActiveConversation).toHaveBeenCalledWith('conv-1')
+      expect(mockPush).toHaveBeenCalledWith('/chat/conv-1')
+    })
+
+    it.each([
+      { scheduled: false, autonomous: false },
+      { scheduled: true, autonomous: false },
+      { scheduled: false, autonomous: true },
+      { scheduled: true, autonomous: true },
+    ])('shows independent schedule details for %p', async ({ scheduled, autonomous }) => {
+      mockConversationFilter = 'all'
+      window.localStorage.setItem('caipe-chat-history-filter', 'all')
+      mockConversations = [makeConv('conv-1', 'Example run', {
+        source: autonomous ? 'autonomous' : undefined,
+        metadata: {
+          ...(scheduled ? { schedule_id: 'schedule-1', schedule_title: 'Daily review' } : {}),
+          ...(autonomous ? { task_id: 'task-1', task_name: 'Example task' } : {}),
+        },
+      })]
+      render(<Sidebar {...defaultProps} collapsed={true} />)
+      fireEvent.mouseEnter(await screen.findByRole('button', { name: /Example run/ }))
+      const tooltip = await screen.findByRole('tooltip')
+      if (scheduled) expect(tooltip).toHaveTextContent('Daily review')
+      else expect(tooltip).not.toHaveTextContent('Scheduled run')
+      if (autonomous) expect(tooltip).toHaveTextContent('Autonomous task task-1: Example task')
     })
   })
   it('shows collapsible groups by agent and preserves the ungrouped option', async () => {
