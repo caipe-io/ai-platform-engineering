@@ -4,13 +4,14 @@
 import type { Collection, Document } from 'mongodb';
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
-import { authOptions, isBootstrapAdmin } from '@/lib/auth-config';
+import { authOptions, extractGroups, hasRequiredGroup, isBootstrapAdmin } from '@/lib/auth-config';
 import { getConfig } from '@/lib/config';
 import { reconcileConversationOwnerIdentity } from '@/lib/conversation-owner-identity';
 import { getCollection } from '@/lib/mongodb';
 import type { Conversation, User } from '@/types/mongodb';
 import type { TeamMembershipSource } from '@/types/identity-group-sync';
 import {
+  type JWTIdentity,
   LocalSkillsJWTValidationError,
   validateBearerJWT,
   validateLocalSkillsJWT,
@@ -544,6 +545,18 @@ export async function withAuth<T>(
 }
 
 /**
+ * Whether a validated bearer identity may receive the member baseline. Applies
+ * the web login admission rules (group claim config, filters, required group)
+ * and only trusts tokens whose issuer and audience were verified.
+ */
+export function isBearerBaselineEligible(
+  identity: Pick<JWTIdentity, 'sub' | 'isServiceAccount' | 'issuerAndAudienceVerified' | 'claims'>
+): boolean {
+  if (!identity.sub || identity.isServiceAccount || !identity.issuerAndAudienceVerified) return false;
+  return hasRequiredGroup(extractGroups(identity.claims ?? {}));
+}
+
+/**
  * Authenticate via Bearer JWT token or NextAuth session (dual-auth).
  *
  * 1. If `Authorization: Bearer <token>` header is present, validate the JWT.
@@ -674,6 +687,11 @@ export async function getAuthFromBearerOrSession(
     };
     if (process.env.NODE_ENV !== 'test') {
       await persistKeycloakSubMapping(bearerSession, user);
+      // Bot users may never sign in to the web UI, where login writes this baseline.
+      if (identity.sub && isBearerBaselineEligible(identity)) {
+        const { ensureBearerUserBaselineAccess } = await import('@/lib/rbac/login-openfga-bootstrap');
+        await ensureBearerUserBaselineAccess(identity.sub, identity.email);
+      }
     }
     return {
       user,

@@ -716,4 +716,134 @@ describe("login OpenFGA bootstrap", () => {
       expect(result.warning).toContain("openfga down");
     });
   });
+
+  describe("ensureBearerUserBaselineAccess (bot users without a web login)", () => {
+    it("writes the member baseline once per subject across repeated requests", async () => {
+      const { ensureBearerUserBaselineAccess } = await import("../login-openfga-bootstrap");
+
+      const first = await ensureBearerUserBaselineAccess("sub-bot-user");
+      await ensureBearerUserBaselineAccess("sub-bot-user");
+
+      expect(first.status).toBe("completed");
+      expect(mockWriteOpenFgaTuples).toHaveBeenCalledTimes(1);
+      expect(mockWriteOpenFgaTuples.mock.calls[0][0].writes).toEqual(
+        expect.arrayContaining([
+          { user: "user:sub-bot-user", relation: "caller", object: "mcp_gateway:list" },
+        ])
+      );
+    });
+
+    it("retries on the next request after a failed write", async () => {
+      mockWriteOpenFgaTuples.mockRejectedValueOnce(new Error("openfga down"));
+      const { ensureBearerUserBaselineAccess } = await import("../login-openfga-bootstrap");
+
+      const failed = await ensureBearerUserBaselineAccess("sub-bot-user");
+      const retried = await ensureBearerUserBaselineAccess("sub-bot-user");
+
+      expect(failed.status).toBe("failed");
+      expect(retried.status).toBe("completed");
+      expect(mockWriteOpenFgaTuples).toHaveBeenCalledTimes(2);
+    });
+
+    it("writes nothing and retries when the team override lookup fails", async () => {
+      mockGetRbacCollection.mockRejectedValueOnce(new Error("mongo down"));
+      const { ensureBearerUserBaselineAccess } = await import("../login-openfga-bootstrap");
+
+      const failed = await ensureBearerUserBaselineAccess("sub-bot-user", "user@example.com");
+
+      expect(failed.status).toBe("failed");
+      expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
+      const retried = await ensureBearerUserBaselineAccess("sub-bot-user", "user@example.com");
+      expect(retried.status).toBe("completed");
+    });
+
+    it("writes nothing when the grant profiles cannot be read", async () => {
+      mockGetCollection.mockRejectedValue(new Error("mongo down"));
+      const { ensureBearerUserBaselineAccess } = await import("../login-openfga-bootstrap");
+
+      const result = await ensureBearerUserBaselineAccess("sub-bot-user", "user@example.com");
+
+      expect(result.status).toBe("failed");
+      expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
+    });
+
+    it("writes nothing when a team override names an undefined profile", async () => {
+      mockGetCollection.mockImplementation(async (name: string) => {
+        if (name === "teams") {
+          return {
+            find: jest.fn().mockReturnValue({
+              toArray: jest.fn().mockResolvedValue([
+                { _id: "team-1", slug: "support", name: "Support", baseline_profile_overrides: { member_profile_id: "deleted-profile" } },
+              ]),
+            }),
+          };
+        }
+        return { findOne: jest.fn().mockResolvedValue(null) };
+      });
+      const sources = stubTeamMembershipSources([
+        { team_id: "team-1", team_slug: "support", user_subject: "sub-bot-user", relationship: "member", source_type: "manual", status: "active" },
+      ]);
+      mockGetRbacCollection.mockImplementation(async () => sources);
+      const { ensureBearerUserBaselineAccess } = await import("../login-openfga-bootstrap");
+
+      const result = await ensureBearerUserBaselineAccess("sub-bot-user", "user@example.com");
+
+      expect(result.status).toBe("failed");
+      expect(sources.find).toHaveBeenCalledWith({
+        status: "active",
+        $or: [{ user_subject: "sub-bot-user" }, { user_email: "user@example.com" }],
+      });
+      expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
+    });
+
+    it("applies a team member-profile override instead of the global baseline", async () => {
+      mockGetCollection.mockImplementation(async (name: string) => {
+        if (name === "openfga_baseline_profiles") {
+          return {
+            findOne: jest.fn().mockImplementation(async (query: { _id: string }) =>
+              query._id === "profiles_v2"
+                ? {
+                    _id: "profiles_v2",
+                    global_member_profile_id: "org-member",
+                    global_admin_profile_id: "org-admin",
+                    profiles: [
+                      { id: "org-member", name: "Organization member", role: "member", grants: ["organization-member"] },
+                      { id: "org-admin", name: "Organization admin", role: "admin", grants: ["organization-admin"] },
+                      { id: "support-member", name: "Support member", role: "member", grants: ["admin-surface:feedback:read"] },
+                    ],
+                  }
+                : null,
+            ),
+          };
+        }
+        if (name === "teams") {
+          return {
+            find: jest.fn().mockReturnValue({
+              toArray: jest.fn().mockResolvedValue([
+                { _id: "team-1", slug: "support", name: "Support", baseline_profile_overrides: { member_profile_id: "support-member" } },
+              ]),
+            }),
+          };
+        }
+        return { findOne: jest.fn().mockResolvedValue(null) };
+      });
+      mockGetRbacCollection.mockImplementation(async (key: string) => {
+        if (key === "teamMembershipSources") {
+          return stubTeamMembershipSources([
+            { team_id: "team-1", team_slug: "support", user_email: "user@example.com", relationship: "member", source_type: "manual", status: "active" },
+          ]);
+        }
+        throw new Error(`unexpected rbac collection ${key}`);
+      });
+      const { ensureBearerUserBaselineAccess } = await import("../login-openfga-bootstrap");
+
+      const result = await ensureBearerUserBaselineAccess("sub-bot-user", "user@example.com");
+
+      expect(result.status).toBe("completed");
+      expect(mockWriteOpenFgaTuples).toHaveBeenCalledWith({
+        writes: [{ user: "user:sub-bot-user", relation: "reader", object: "admin_surface:feedback" }],
+        deletes: [],
+      });
+    });
+  });
 });
