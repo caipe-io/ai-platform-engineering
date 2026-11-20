@@ -27,15 +27,14 @@ flowchart LR
 | Setting | Default | Meaning |
 |---|---|---|
 | `LLM_GATEWAY_ENABLED` | `false` | Global routing switch. `false` uses direct-provider configuration and bypasses the gateway even when configured and reachable; `true` routes migrated paths through the gateway and fails closed on gateway failure. |
-| `OPENAI_COMPATIBLE_BASE_URL` | — | Gateway endpoint (from `llm_wrapper`). |
+| `LLM_GATEWAY_BASE_URL` | — | Gateway endpoint. Separate from `OPENAI_COMPATIBLE_BASE_URL`, which stays the direct-provider setting (FR-020). |
 | `LLM_GATEWAY_AUTH` | `jwt` | `jwt` (gateway token) · `key` (per-agent gateway key). A gateway property, independent of the adapter. |
 | `LLM_GATEWAY_AUDIENCE` | `llm-gateway` | `aud` of gateway tokens. The gateway must expect the same value. |
-| `LLM_GATEWAY_ADAPTER` | `none` | Gateway management integration: `litellm` · `agentgateway` · `kong` · `agentrouter` · `none`. `none` disables management integration, not gateway routing (see [adapter contract](./contracts/gateway-adapter.md)). |
+| `LLM_GATEWAY_ADAPTER` | `none` | Gateway management integration: `litellm` · `agentgateway` · `agentrouter` · `kong` · `none` (management disabled; gateway routing unaffected). See [adapter contract](./contracts/gateway-adapter.md). |
 | `LLM_GATEWAY_DEFAULT_TEAM` | `platform` | Team charged for agents without `owner_team_slug`. Provisioned at startup. |
-| `LLM_GATEWAY_BUDGET_SIGNAL` | named adapter default; unset for `none` | Gateway-limit recognition rule (research Decision 10). Required for budget-error conformance with adapter `none`. |
 | Adapter admin credential | — | Through the existing secret strategies. Only needed by the UI backend for management integration; not required for `none`. |
 
-Direct-provider configuration and credentials must remain available for disabled mode; configuring a gateway endpoint alone does not enable routing.
+Direct-provider credentials remain in the deployment secret store, not in gateway-enabled inference pods. Changing mode updates configuration and credential references together and replaces the affected pods; direct-mode pods load provider credentials at startup. Configuring a gateway endpoint alone does not enable routing.
 
 ## 2. `llm_models` (existing collection, additive fields)
 
@@ -56,13 +55,14 @@ Direct-provider configuration and credentials must remain available for disabled
 | `iss` | `https://idp.example.com/realms/caipe` | signer |
 | `aud` | `LLM_GATEWAY_AUDIENCE` | setting |
 | `sub` | user or task-owner subject (effective principal) | caller token / trusted run binding (#2891) |
-| `act` | `{"sub": "service-account-dynamic-agents"}` | acting service (#2885) |
+| `azp` | `caipe-dynamic-agents` | sending client, set by Keycloak; no custom mapper |
 | `org` | `example-org` | existing `org` claim (budget key namespace) |
 | `agent_id` | `agent-example` | Keycloak scope ([K2](./research.md#identity-option-legend)) or signer ([C1](./research.md#identity-option-legend)) |
 | `team_id` | `team-example` | agent `owner_team_slug`, else `LLM_GATEWAY_DEFAULT_TEAM` |
-| `exp` | ≤ 5 min | signer |
+| `exp` | expiry timestamp, issued TTL ≤ 5 min | signer |
 
 - Cache key: (`sub`, `agent_id`, `owner_team_slug`). The key alone does not ensure ownership consistency: CAIPE must check credential bindings against committed ownership before use or caching, block new calls during unresolved transfers, and invalidate cached credentials for the previous owner on completion.
+- Expiry: gateway validation may allow 0–60 seconds of documented leeway. Runtime cache use ends at `exp`, not `exp + leeway`; refresh beforehand where possible and fail closed if no valid token is available.
 - Caller kind (user, service account, autonomous) is an OTel label set by the runtime, not a claim.
 
 ## 4. Agent scope (Keycloak, [K2](./research.md#identity-option-legend) only)
@@ -71,7 +71,7 @@ Direct-provider configuration and credentials must remain available for disabled
 |---|---|
 | name | `llm-agent-<agent_id>` |
 | mappers | hardcoded claims `agent_id`, `team_id` |
-| assigned to | dynamic-agents exchanger client (optional scope) |
+| assigned to | `caipe-dynamic-agents` exchange client (optional scope) |
 | lifecycle | created with the agent; synchronized through a recoverable ownership-transfer operation; deleted with the agent |
 
 - MongoDB ownership is authoritative. Transfer coordination must prevent calls from using inconsistent ownership and credential bindings, and support recovery after interruption. The recovery mechanism is an implementation decision; updating Keycloak before saving MongoDB is not sufficient on its own.
@@ -82,6 +82,11 @@ Direct-provider configuration and credentials must remain available for disabled
 - Grant its `can_use` permission to users authorized to use AI-assist through the existing authorization model; model access remains a separate CAS check.
 - Prepare its Keycloak scope (K2), signer mapping (C1), or per-agent gateway key according to the configured authentication mode, including any gateway principal required before first use.
 - Use the authenticated caller as `sub`, the system agent as `agent_id`, and its owning team as `team_id` (or `LLM_GATEWAY_DEFAULT_TEAM` when ownerless). The agent being drafted or edited supplies none of these identity bindings.
+
+### RAG identity preparation (phase 4 gate)
+
+- Embedding and ontology calls need explicit effective-principal and agent/team billing bindings, including background work without an interactive bearer. T401 and T402 define and provision those identities before gateway activation.
+- Reusing `build_chat_model` or injecting gateway settings does not establish those identities. Any service-principal alternative must be reconciled with the user/owner JWT and attribution contracts before implementation.
 
 ## 5. `llm_quota_requests` (new Mongo collection)
 
