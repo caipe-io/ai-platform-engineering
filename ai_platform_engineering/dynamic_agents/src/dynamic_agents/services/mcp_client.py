@@ -1227,6 +1227,36 @@ def _collapse_top_level_union_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return collapsed
 
 
+_REGEX_LOOKAROUND_RE = re.compile(r"\(\?<?[=!]")
+
+
+def _strip_lookaround_patterns(node: Any, path: str = "$") -> tuple[Any, list[str]]:
+    """Return a copy of a JSON schema without ``pattern`` values using regex lookaround.
+
+    Returns ``(schema, stripped_paths)``. Patterns are advisory; the MCP server
+    still validates arguments itself.
+    """
+    stripped: list[str] = []
+    if isinstance(node, dict):
+        out: dict[str, Any] = {}
+        for key, value in node.items():
+            child_path = f"{path}.{key}"
+            if key == "pattern" and isinstance(value, str) and _REGEX_LOOKAROUND_RE.search(value):
+                stripped.append(child_path)
+                continue
+            out[key], child_stripped = _strip_lookaround_patterns(value, child_path)
+            stripped.extend(child_stripped)
+        return out, stripped
+    if isinstance(node, list):
+        items = []
+        for i, value in enumerate(node):
+            item, child_stripped = _strip_lookaround_patterns(value, f"{path}[{i}]")
+            items.append(item)
+            stripped.extend(child_stripped)
+        return items, stripped
+    return node, stripped
+
+
 def _model_safe_args_schema(tool: BaseTool, agent_name: str) -> Any:
     """Return an args schema that model providers can accept for tool binding."""
     try:
@@ -1238,21 +1268,36 @@ def _model_safe_args_schema(tool: BaseTool, agent_name: str) -> Any:
     if not schema:
         return tool.args_schema
 
-    top_level_keys = [key for key in TOP_LEVEL_UNION_SCHEMA_KEYS if key in schema]
-    if not top_level_keys:
-        return tool.args_schema
+    changed = False
 
-    # assisted-by Codex Codex-sonnet-4-6
-    # Bedrock Converse rejects top-level oneOf/anyOf/allOf in tool input
-    # schemas. Collapse just the root into an object while preserving known
-    # properties so one bad MCP schema cannot prevent quick chat from starting.
-    logger.warning(
-        "[%s] Sanitizing Bedrock-incompatible top-level schema for tool '%s' (keys=%s)",
-        agent_name,
-        tool.name,
-        ",".join(top_level_keys),
-    )
-    return _collapse_top_level_union_schema(schema)
+    top_level_keys = [key for key in TOP_LEVEL_UNION_SCHEMA_KEYS if key in schema]
+    if top_level_keys:
+        # assisted-by Codex Codex-sonnet-4-6
+        # Bedrock Converse rejects top-level oneOf/anyOf/allOf in tool input
+        # schemas. Collapse just the root into an object while preserving known
+        # properties so one bad MCP schema cannot prevent quick chat from starting.
+        logger.warning(
+            "[%s] Sanitizing Bedrock-incompatible top-level schema for tool '%s' (keys=%s)",
+            agent_name,
+            tool.name,
+            ",".join(top_level_keys),
+        )
+        schema = _collapse_top_level_union_schema(schema)
+        changed = True
+
+    # Azure/OpenAI reject the whole request (400 invalid_json_schema) if any tool
+    # has a regex lookaround in a `pattern`, so one MCP tool would break the agent.
+    schema, stripped = _strip_lookaround_patterns(schema)
+    if stripped:
+        logger.warning(
+            "[%s] Stripped unsupported regex lookaround patterns from tool '%s': %s",
+            agent_name,
+            tool.name,
+            ", ".join(stripped),
+        )
+        changed = True
+
+    return schema if changed else tool.args_schema
 
 
 def wrap_tools_with_error_handling(
