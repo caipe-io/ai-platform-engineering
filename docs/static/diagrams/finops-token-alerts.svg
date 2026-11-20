@@ -17,8 +17,8 @@
 <rect x="760" y="105" width="264" height="110" rx="12" fill="#fff3df" stroke="#895209" stroke-width="1.4"/>
 <text x="778" y="126" fill="#895209" font-size="12" font-weight="750">EXTERNAL</text>
 <text x="778" y="154" fill="#172644" font-size="19" font-weight="720">Webex</text>
-<text x="778" y="181" fill="#465978" font-size="15" font-weight="500">Deliver to allowlisted recipients</text>
-<text x="778" y="200" fill="#465978" font-size="15" font-weight="500">when notification is enabled</text>
+<text x="778" y="181" fill="#465978" font-size="15" font-weight="500">Send to the delivery address</text>
+<text x="778" y="200" fill="#465978" font-size="15" font-weight="500">when the allowlist check passes</text>
 <rect x="40" y="285" width="264" height="110" rx="12" fill="#def6ee" stroke="#14705c" stroke-width="1.4"/>
 <text x="58" y="306" fill="#14705c" font-size="12" font-weight="750">STORE</text>
 <text x="58" y="334" fill="#172644" font-size="19" font-weight="720">Deployment settings</text>
@@ -37,5 +37,5 @@
 <path d="M532,215 L532,285 M527.4,276.1 L532,285 L536.6,276.1" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
 <text x="542" y="252" fill="#465978" font-size="12" font-weight="600">Check / record</text>
 <line x1="40" x2="1024" y1="407" y2="407" stroke="#d5deef"/>
-<text x="40" y="437" fill="#465978" font-size="15" font-weight="500">Use dry run to verify thresholds. Alerting reports usage and does not block model requests.</text>
+<text x="40" y="437" fill="#465978" font-size="15" font-weight="500">The allowlist checks the monitored identity or delivery address. Use dry run to verify each target.</text>
 </g></svg>

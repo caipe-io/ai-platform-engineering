@@ -24,12 +24,17 @@ See the [Cloudability MCP reference](https://github.com/caipe-io/ai-platform-eng
 
 ## Configure LiteLLM token-usage alerts
 
-The optional scanner reads LiteLLM daily usage for configured users or API keys.
-It compares usage against a token limit and can notify allowlisted Webex
-recipients. Check the outcome in dry-run mode before enabling delivery.
+The optional scanner reads LiteLLM daily usage for configured users or API keys
+and compares it with a token limit. The allowlist check passes when the
+monitored identity (a user or API key) or the Webex delivery address matches
+an entry.
+Review each configured delivery address and check the outcome in dry-run mode
+before enabling delivery.
 
-Follow the [LiteLLM alert configuration](https://github.com/caipe-io/ai-platform-engineering/tree/1.4.0/ai_platform_engineering/mcp/litellm#token-usage-alerts)
-to set limits, thresholds, recipient allowlists, and the scanner interval.
+Set limits, thresholds, and the allowlist using the
+[token-usage alert settings](https://github.com/caipe-io/ai-platform-engineering/tree/1.4.0/ai_platform_engineering/mcp/litellm#token-usage-alerts).
+Then use the [automatic Webex alert settings](https://github.com/caipe-io/ai-platform-engineering/tree/1.4.0/ai_platform_engineering/mcp/litellm#automatic-webex-alerts)
+to enable the scanner, configure targets, and set the scan interval.
 Alerts report threshold crossings. Gateway budget enforcement is tracked in
 the [budget routing epic](https://github.com/caipe-io/ai-platform-engineering/issues/2537).
 
