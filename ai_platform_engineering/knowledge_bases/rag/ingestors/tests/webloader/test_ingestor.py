@@ -25,7 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # Stub out modules the ingestor imports at module-level that require
-# environment setup (Scrapy worker pool, Redis client construction, etc.)
+# environment setup (Scrapy worker pool, etc.)
 # ---------------------------------------------------------------------------
 
 
@@ -55,20 +55,6 @@ sys.modules.setdefault("loader", _loader_pkg)
 sys.modules.setdefault("loader.scrapy_loader", _loader_scrapy)
 sys.modules.setdefault("loader.worker_pool", _loader_pool)
 sys.modules.setdefault("loader.worker_types", _loader_types)
-
-# redis stub (module-level `Redis.from_url(...)` call)
-_redis_instance = MagicMock()
-_redis_instance.blpop = AsyncMock(return_value=None)
-_redis_instance.smembers = AsyncMock(return_value=set())
-_redis_instance.close = AsyncMock()
-_redis_mod = _make_stub_module("redis")
-_redis_async_mod = _make_stub_module("redis.asyncio")
-_redis_class = MagicMock(return_value=_redis_instance)
-_redis_class.from_url = MagicMock(return_value=_redis_instance)
-_redis_async_mod.Redis = _redis_class
-_redis_mod.asyncio = _redis_async_mod
-sys.modules.setdefault("redis", _redis_mod)
-sys.modules.setdefault("redis.asyncio", _redis_async_mod)
 
 # ---------------------------------------------------------------------------
 # Now safely import the module under test
@@ -921,6 +907,13 @@ class TestReloadDatasource:
 class TestPeriodicReload:
   """Tests for the cron-style scheduled reload check."""
 
+  @pytest.fixture(autouse=True)
+  def _mock_storage(self, monkeypatch):
+    monkeypatch.setattr(ingestor_module, "redis_client", AsyncMock())
+    manager = make_job_manager()
+    manager.storage = AsyncMock()
+    monkeypatch.setattr(ingestor_module, "JobManager", MagicMock(return_value=manager))
+
   @staticmethod
   def _fresh_ds(
     datasource_id: str = "ds-1",
@@ -1150,8 +1143,8 @@ class TestPeriodicReload:
 
     mock_reload.assert_awaited_once()
 
-  async def test_job_manager_instantiated_from_redis_client(self):
-    """periodic_reload creates its own JobManager from the module-level redis_client."""
+  async def test_job_manager_instantiated_from_mongo_storage(self):
+    """periodic_reload creates its own JobManager from the module-level MongoDB storage."""
     ds = self._fresh_ds(seconds_ago=90000, reload_interval=86400)
     client = make_client("ing-1", [ds])
 
@@ -1166,6 +1159,7 @@ class TestPeriodicReload:
     ):
       mock_jm_instance = MagicMock()
       mock_jm_instance.get_jobs_by_datasource = AsyncMock(return_value=[])
+      mock_jm_instance.storage = AsyncMock()
       MockJM.return_value = mock_jm_instance
       await periodic_reload(client)
 

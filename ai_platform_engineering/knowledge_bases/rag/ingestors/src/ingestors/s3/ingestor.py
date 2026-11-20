@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from fnmatch import fnmatchcase
 import hashlib
 import os
+import asyncio
 from pathlib import PurePosixPath
 import re
 import tempfile
@@ -19,6 +20,7 @@ import time
 from typing import Any, Iterable, Iterator
 
 import boto3
+from common.ingestor_listener import run_standalone_ingestion
 from common.ingestor import Client, IngestorBuilder
 from common.job_manager import JobStatus
 from common.models.rag import DataSourceInfo, DocumentMetadata
@@ -550,11 +552,7 @@ class S3DocumentLoader(BaseLoader):
   def lazy_load(self) -> Iterator[Document]:
     """Yield accepted S3 objects as LangChain Documents."""
     for obj in self._list_object_infos():
-      try:
-        text = self._read_object_text(obj)
-      except UnicodeDecodeError:
-        logger.warning(f"Skipping non-UTF-8 S3 object: {obj.s3_uri}")
-        continue
+      text = self._read_object_text(obj)
       if not text.strip():
         logger.info(f"Skipping empty S3 object: {obj.s3_uri}")
         continue
@@ -578,58 +576,62 @@ async def sync_s3_buckets(client: Client) -> None:
       s3_clients[bucket_spec.account_name] = create_s3_client(bucket_spec.account_name)
     s3_client = s3_clients[bucket_spec.account_name]
     datasource_info = build_datasource_info(client, bucket_spec)
-    await client.upsert_datasource(datasource_info)
+    async def sync_datasource() -> None:
+      await client.upsert_datasource(datasource_info)
 
-    fresh_until = utils.get_fresh_until(SYNC_INTERVAL)
-    loader = S3DocumentLoader(
-      s3_client=s3_client,
-      bucket_spec=bucket_spec,
-      datasource_id=datasource_info.datasource_id,
-      ingestor_id=client.ingestor_id or "",
-      fresh_until=fresh_until,
-      allowed_file_patterns=allowed_file_patterns,
-      ignore_prefixes=ignore_prefixes,
-      ignore_regex=ignore_regex,
-      max_files_per_bucket=max_files_per_bucket,
-    )
+      fresh_until = utils.get_fresh_until(SYNC_INTERVAL)
+      loader = S3DocumentLoader(
+        s3_client=s3_client,
+        bucket_spec=bucket_spec,
+        datasource_id=datasource_info.datasource_id,
+        ingestor_id=client.ingestor_id or "",
+        fresh_until=fresh_until,
+        allowed_file_patterns=allowed_file_patterns,
+        ignore_prefixes=ignore_prefixes,
+        ignore_regex=ignore_regex,
+        max_files_per_bucket=max_files_per_bucket,
+      )
 
-    job_response = await client.create_job(
-      datasource_id=datasource_info.datasource_id,
-      job_status=JobStatus.IN_PROGRESS,
-      message=f"Syncing S3 documents from {bucket_spec.bucket}:{bucket_spec.prefix}",
-      total=0,
-    )
-    job_id = job_response["job_id"]
-
-    try:
-      documents = list(loader.lazy_load())
-      await client.update_job(
-        job_id=job_id,
+      job_response = await client.create_job(
+        datasource_id=datasource_info.datasource_id,
         job_status=JobStatus.IN_PROGRESS,
-        message=f"Loaded {len(documents)} S3 documents from {bucket_spec.bucket}:{bucket_spec.prefix}",
-        total=len(documents),
+        message=f"Syncing S3 documents from {bucket_spec.bucket}:{bucket_spec.prefix}",
+        total=0,
       )
-      if documents:
-        await client.ingest_documents(
+      job_id = job_response["job_id"]
+
+      try:
+        documents = (await asyncio.to_thread(list, loader.lazy_load()))
+        await client.update_job(
           job_id=job_id,
-          datasource_id=datasource_info.datasource_id,
-          documents=documents,
-          fresh_until=fresh_until,
+          job_status=JobStatus.IN_PROGRESS,
+          message=f"Loaded {len(documents)} S3 documents from {bucket_spec.bucket}:{bucket_spec.prefix}",
+          total=len(documents),
         )
-      await client.update_job(
-        job_id=job_id,
-        job_status=JobStatus.COMPLETED,
-        message=f"Successfully ingested {len(documents)} S3 documents from {bucket_spec.bucket}:{bucket_spec.prefix}",
-      )
-    except Exception as exc:
-      error_msg = f"S3 sync failed for {bucket_spec.bucket}:{bucket_spec.prefix}: {exc}"
-      await client.add_job_error(job_id, [error_msg])
-      await client.update_job(
-        job_id=job_id,
-        job_status=JobStatus.FAILED,
-        message=error_msg,
-      )
-      logger.error(error_msg, exc_info=True)
+        if documents:
+          await client.ingest_documents(
+            job_id=job_id,
+            datasource_id=datasource_info.datasource_id,
+            documents=documents,
+            fresh_until=fresh_until,
+          )
+        await client.update_job(
+          job_id=job_id,
+          job_status=JobStatus.COMPLETED,
+          message=f"Successfully ingested {len(documents)} S3 documents from {bucket_spec.bucket}:{bucket_spec.prefix}",
+        )
+      except Exception as exc:
+        error_msg = f"S3 sync failed for {bucket_spec.bucket}:{bucket_spec.prefix}: {exc}"
+        await client.add_job_error(job_id, [error_msg])
+        await client.update_job(
+          job_id=job_id,
+          job_status=JobStatus.FAILED,
+          message=error_msg,
+        )
+        logger.error(error_msg, exc_info=True)
+        raise
+
+    await run_standalone_ingestion(datasource_info.datasource_id, sync_datasource)
 
 
 if __name__ == "__main__":

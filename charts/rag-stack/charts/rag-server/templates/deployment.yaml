@@ -63,8 +63,7 @@ spec:
             {{- $rag := $global.rag | default dict }}
             {{- $ingestorOidc := $rag.ingestorOidc | default dict }}
             # Computed connection settings (from global values)
-            - name: REDIS_URL
-              value: {{ include "rag-server.redisUrl" . | quote }}
+            {{- include "rag-server.mongodbEnv" . | nindent 12 }}
             - name: NEO4J_ADDR
               value: {{ include "rag-server.neo4jAddr" . | quote }}
             - name: NEO4J_USERNAME
@@ -104,10 +103,15 @@ spec:
             {{- end }}
             # All other configuration via env map (OPENFGA_HTTP, AUDIT_SERVICE_URL handled above)
             {{- range $key, $value := .Values.env }}
-            {{- if not (has $key (list "OPENFGA_HTTP" "AUDIT_SERVICE_URL")) }}
+            {{- if not (has $key (list "OPENFGA_HTTP" "AUDIT_SERVICE_URL" "MONGODB_URI" "MONGODB_DATABASE" "MONGODB_TLS_CA_FILE" "RAG_WRITES_PAUSED")) }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- end }}
+          volumeMounts:
+            {{- include "rag-server.mongodbMount" . | nindent 12 }}
+            {{- with .Values.volumeMounts }}
+            {{- toYaml . | nindent 12 }}
             {{- end }}
           {{- with .Values.startupProbe }}
           startupProbe:
@@ -125,10 +129,11 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-      {{- with .Values.extraVolumes }}
       volumes:
+        {{- include "rag-server.mongodbVolume" . | nindent 8 }}
+        {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

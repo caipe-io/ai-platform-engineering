@@ -1,3 +1,5 @@
+For database settings, the staged Redis cutover, and rollback, see [MongoDB persistence migration](MONGODB_MIGRATION.md).
+
 # 🚀 CAIPE RAG
 
 [![Python](https://img.shields.io/badge/python-3.14-blue?logo=python)](https://www.python.org/)
@@ -68,14 +70,14 @@ DEFAULT port configurations between components:
 
 **Server (Port 9446):**
 - Connects to Neo4j over `7687` (bolt protocol)
-- Connects to Redis over `6379`
+- Connects to MongoDB over `27017`
 - Connects to Milvus over `19530`
 - Proxies to agent_ontology over `8098`
 - Exposes REST API
 
 **Ontology Agent (Port 8098):**
 - Connects to Neo4j over `7687`
-- Connects to Redis over `6379`
+- Connects to MongoDB over `27017`
 - Proxies queries from Server
 
 **CAIPE Agent (MCP):**
@@ -83,13 +85,13 @@ DEFAULT port configurations between components:
 
 **Ingestors:**
 - Connect to Server over `9446` (REST)
-- Connect to Redis over `6379` (webloader ingestor)
+- Connect to MongoDB over `27017`
 
 **Databases:**
 - Neo4j Data: `7687` (bolt), `7474` (browser)
 - Neo4j Ontology: `7687` (bolt) - separate database
 - Milvus: `19530` (gRPC)
-- Redis: `6379`
+- MongoDB: `27017`
 
 ---
 

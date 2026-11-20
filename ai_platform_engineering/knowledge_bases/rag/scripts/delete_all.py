@@ -1,11 +1,11 @@
 
 import os
 from pymilvus import MilvusClient
-import redis.asyncio as redis
+from common.mongo_storage import MongoStorage
 from common.graph_db.neo4j.graph_db import Neo4jDB
 from common.constants import DEFAULT_DATA_LABEL, DEFAULT_SCHEMA_LABEL
-from server.restapi import milvus_uri, default_collection_name_docs, graph_rag_enabled, redis_url, neo4j_addr
-redis_client = redis.from_url(redis_url, decode_responses=True)
+from server.restapi import milvus_uri, default_collection_name_docs, graph_rag_enabled, neo4j_addr
+storage = MongoStorage()
 
 legacy_default_collection_name_graph = "graph_rag_default"
 delete_delay_seconds = int(os.getenv("DELETE_DELAY_SECONDS", "20"))
@@ -22,7 +22,7 @@ async def _delete_all_nodes_batch(graph_db: Neo4jDB, name: str):
     print(f"  Deleted all nodes from {name} graph")
 
 async def clear_all():
-    print("🛑 WARNING 🛑 This will DELETE ALL DATA in the Vector databases, Graph databases, and Redis. 🛑 Proceed with caution!🛑")
+    print("🛑 WARNING 🛑 This will DELETE ALL DATA in the Vector databases, Graph databases, and RAG MongoDB. 🛑 Proceed with caution!🛑")
 
     for i in range(delete_delay_seconds, 0, -1):
         print(f"DELETING ALL in {i} seconds... Press Ctrl+C to abort")
@@ -48,8 +48,11 @@ async def clear_all():
     print(f"🛑 Deleting legacy collection {legacy_default_collection_name_graph}...")
     client.drop_collection(collection_name=legacy_default_collection_name_graph)
 
-    print("🛑 Flushing Redis ...")
-    await redis_client.flushall()
+    print("🛑 Flushing RAG MongoDB ...")
+    for collection_name in await storage.db.list_collection_names():
+      if collection_name.startswith("rag_"):
+        await storage.db[collection_name].delete_many({})
+    await storage.aclose()
 
 
 if __name__ == "__main__":

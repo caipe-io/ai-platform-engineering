@@ -13,7 +13,7 @@ dependencies = [
     "neo4j==6.2.0",
     "pydantic==2.13.4",
     "python-dotenv==1.2.2",
-    "redis==8.1.0",
+    "pymongo==4.16.0",
     "tenacity==9.1.2",
     # Embedding providers - lightweight API-based (always included)
     "langchain-openai==1.2.2",
@@ -23,6 +23,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+migration = ["redis==8.1.0"]
 # Heavy local embedding provider (~900MB due to PyTorch)
 huggingface = [
     "langchain-huggingface==1.2.2",
