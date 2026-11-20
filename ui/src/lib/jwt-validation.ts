@@ -46,6 +46,14 @@ export interface JWTIdentity {
    * the same tenant the cookie-session callers do.
    */
   org?: string;
+  /**
+   * True only when the primary OIDC keyset verified the token with both an
+   * issuer and an audience check. Tokens accepted through
+   * `OIDC_ADDITIONAL_JWKS` are signature-only and leave this false.
+   */
+  issuerAndAudienceVerified?: boolean;
+  /** The verified token claims, for policy that needs more than the fields above. */
+  claims?: Record<string, unknown>;
 }
 
 export const LOCAL_SKILLS_TOKEN_ISSUER = 'caipe-ui';
@@ -206,7 +214,7 @@ export async function validateBearerJWT(
       audience,
     });
     jwtDebugLog(`[jwt] Validated via primary JWKS (iss=${issuer})`);
-    return extractIdentity(payload);
+    return { ...extractIdentity(payload), issuerAndAudienceVerified: audience !== undefined };
   } catch (primaryError) {
     // Only fall back to additional JWKS on key-not-found errors.
     // Expiry, audience mismatch, etc. should fail immediately.
@@ -281,7 +289,8 @@ function extractIdentity(payload: JWTPayload): JWTIdentity {
     : undefined;
 
   return { email, name, groups, sub, org, isServiceAccount, serviceAccountClientId,
-    authorizedParty: typeof payload.azp === "string" ? payload.azp : undefined };
+    authorizedParty: typeof payload.azp === "string" ? payload.azp : undefined,
+    issuerAndAudienceVerified: false, claims: payload as Record<string, unknown> };
 }
 
 /**

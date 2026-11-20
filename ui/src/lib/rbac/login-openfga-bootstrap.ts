@@ -6,6 +6,7 @@ import {
   effectiveBaselineBootstrapTuples,
   getBaselineFgaProfile,
   getBaselineFgaProfileBundle,
+  readBaselineFgaProfileBundle,
   type TeamBaselineProfileOverride,
 } from "@/lib/rbac/baseline-access";
 import { getRbacCollection } from "@/lib/rbac/mongo-collections";
@@ -92,21 +93,34 @@ interface TeamDoc {
  */
 async function teamOverridesForLogin(email: string | undefined): Promise<TeamBaselineProfileOverride[]> {
   try {
-    return await resolveTeamOverrides(email);
+    return await resolveTeamOverrides({ email });
   } catch {
     return [];
   }
 }
 
-/** Like teamOverridesForLogin, but a lookup failure throws instead of reading as "no overrides". */
-async function resolveTeamOverrides(email: string | undefined): Promise<TeamBaselineProfileOverride[]> {
-  if (!email) return [];
-  const normalizedEmail = email.trim().toLowerCase();
-  if (!normalizedEmail) return [];
+/**
+ * Like teamOverridesForLogin, but a lookup failure throws instead of reading as
+ * "no overrides". Matches membership rows by verified subject and/or email.
+ */
+async function resolveTeamOverrides(identity: {
+  subject?: string;
+  email?: string;
+}): Promise<TeamBaselineProfileOverride[]> {
+  const identityFilters: Record<string, string>[] = [];
+  const subject = identity.subject?.trim();
+  if (subject) identityFilters.push({ user_subject: subject });
+  const normalizedEmail = identity.email?.trim().toLowerCase();
+  if (normalizedEmail) identityFilters.push({ user_email: normalizedEmail });
+  if (identityFilters.length === 0) return [];
 
   const sources = await getRbacCollection<TeamMembershipSource>("teamMembershipSources");
   const rows = await sources
-    .find({ status: "active", user_email: normalizedEmail })
+    .find(
+      identityFilters.length === 1
+        ? { status: "active", ...identityFilters[0] }
+        : { status: "active", $or: identityFilters }
+    )
     .toArray();
   if (rows.length === 0) return [];
 
@@ -380,12 +394,15 @@ async function writeBearerUserBaseline(
   email: string | undefined
 ): Promise<LoginOpenFgaBootstrapResult> {
   try {
-    const writes = effectiveBaselineBootstrapTuples({
-      subject,
-      isAdmin: false,
-      bundle: await getBaselineFgaProfileBundle(),
-      teamOverrides: await resolveTeamOverrides(email),
-    });
+    const bundle = await readBaselineFgaProfileBundle();
+    const teamOverrides = await resolveTeamOverrides({ subject, email });
+    const overrideIds = teamOverrides.flatMap((o) => o.member_profile_id?.trim() || []);
+    for (const profileId of overrideIds.length > 0 ? overrideIds : [bundle.global_member_profile_id]) {
+      if (!bundle.profiles.some((profile) => profile.role === "member" && profile.id === profileId)) {
+        throw new Error(`member profile ${profileId} is not defined`);
+      }
+    }
+    const writes = effectiveBaselineBootstrapTuples({ subject, isAdmin: false, bundle, teamOverrides });
     if (writes.length === 0) return { status: "skipped", tuple_write_count: 0 };
     const result = await writeOpenFgaTuples({ writes, deletes: [] });
     return { status: "completed", tuple_write_count: result.writes };

@@ -757,6 +757,45 @@ describe("login OpenFGA bootstrap", () => {
       expect(retried.status).toBe("completed");
     });
 
+    it("writes nothing when the grant profiles cannot be read", async () => {
+      mockGetCollection.mockRejectedValue(new Error("mongo down"));
+      const { ensureBearerUserBaselineAccess } = await import("../login-openfga-bootstrap");
+
+      const result = await ensureBearerUserBaselineAccess("sub-bot-user", "user@example.com");
+
+      expect(result.status).toBe("failed");
+      expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
+    });
+
+    it("writes nothing when a team override names an undefined profile", async () => {
+      mockGetCollection.mockImplementation(async (name: string) => {
+        if (name === "teams") {
+          return {
+            find: jest.fn().mockReturnValue({
+              toArray: jest.fn().mockResolvedValue([
+                { _id: "team-1", slug: "support", name: "Support", baseline_profile_overrides: { member_profile_id: "deleted-profile" } },
+              ]),
+            }),
+          };
+        }
+        return { findOne: jest.fn().mockResolvedValue(null) };
+      });
+      const sources = stubTeamMembershipSources([
+        { team_id: "team-1", team_slug: "support", user_subject: "sub-bot-user", relationship: "member", source_type: "manual", status: "active" },
+      ]);
+      mockGetRbacCollection.mockImplementation(async () => sources);
+      const { ensureBearerUserBaselineAccess } = await import("../login-openfga-bootstrap");
+
+      const result = await ensureBearerUserBaselineAccess("sub-bot-user", "user@example.com");
+
+      expect(result.status).toBe("failed");
+      expect(sources.find).toHaveBeenCalledWith({
+        status: "active",
+        $or: [{ user_subject: "sub-bot-user" }, { user_email: "user@example.com" }],
+      });
+      expect(mockWriteOpenFgaTuples).not.toHaveBeenCalled();
+    });
+
     it("applies a team member-profile override instead of the global baseline", async () => {
       mockGetCollection.mockImplementation(async (name: string) => {
         if (name === "openfga_baseline_profiles") {

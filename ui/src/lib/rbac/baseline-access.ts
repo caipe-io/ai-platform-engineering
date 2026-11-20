@@ -366,14 +366,19 @@ export function bundleToLegacyProfile(bundle: BaselineFgaProfileBundle): Baselin
   };
 }
 
+/** Read the stored profile bundle; a read error throws instead of falling back to defaults. */
+export async function readBaselineFgaProfileBundle(): Promise<BaselineFgaProfileBundle> {
+  const collection = await getCollection<BaselineFgaProfileDoc>(BASELINE_FGA_PROFILE_COLLECTION);
+  const doc = await collection.findOne({ _id: BASELINE_FGA_PROFILE_BUNDLE_ID });
+  if (doc) return normalizeBaselineFgaProfileBundle({ ...doc, source: "mongo" });
+  const legacy = await collection.findOne({ _id: BASELINE_FGA_PROFILE_ID });
+  if (legacy) return legacyProfileToBundle(normalizeBaselineFgaProfile({ ...legacy, source: "mongo" }));
+  return defaultBaselineFgaProfileBundle();
+}
+
 export async function getBaselineFgaProfileBundle(): Promise<BaselineFgaProfileBundle> {
   try {
-    const collection = await getCollection<BaselineFgaProfileDoc>(BASELINE_FGA_PROFILE_COLLECTION);
-    const doc = await collection.findOne({ _id: BASELINE_FGA_PROFILE_BUNDLE_ID });
-    if (doc) return normalizeBaselineFgaProfileBundle({ ...doc, source: "mongo" });
-    const legacy = await collection.findOne({ _id: BASELINE_FGA_PROFILE_ID });
-    if (legacy) return legacyProfileToBundle(normalizeBaselineFgaProfile({ ...legacy, source: "mongo" }));
-    return defaultBaselineFgaProfileBundle();
+    return await readBaselineFgaProfileBundle();
   } catch {
     return defaultBaselineFgaProfileBundle();
   }

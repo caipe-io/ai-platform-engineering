@@ -160,3 +160,34 @@ describe('verified service-account client identity', () => {
     });
   });
 });
+
+describe('issuer and audience verification marker', () => {
+  it('is true when the primary keyset checked issuer and audience', async () => {
+    process.env.OIDC_ISSUER = 'https://idp.example.com';
+    process.env.OIDC_CLIENT_ID = 'my-client-id';
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { validateBearerJWT } = require('../jwt-validation');
+    expect((await validateBearerJWT('fake-token')).issuerAndAudienceVerified).toBe(true);
+  });
+
+  it('is false when no audience is configured', async () => {
+    process.env.OIDC_ISSUER = 'https://idp.example.com';
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { validateBearerJWT } = require('../jwt-validation');
+    expect((await validateBearerJWT('fake-token')).issuerAndAudienceVerified).toBe(false);
+  });
+
+  it('is false for tokens accepted through OIDC_ADDITIONAL_JWKS', async () => {
+    process.env.OIDC_ISSUER = 'https://idp.example.com';
+    process.env.OIDC_CLIENT_ID = 'my-client-id';
+    process.env.OIDC_ADDITIONAL_JWKS = 'https://other.example.com/jwks';
+    jest.mocked(jwtVerify).mockRejectedValueOnce(new Error('no applicable key found in the JSON Web Key Set'));
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { validateBearerJWT } = require('../jwt-validation');
+      expect((await validateBearerJWT('fake-token')).issuerAndAudienceVerified).toBe(false);
+    } finally {
+      delete process.env.OIDC_ADDITIONAL_JWKS;
+    }
+  });
+});
