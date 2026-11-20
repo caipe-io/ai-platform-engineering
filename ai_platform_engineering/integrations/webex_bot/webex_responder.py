@@ -28,6 +28,7 @@ from .utils.message_limits import WEBEX_MESSAGE_MAX_BYTES, bounded_markdown
 from .utils.reasoning_effort import get_default_pending_effort_store
 from .utils.thread_ownership import ThreadOwnerCache, get_default_thread_owner_cache
 from .utils.user_messages import FRIENDLY_REASON_MESSAGES, GENERIC_REQUEST_DENIED_MESSAGE
+from .utils.webex_markdown import format_webex_markdown
 from .utils.webex_bot_catalog import configured_webex_bot
 from .utils.webex_runtime_policy import should_post_denial_notice
 
@@ -566,10 +567,12 @@ class WebexThreadedStreamDispatcher:
                         and len(accumulated) - last_sent_len >= self._update_every_chars
                         and now - last_update_at >= self._update_interval_seconds
                     ):
-                        delivery.publish(_bounded_agent_reply(agent_name, accumulated, bot_name=bot_name, is_direct=is_direct, notice="\n\n_Response continues…_"))
+                        preview_body = format_webex_markdown(accumulated, preview=True)
+                        if preview_body.strip():
+                            delivery.publish(_bounded_agent_reply(agent_name, preview_body, bot_name=bot_name, is_direct=is_direct, notice="\n\n_Response continues…_"))
                         last_sent_len = len(accumulated)
                         last_update_at = now
-                        preview_frozen = _reply_exceeds_limit(agent_name, accumulated, bot_name=bot_name, is_direct=is_direct)
+                        preview_frozen = _reply_exceeds_limit(agent_name, preview_body, bot_name=bot_name, is_direct=is_direct)
                 elif event.type == SSEEventType.RUN_ERROR:
                     message = event.message or "The agent run failed."
                     delivery.publish(_bounded_agent_reply(agent_name, message, bot_name=bot_name, is_direct=is_direct), final=True)
@@ -603,9 +606,10 @@ class WebexThreadedStreamDispatcher:
             return
 
         final_markdown = accumulated.strip() or "Done."
-        oversized = _reply_exceeds_limit(agent_name, final_markdown, bot_name=bot_name, is_direct=is_direct)
+        webex_markdown = format_webex_markdown(final_markdown)
+        oversized = _reply_exceeds_limit(agent_name, webex_markdown, bot_name=bot_name, is_direct=is_direct)
         if not oversized:
-            delivery.publish(_bounded_agent_reply(agent_name, final_markdown, bot_name=bot_name, is_direct=is_direct), final=True)
+            delivery.publish(_bounded_agent_reply(agent_name, webex_markdown, bot_name=bot_name, is_direct=is_direct), final=True)
         # Save the complete turn before advertising a browser link. Delivery and
         # Webex truncation do not change the content stored through the scoped BFF.
         saved = self._record_message_turns(
@@ -627,7 +631,7 @@ class WebexThreadedStreamDispatcher:
                 notice = f"\n\n[View full response in {_app_name()}]({url})"
             else:
                 notice = "\n\n_Response truncated. The full-response link is unavailable._"
-            delivery.publish(_bounded_agent_reply(agent_name, final_markdown, bot_name=bot_name, is_direct=is_direct, notice=notice), final=True)
+            delivery.publish(_bounded_agent_reply(agent_name, webex_markdown, bot_name=bot_name, is_direct=is_direct, notice=notice), final=True)
 
     def _record_message_turns(
         self,
@@ -832,7 +836,13 @@ def _bounded_agent_reply(
     agent_name: str, body: str, *, bot_name: str, is_direct: bool = False,
     notice: str = "\n\n_Response truncated._",
 ) -> str:
-    return bounded_markdown(body, footer=_agent_reply_footer(agent_name, bot_name=bot_name, is_direct=is_direct), notice=notice)
+    return bounded_markdown(
+        body,
+        footer=_agent_reply_footer(agent_name, bot_name=bot_name, is_direct=is_direct),
+        notice=notice,
+        preserve_line_boundaries=True,
+        preserve_block_boundaries=True,
+    )
 
 
 def _public_conversation_url(conversation_id: str) -> str | None:
