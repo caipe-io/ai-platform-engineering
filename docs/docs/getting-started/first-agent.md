@@ -47,6 +47,8 @@ connected accounts, and automation can be added later.
 ## Provider credentials
 
 **Model Providers** shows all supported providers, even before a model is registered.
+See [Model provider connections](../features/model-providers.md) for connection
+testing and team access.
 
 - Choose **Choose a saved secret** for a searchable list of permitted secrets.
   Saving keeps the reference; it does not copy or reveal the value.
@@ -184,3 +186,9 @@ The underlying screens enforce the permissions required for each action.
   Preferences and the operator selection are stored in MongoDB; no redeploy is needed.
 - Policy changes apply immediately to API requests. Other browser sessions update
   on focus or within a minute. An operator change cannot re-enable a user’s opt-out.
+
+## Solution architecture
+
+![The setup wizard checks deployment readiness, saves progress, configures a starter agent, and verifies it through a real chat. Tour policy and progress are stored separately.](/diagrams/guided-setup.svg)
+
+[Download editable Excalidraw](/diagrams/guided-setup.excalidraw)

@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1064 467" role="img" aria-labelledby="title desc">
+<title id="title">Guided setup and workspace tours</title>
+<desc id="desc">Setup verifies a starter agent through chat. Tours guide users through existing workspaces.</desc>
+<rect width="1064" height="467" rx="20" fill="#f8faff"/>
+<g font-family="Inter, Helvetica, Arial, sans-serif">
+<text x="40" y="53" fill="#172644" font-size="31" font-weight="750">Guided setup and workspace tours</text>
+<text x="40" y="78" fill="#465978" font-size="16" font-weight="500">Setup verifies a starter agent through chat. Tours guide users through existing workspaces.</text>
+<rect x="40" y="105" width="264" height="110" rx="12" fill="#e8f3ff" stroke="#2162a7" stroke-width="1.4"/>
+<text x="58" y="126" fill="#2162a7" font-size="12" font-weight="750">USER INTERFACE</text>
+<text x="58" y="154" fill="#172644" font-size="19" font-weight="720">Setup Wizard</text>
+<text x="58" y="181" fill="#465978" font-size="15" font-weight="500">Readiness and model selection</text>
+<text x="58" y="200" fill="#465978" font-size="15" font-weight="500">Create an eligible starter agent</text>
+<rect x="400" y="105" width="264" height="110" rx="12" fill="#e9edff" stroke="#5243a9" stroke-width="1.4"/>
+<text x="418" y="126" fill="#5243a9" font-size="12" font-weight="750">CAIPE SERVICE</text>
+<text x="418" y="154" fill="#172644" font-size="19" font-weight="720">CAIPE backend</text>
+<text x="418" y="181" fill="#465978" font-size="15" font-weight="500">Check admin access and health</text>
+<text x="418" y="200" fill="#465978" font-size="15" font-weight="500">Persist setup choices</text>
+<rect x="760" y="105" width="264" height="110" rx="12" fill="#e9edff" stroke="#5243a9" stroke-width="1.4"/>
+<text x="778" y="126" fill="#5243a9" font-size="12" font-weight="750">CAIPE SERVICE</text>
+<text x="778" y="154" fill="#172644" font-size="19" font-weight="720">Agent runtime</text>
+<text x="778" y="181" fill="#465978" font-size="15" font-weight="500">Run a real conversation</text>
+<text x="778" y="200" fill="#465978" font-size="15" font-weight="500">Verify the starter replies</text>
+<rect x="40" y="285" width="264" height="110" rx="12" fill="#e8f3ff" stroke="#2162a7" stroke-width="1.4"/>
+<text x="58" y="306" fill="#2162a7" font-size="12" font-weight="750">USER INTERFACE</text>
+<text x="58" y="334" fill="#172644" font-size="19" font-weight="720">Workspace and task tours</text>
+<text x="58" y="361" fill="#465978" font-size="15" font-weight="500">Navigate enabled workspaces</text>
+<text x="58" y="380" fill="#465978" font-size="15" font-weight="500">Resume or replay guidance</text>
+<rect x="400" y="285" width="264" height="110" rx="12" fill="#e9edff" stroke="#5243a9" stroke-width="1.4"/>
+<text x="418" y="306" fill="#5243a9" font-size="12" font-weight="750">CAIPE SERVICE</text>
+<text x="418" y="334" fill="#172644" font-size="19" font-weight="720">Tour policy</text>
+<text x="418" y="361" fill="#465978" font-size="15" font-weight="500">Apply operator and user choices</text>
+<text x="418" y="380" fill="#465978" font-size="15" font-weight="500">Check feature access</text>
+<rect x="760" y="285" width="264" height="110" rx="12" fill="#def6ee" stroke="#14705c" stroke-width="1.4"/>
+<text x="778" y="306" fill="#14705c" font-size="12" font-weight="750">STORE</text>
+<text x="778" y="334" fill="#172644" font-size="19" font-weight="720">MongoDB</text>
+<text x="778" y="361" fill="#465978" font-size="15" font-weight="500">Platform setup and tour policy</text>
+<text x="778" y="380" fill="#465978" font-size="15" font-weight="500">Per-user tour progress</text>
+<path d="M304,160 L400,160 M391.1,164.6 L400,160 L391.1,155.4" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="308" y="151" fill="#465978" font-size="12" font-weight="600">Save choices</text>
+<path d="M664,160 L760,160 M751.1,164.6 L760,160 L751.1,155.4" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="668" y="151" fill="#465978" font-size="12" font-weight="600">Test chat</text>
+<path d="M304,340 L400,340 M391.1,344.6 L400,340 L391.1,335.4" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="308" y="331" fill="#465978" font-size="12" font-weight="600">Load tour</text>
+<path d="M664,340 L760,340 M751.1,344.6 L760,340 L751.1,335.4" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="668" y="331" fill="#465978" font-size="12" font-weight="600">Read / save</text>
+<path d="M532,215 L892,285 M882.4,287.8 L892,285 L884.2,278.8" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="40" x2="1024" y1="407" y2="407" stroke="#d5deef"/>
+<text x="40" y="437" fill="#465978" font-size="15" font-weight="500">Tour completion records guidance progress. A real chat verifies the configured path.</text>
+</g></svg>

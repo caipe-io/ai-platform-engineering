@@ -69,13 +69,15 @@ Webex bot token, and allowlist the target recipient:
 ```bash
 LITELLM_TOKEN_ALERTS_ENABLED=true
 LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL=webex
-LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS=mouledel@example.com
+LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS=user@example.com
 WEBEX_TOKEN=<webex-bot-token>
 ```
 
 Then call `evaluate_token_usage_alert` with `param_dry_run=false` and
-`param_notification_recipient="mouledel@example.com"`. The alert will remain
-suppressed for recipients outside `LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS`.
+`param_notification_recipient="user@example.com"`. The allowlist check
+passes if either the monitored identity or the Webex delivery address matches
+`LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS`. Review the configured delivery address
+before sending.
 `WEBEX_ACCESS_TOKEN` and `WEBEX_INTEGRATION_BOT_ACCESS_TOKEN` are accepted as
 token aliases. The allowlist is required for Webex delivery.
 
@@ -89,8 +91,8 @@ or API-key limits:
 ```bash
 LITELLM_TOKEN_ALERTS_ENABLED=true
 LITELLM_TOKEN_ALERT_NOTIFICATION_CHANNEL=webex
-LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS=mouledel@example.com
-LITELLM_TOKEN_ALERT_TARGETS_JSON='[{"user_id":"mouledel@example.com","token_limit":1000000,"recipient":"mouledel@example.com"}]'
+LITELLM_TOKEN_ALERT_ALLOWED_RECIPIENTS=user@example.com
+LITELLM_TOKEN_ALERT_TARGETS_JSON='[{"user_id":"user@example.com","token_limit":1000000,"recipient":"user@example.com"}]'
 LITELLM_TOKEN_ALERT_SCANNER_ENABLED=true
 LITELLM_TOKEN_ALERT_SCAN_INTERVAL_SECONDS=3600
 WEBEX_TOKEN=<webex-bot-token>

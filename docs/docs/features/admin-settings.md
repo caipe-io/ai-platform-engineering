@@ -89,7 +89,7 @@ page before leaving the current one.
   credential administration.
 - **Teams & Users** — users, teams, and identity sync.
 - **Integrations** — Slack and Webex administration.
-- **Insights** — statistics and feedback.
+- **Insights** — statistics and feedback. See [Report feedback](./report-feedback.md).
 - **Metrics & Health** — operational metrics, health, and authorization
   insights.
 - **Security & Policy** — access policy, AI Review, authorization tools,

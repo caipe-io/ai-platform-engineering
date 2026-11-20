@@ -17,6 +17,9 @@ authorized agent to either the unchanged Dynamic Agents runtime or the
 independent Harness Engine. Solid paths are implemented in PR #2401; dashed
 paths are portable interfaces or sandbox capabilities planned for later work.
 
+For the released runtime choices and connection steps, see
+[Harness Engine and runtimes](../features/harness-runtimes.md).
+
 ![Harness Engine system architecture](images/harness-engine-system-architecture.svg)
 
 Editable source: [CAIPE system architecture](https://github.com/cnoe-io/ai-platform-engineering/blob/main/docs/excalidraw/caipe-system-architecture.excalidraw)

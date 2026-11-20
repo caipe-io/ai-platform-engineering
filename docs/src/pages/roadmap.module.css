@@ -162,10 +162,17 @@
   border: 1px solid rgba(2, 132, 199, 0.25);
 }
 
-.statusDone {
-  background: rgba(5, 150, 105, 0.1);
-  color: #059669;
-  border: 1px solid rgba(5, 150, 105, 0.25);
+.milestone {
+  padding: 0.2rem 0.65rem;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: 999px;
+  color: var(--ifm-color-emphasis-800);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.milestone:hover {
+  color: var(--ifm-link-color);
 }
 
 .itemDesc {
