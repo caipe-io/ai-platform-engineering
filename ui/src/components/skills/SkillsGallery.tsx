@@ -92,7 +92,7 @@ Zap,
 import { useSession } from "next-auth/react";
 import { NavigationProgressLink } from "@/components/layout/NavigationProgressLink";
 import { useRouter } from "next/navigation";
-import React,{ useCallback,useEffect,useMemo,useState } from "react";
+import React,{ useCallback,useEffect,useMemo,useRef,useState } from "react";
 
 interface SkillsGalleryProps {
   onEditConfig?: (config: AgentSkill) => void;
@@ -558,6 +558,14 @@ export function SkillsGallery({
   const [catalogSkills, setCatalogSkills] = useState<AgentSkill[]>([]);
 
   /**
+   * Monotonic id of the latest catalog request. A response is applied
+   * only if its request is still the latest, so a slow earlier fetch
+   * (e.g. the mount-time one) can't overwrite a newer result such as
+   * the post-delete refresh.
+   */
+  const catalogRequestIdRef = useRef(0);
+
+  /**
    * Refetch the unified catalog (default + agent_skills + hub-projected
    * rows). Pulled out of the mount-only `useEffect` so callers can
    * invalidate the local cache after admin actions like
@@ -569,6 +577,7 @@ export function SkillsGallery({
    * "admin_overridden" UX state without another round trip.
    */
   const reloadCatalog = useCallback(async () => {
+    const requestId = ++catalogRequestIdRef.current;
     try {
       const res = await fetch("/api/skills?include_content=true", {
         credentials: "include",
@@ -576,6 +585,8 @@ export function SkillsGallery({
       if (!res.ok) return;
       const data = await res.json();
       if (!data?.skills) return;
+      // A newer request started while this one was in flight; its result wins.
+      if (requestId !== catalogRequestIdRef.current) return;
       const mapped: AgentSkill[] = data.skills.map(mapCatalogSkillToAgentSkill);
       setCatalogSkills(mapped);
     } catch {
@@ -693,6 +704,17 @@ export function SkillsGallery({
     setDeletingId(config.id);
     try {
       await deleteSkill(config.id);
+      // The delete succeeded: drop the skill from the local catalog copy right away so
+      // the card can't linger if the refetch below fails or an older response lands late.
+      const deletedId = config.id;
+      setCatalogSkills((prev) =>
+        prev.filter((skill) => {
+          if (skill.id === deletedId || skill.id === `catalog-${deletedId}`) return false;
+          const sourceId = (skill.metadata as { catalog_source_id?: string | null } | undefined)
+            ?.catalog_source_id;
+          return sourceId !== deletedId;
+        }),
+      );
       // The catalog feed projects Mongo skills too; without a refetch its copy of the deleted skill takes the card's place.
       await reloadCatalog();
       setDeleteTarget(null);
