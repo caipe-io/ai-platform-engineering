@@ -82,6 +82,27 @@ beforeEach(() => {
 });
 
 describe("AgentGateway MCP server discovery API", () => {
+  it("bounds AgentGateway admin discovery requests", async () => {
+    const timeoutSignal = new AbortController().signal;
+    const timeoutSpy = jest.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutSignal);
+    mockGetCollection.mockResolvedValue({
+      find: jest.fn().mockReturnValue({ toArray: jest.fn().mockResolvedValue([]) }),
+    });
+
+    try {
+      const { fetchAgentGatewayMcpDiscovery } = await import("../_lib");
+      await fetchAgentGatewayMcpDiscovery();
+
+      expect(timeoutSpy).toHaveBeenCalledWith(5_000);
+      expect(global.fetch).toHaveBeenCalledWith(expect.any(String), {
+        method: "GET",
+        signal: timeoutSignal,
+      });
+    } finally {
+      timeoutSpy.mockRestore();
+    }
+  });
+
   it("discovers AgentGateway MCP targets and marks direct registrations as legacy migrations", async () => {
     mockGetCollection.mockResolvedValue({
       find: jest.fn().mockReturnValue({
@@ -309,7 +330,33 @@ describe("AgentGateway MCP server discovery API", () => {
 
     expect(response.status).toBe(200);
     expect(insertOne).not.toHaveBeenCalled();
-    expect(updateOne).not.toHaveBeenCalled();
+    // "existing" still persists agentgateway_discovered (and the endpoint
+    // fields) on every sync, not just on first discovery — seed's
+    // full-document replaceOne wipes agentgateway_discovered back to
+    // undefined on every restart, so a confirmed-live route must be
+    // re-persisted here or dynamic-agents tool wiring treats it as pending.
+    expect(updateOne).toHaveBeenCalledWith(
+      { _id: "rag" },
+      {
+        $set: {
+          agentgateway_discovered: true,
+          agentgateway_endpoint: "http://agentgateway:4000/mcp",
+          agentgateway_target_endpoint: expect.any(String),
+          updated_at: expect.any(String),
+        },
+      },
+    );
+    expect(updateOne).toHaveBeenCalledWith(
+      { _id: "jira" },
+      {
+        $set: {
+          agentgateway_discovered: true,
+          agentgateway_endpoint: "http://agentgateway:4000/mcp",
+          agentgateway_target_endpoint: expect.any(String),
+          updated_at: expect.any(String),
+        },
+      },
+    );
     expect(mockReconcileConfigDrivenMcpServerRelationships).toHaveBeenCalledWith({
       serverId: "rag",
       organizationId: "caipe",
