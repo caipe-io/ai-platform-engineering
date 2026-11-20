@@ -20,6 +20,8 @@ interface PayloadStore {
   putSecret(input: { secretRefId: string; plaintext: string }): Promise<void>;
 }
 
+export type TokenEndpointAuthMethod = "client_secret_post" | "client_secret_basic";
+
 export interface OAuthConnectorDocument {
   id: string;
   name: string;
@@ -32,6 +34,8 @@ export interface OAuthConnectorDocument {
   redirectUri: string;
   enabled: boolean;
   pkce?: boolean;
+  // Omitted means client_secret_post (credentials in the form body).
+  tokenEndpointAuthMethod?: "client_secret_basic";
   createdAt: Date;
   updatedAt: Date;
 }
@@ -104,6 +108,12 @@ export interface CreateConnectorInput {
   scopes: string[];
   redirectUri: string;
   pkce?: boolean;
+  tokenEndpointAuthMethod?: TokenEndpointAuthMethod;
+}
+
+export interface TokenClientOptions {
+  // RFC 6749 §2.3.1 HTTP Basic client authentication for the token request.
+  basicAuth?: { clientId: string; clientSecret: string };
 }
 
 export interface TokenClientResponse {
@@ -119,7 +129,11 @@ export interface ProviderConnectionServiceOptions {
   providerConnectionsCollection: Collection<ProviderConnectionDocument>;
   connectorsCollection: Collection<OAuthConnectorDocument>;
   payloadStore: Required<Pick<PayloadStore, "getSecret" | "putSecret">>;
-  tokenClient: (tokenUrl: string, body: Record<string, string>) => Promise<TokenClientResponse>;
+  tokenClient: (
+    tokenUrl: string,
+    body: Record<string, string>,
+    options?: TokenClientOptions,
+  ) => Promise<TokenClientResponse>;
   idGenerator?: () => string;
   now?: () => Date;
 }
@@ -187,6 +201,7 @@ function toConnectorMetadata(doc: OAuthConnectorDocument): OAuthConnectorMetadat
     redirectUri: doc.redirectUri,
     enabled: doc.enabled,
     pkce: doc.pkce,
+    tokenEndpointAuthMethod: doc.tokenEndpointAuthMethod,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
     clientSecretConfigured: doc.pkce !== true,
@@ -240,16 +255,19 @@ function authorizationCodeTokenBody(input: {
   codeVerifier: string;
   redirectUri: string;
   pkce?: boolean;
+  tokenEndpointAuthMethod?: "client_secret_basic";
 }): Record<string, string> {
   const body: Record<string, string> = {
     grant_type: "authorization_code",
-    client_id: input.clientId,
     code: nonEmpty(input.code, "code"),
     code_verifier: nonEmpty(input.codeVerifier, "codeVerifier"),
     redirect_uri: input.redirectUri,
   };
   const omitSecret = input.pkce === true || input.provider.toLowerCase() === "pagerduty";
-  if (!omitSecret) {
+  if (input.tokenEndpointAuthMethod !== "client_secret_basic" || omitSecret) {
+    body.client_id = input.clientId;
+  }
+  if (!omitSecret && input.tokenEndpointAuthMethod !== "client_secret_basic") {
     body.client_secret = input.clientSecret;
   }
   return body;
@@ -261,17 +279,35 @@ function refreshTokenBody(input: {
   clientSecret: string;
   refreshToken: string;
   pkce?: boolean;
+  tokenEndpointAuthMethod?: "client_secret_basic";
 }): Record<string, string> {
   const body: Record<string, string> = {
     grant_type: "refresh_token",
-    client_id: input.clientId,
     refresh_token: input.refreshToken,
   };
   const omitSecret = input.pkce === true || input.provider.toLowerCase() === "pagerduty";
-  if (!omitSecret) {
+  if (input.tokenEndpointAuthMethod !== "client_secret_basic" || omitSecret) {
+    body.client_id = input.clientId;
+  }
+  if (!omitSecret && input.tokenEndpointAuthMethod !== "client_secret_basic") {
     body.client_secret = input.clientSecret;
   }
   return body;
+}
+
+// Empty for the default client_secret_post flow so existing token clients keep their two-argument call.
+function tokenClientExtraArgs(
+  connector: Pick<OAuthConnectorDocument, "provider" | "clientId" | "pkce" | "tokenEndpointAuthMethod">,
+  clientSecret: string,
+): [] | [TokenClientOptions] {
+  if (
+    connector.tokenEndpointAuthMethod !== "client_secret_basic"
+    || connector.pkce === true
+    || connector.provider.toLowerCase() === "pagerduty"
+  ) {
+    return [];
+  }
+  return [{ basicAuth: { clientId: connector.clientId, clientSecret } }];
 }
 
 export class OAuthConnectorService {
@@ -303,6 +339,9 @@ export class OAuthConnectorService {
       redirectUri: validateRedirectUri(input.redirectUri),
       enabled: true,
       ...(input.pkce ? { pkce: true } : {}),
+      ...(input.tokenEndpointAuthMethod === "client_secret_basic"
+        ? { tokenEndpointAuthMethod: "client_secret_basic" as const }
+        : {}),
       createdAt: now,
       updatedAt: now,
     };
@@ -332,6 +371,9 @@ export class OAuthConnectorService {
       redirectUri: validateRedirectUri(input.redirectUri),
       enabled: true,
       ...(input.pkce ? { pkce: true } : {}),
+      ...(input.tokenEndpointAuthMethod === "client_secret_basic"
+        ? { tokenEndpointAuthMethod: "client_secret_basic" as const }
+        : {}),
       updatedAt: now,
     };
     if (!input.pkce) {
@@ -345,12 +387,20 @@ export class OAuthConnectorService {
     // updateConnector). Without this an env-bootstrap that flips an existing
     // PKCE connector back to confidential would leave pkce:true, and runtime
     // token exchange would send an empty client secret.
-    const writeUpdate =
-      input.pkce || !existing.pkce
-        ? { $set: update }
-        : { $set: update, $unset: { pkce: "" } };
+    // The same applies to tokenEndpointAuthMethod when the declared config drops it.
+    const unset: Record<string, ""> = {};
+    if (!input.pkce && existing.pkce) unset.pkce = "";
+    if (!update.tokenEndpointAuthMethod && existing.tokenEndpointAuthMethod) {
+      unset.tokenEndpointAuthMethod = "";
+    }
+    const writeUpdate = Object.keys(unset).length ? { $set: update, $unset: unset } : { $set: update };
     await this.connectorsCollection.updateOne?.({ id: existing.id }, writeUpdate);
-    return toConnectorMetadata({ ...existing, ...update, pkce: input.pkce ? true : undefined });
+    return toConnectorMetadata({
+      ...existing,
+      ...update,
+      pkce: input.pkce ? true : undefined,
+      tokenEndpointAuthMethod: update.tokenEndpointAuthMethod,
+    });
   }
 
   async listConnectors(): Promise<OAuthConnectorMetadata[]> {
@@ -616,7 +666,9 @@ export class ProviderConnectionService {
         codeVerifier: input.codeVerifier,
         redirectUri: connector.redirectUri,
         pkce: connector.pkce,
+        tokenEndpointAuthMethod: connector.tokenEndpointAuthMethod,
       }),
+      ...tokenClientExtraArgs(connector, clientSecret),
     );
 
     const id = this.idGenerator();
@@ -869,7 +921,9 @@ export class ProviderConnectionService {
           clientSecret,
           refreshToken,
           pkce: connector.pkce,
+          tokenEndpointAuthMethod: connector.tokenEndpointAuthMethod,
         }),
+        ...tokenClientExtraArgs(connector, clientSecret),
       );
     } catch (error) {
       // The provider rejected the refresh token (GitHub returns 400 for tokens

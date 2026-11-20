@@ -194,6 +194,33 @@ describe("OAuth connector env bootstrap", () => {
     ]);
   });
 
+  it("passes through tokenEndpointAuthMethod for deploy-configured connectors and rejects unknown values", () => {
+    const connector = {
+      provider: "acme",
+      name: "Acme Cloud",
+      clientId: "acme-client",
+      clientSecretEnv: "ACME_OAUTH_CLIENT_SECRET",
+      authorizationUrl: "https://identity.acme.example.com/oauth/authorize",
+      tokenUrl: "https://identity.acme.example.com/oauth/token",
+      scopes: ["openid"],
+    };
+    const env = (tokenEndpointAuthMethod: string) => ({
+      NEXTAUTH_URL: "https://caipe.example.com",
+      ACME_OAUTH_CLIENT_SECRET: "acme-secret",
+      CREDENTIAL_BOOTSTRAP_OAUTH_CONNECTORS_JSON: JSON.stringify([{ ...connector, tokenEndpointAuthMethod }]),
+    });
+
+    expect(buildOAuthConnectorBootstrapInputs(env("client_secret_basic"))[0]).toMatchObject({
+      tokenEndpointAuthMethod: "client_secret_basic",
+    });
+    expect(buildOAuthConnectorBootstrapInputs(env("client_secret_post"))[0]).not.toHaveProperty(
+      "tokenEndpointAuthMethod",
+    );
+    expect(() => buildOAuthConnectorBootstrapInputs(env("private_key_jwt"))).toThrow(
+      "invalid tokenEndpointAuthMethod",
+    );
+  });
+
   it("lets deploy-configured connectors override legacy bootstrap for the same provider", () => {
     const inputs = buildOAuthConnectorBootstrapInputs({
       WEBEX_CLIENT_ID: "legacy-webex-client",
