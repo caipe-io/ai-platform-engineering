@@ -673,3 +673,17 @@ def test_admin_http_missing_required_scope_returns_403(
 
     assert status == 403
     assert "missing scope" in str(payload.get("error", ""))
+
+
+def test_personal_notification_uses_linked_person_and_plain_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WEBEX_INTEGRATION_BOT_ACCESS_TOKEN", "example-token")
+    monkeypatch.setattr("ai_platform_engineering.integrations.webex_bot.utils.webex_admin_api.configured_webex_bots", lambda: [])
+    response = MagicMock()
+    response.json.return_value = {"id": "example-message"}
+    post = MagicMock(return_value=response)
+    monkeypatch.setattr("ai_platform_engineering.integrations.webex_bot.utils.webex_admin_api.requests.post", post)
+    service = WebexBotAdminService.__new__(WebexBotAdminService)
+    service.send_notification(person_id="example-person", markdown="Example update")
+    assert post.call_args.kwargs["json"] == {"toPersonId": "example-person", "text": "Example update"}
+    with pytest.raises(ValueError):
+        service.send_notification(person_id="example-person", space_id="example-space", markdown="Example")
