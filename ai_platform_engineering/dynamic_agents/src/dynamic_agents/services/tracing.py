@@ -71,10 +71,14 @@ class TracingManager:
             return
 
         try:
-            from langfuse import get_client
+            from langfuse import Langfuse, is_langfuse_span
             from langfuse.langchain import CallbackHandler
 
-            self._client = get_client()
+            # The callback handler already records every model call. Provider
+            # SDKs with native OpenTelemetry spans (such as the Anthropic SDK)
+            # would otherwise export each call again as a separate trace,
+            # doubling generation counts and cost.
+            self._client = Langfuse(should_export_span=is_langfuse_span)
             self._handler = CallbackHandler()
             self._is_enabled = True
             logger.info("[tracing] Langfuse initialized (host=%s)", os.getenv("LANGFUSE_HOST", "<default>"))

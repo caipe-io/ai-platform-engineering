@@ -23,10 +23,12 @@ import gc
 import redis.asyncio as redis
 import common.utils as utils
 from llm_wrapper.build import build_chat_model
-from langfuse import get_client as get_langfuse_client
+from langfuse import Langfuse, is_langfuse_span
 from langfuse.langchain import CallbackHandler
 
-langfuse_client = get_langfuse_client()
+# The callback handler already records every model call; exporting provider
+# SDK spans too would record each call again as a separate trace.
+langfuse_client = Langfuse(should_export_span=is_langfuse_span)
 
 
 class OntologyAgent:
