@@ -197,6 +197,12 @@ _SKYNET_PROVIDER_LABELS = {
   "skynetsearch": "Skynet Search",
   "skynetstaging": "Skynet Staging",
 }
+_SKYNET_REQUEST = re.compile(r"\bskynet\b", re.IGNORECASE)
+
+
+def _is_skynet_request(message_text: str | None) -> bool:
+  """Only show Skynet connection guidance for requests that name Skynet."""
+  return bool(message_text and _SKYNET_REQUEST.search(message_text))
 
 
 def _format_skynet_connection_warning_for_slack(message: str) -> str | None:
@@ -716,7 +722,7 @@ def stream_response(
           warning_msg = (update.value or {}).get("message", "unknown warning")
           logger.warning(f"[{thread_ts}] Agent warning: {warning_msg}")
           connection_warning = _format_skynet_connection_warning_for_slack(warning_msg)
-          if connection_warning:
+          if connection_warning and _is_skynet_request(message_text):
             try:
               slack_client.chat_postMessage(
                 channel=channel_id,
