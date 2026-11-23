@@ -5,16 +5,17 @@
 - Gateways agree on **inference** (OpenAI-compatible) but differ in **administration** (auth, budgets, usage).
 - So CAIPE fixes the data-plane contracts ①–④ and wraps the control plane ⑤ in a capability-flagged adapter.
 
-| | LiteLLM | AgentGateway (`agentgateway.dev`) | Kong AI Gateway | AgentRouter (Envoy AI Gateway) |
+| | LiteLLM OSS | AgentGateway (`agentgateway.dev`) | Kong AI Gateway | AgentRouter (Envoy AI Gateway) |
 |---|---|---|---|---|
 | ① OpenAI wire | native | OpenAI-compatible LLM backends | `ai-proxy` (OpenAI format) | native; also `/v1/embeddings`, `/anthropic/v1/messages` |
-| ② JWT validation | `enable_jwt_auth`, `user_id_jwt_field`, `team_id_jwt_field` | listener `jwtAuth` (already used for MCP) | `openid-connect` → consumer groups | Envoy Gateway `SecurityPolicy` JWT (JWKS); claims copied to headers |
+| ② JWT validation | Not used; per-agent virtual keys (see S1) | listener `jwtAuth` (already used for MCP) | `openid-connect` → consumer groups | Envoy Gateway `SecurityPolicy` JWT (JWKS); claims copied to headers |
 | Budgets / quotas | `max_budget`, tpm/rpm per key, user and team | token and $ budget limits keyed on claims | `ai-rate-limiting-advanced` per consumer or group | token limits (not $) keyed on claim headers × model, CEL cost; `QuotaPolicy` per backend |
 | ⑤ Admin API | REST `/key`, `/team`, `/spend` | config / K8s policy | Admin API / decK | none; Kubernetes CRDs only |
 | Usage | `/spend`, Prometheus | OTel | Prometheus / OTel | OTel GenAI metrics, Prometheus |
 | ext_authz callout | custom auth hook | native `extAuthz` | plugin | native (Envoy ext_authz) |
 
-- Licence tiers for the JWT and budget features in LiteLLM and Kong must be confirmed per deployment. Where they're missing, use key auth (Decision 6).
+- Delivery order: LiteLLM OSS with per-agent keys first, then AgentGateway and AgentRouter with JWT validation. These three gateways are required; Kong AI Gateway is optional.
+- Confirm JWT and budget plugin/licence requirements when evaluating optional Kong support.
 - **AgentRouter** is Envoy AI Gateway, renamed and donated to the Agentic AI Foundation. It is not the `agentgateway` CAIPE already runs for MCP. It is pre-1.0 (v1alpha CRDs).
 - AgentRouter caveats:
   - Budgets are tokens, with no dollar ledger.
@@ -41,7 +42,9 @@
 
 - Paths 1–3 all build models through `build_chat_model` in `ai_platform_engineering/llm_wrapper/src/llm_wrapper/build.py`. The switch, the provider override and the auth hook live there, so no caller can bypass them.
 - Path 3 generates text without executing an agent, including before a new agent is saved. It uses a dedicated, provisioned AI-assist system identity for agent attribution while preserving the authenticated user for user attribution. Its owning team pays; the draft or edited agent does not determine billing or authorization. See [AI-assist system identity](./data-model.md#ai-assist-system-identity).
+- Path 5 already builds its model through `build_chat_model` (since #3050), so it can reuse the routing hook. Chart settings alone are insufficient: phase 4 must define its effective principal, agent/team binding and credential acquisition before activation (T402). Path 4 still needs the embeddings integration and its own identity preparation (T401).
 - Bots, autonomous agents, the scheduler and the UI have no LLM client of their own. They inherit through dynamic agents.
+- Harness Engine: the Deep Agents runtime reuses paths 1–2. Experimental Harness Engine runtimes call providers directly (for example `ANTHROPIC_BASE_URL` or AWS IAM) and bypass `build_chat_model`; they are out of scope.
 
 ## Decision 3 — Rollout: phased build, one global switch
 
@@ -57,7 +60,7 @@
 | **Global switch (chosen)** | uniform enforcement | needs gateway aliases = existing `model_id` |
 | Per-model, then enforce | gradual, then strict | two mechanisms |
 
-The phases are delivery stages, with no phase-specific switches. `LLM_GATEWAY_ENABLED=false` bypasses the gateway for every migrated path even when its endpoint is configured and reachable; direct-provider configuration and credentials must remain available. With routing enabled, gateway failures fail closed. Individual phase rollback requires reverting deployment or code changes while respecting dependencies.
+The phases are delivery stages, with no phase-specific switches. `LLM_GATEWAY_ENABLED=false` bypasses the gateway for every migrated path even when its endpoint is configured and reachable; direct-provider configuration and credentials remain in deployment configuration and secret storage, outside gateway-enabled inference pods. Mode changes reconcile credential references and replace the pods; direct-mode pods load provider credentials on startup. With routing enabled, gateway failures fail closed. Individual phase rollback requires reverting deployment or code changes while respecting dependencies.
 
 ## Decision 4 — Identity facts today
 
@@ -140,10 +143,10 @@ sequenceDiagram
   S-->>DA: JWT, exp ≤ 5 min
   DA->>GW: /v1/chat/completions + Bearer JWT
   GW->>GW: verify JWT, ensure principal (first time), charge user / agent / team
-  GW-->>DA: completion, or 429/402 budget signal
+  GW-->>DA: completion, or error response
 ```
 
-## Decision 7 — Who signs: **Keycloak per-agent scope ([K2](#identity-option-legend)), fallback [C1](#identity-option-legend)**
+## Decision 7 — Who signs: **Keycloak per-agent scope ([K2](#identity-option-legend)), fallback [C1](#identity-option-legend)** (confirmed by [S1](#s1-results))
 
 - The signer *attests*. CAIPE (OpenFGA + Mongo) *decides*.
 - The gateway cannot be the signer: it would be vouching to itself.
@@ -162,7 +165,7 @@ sequenceDiagram
 - Ownership synchronization can partially fail: a Keycloak scope update may succeed while the MongoDB ownership write fails. Reversing the write order only reverses the possible mismatch.
 - MongoDB ownership remains authoritative. Transfers must be recoverable; CAIPE blocks new calls, including cached-credential calls, while a transfer is unresolved and checks credential bindings before use. Completion invalidates cached credentials for the previous owner; already-admitted calls may finish under that owner.
 - JWT expiry bounds the lifetime of an issued token, not a persistent synchronization failure: an unrepaired scope can keep issuing tokens for the wrong team. Gateway JWT validation remains local. The same ownership consistency policy applies to C1 signing and per-agent gateway key bindings as applicable.
-- #2901 adds operator-owned per-agent Keycloak clients for agent badges. If it lands first, K2 reuses its per-agent binding instead of adding a second per-agent Keycloak object.
+- #2901 adds optional, operator-enrolled per-agent Keycloak clients for agent badges. K2 does not reuse these clients: it maintains a dedicated gateway scope per agent on the shared `caipe-dynamic-agents` exchange client, independently of badge enrollment. The exchanged token preserves the user's subject and adds the agent and owning-team claims.
 
 **[K2](#identity-option-legend) flow**
 
@@ -176,14 +179,65 @@ sequenceDiagram
   Note over DA,KC: call (cache miss)
   DA->>KC: token exchange (subject = user JWT, scope = llm-agent-ID, aud = LLM_GATEWAY_AUDIENCE)
   KC-->>DA: gateway JWT
-  Note over DA,KC: autonomous: owner from a trusted run binding (#2891), exchange mechanism per #2890
+  Note over DA,KC: autonomous: same exchange, subject = owner token the run carries (#2890 decides how the scheduler gets it)
 ```
 
-**Spike S1 (gates phase 1)**
-- [ ] Keycloak 26.3 exchange emits the mappers of the requested optional scope.
-- [ ] Autonomous runs get the scope through the mechanism #2890 selects (actor-preserving exchange, or a service token plus a trusted run binding), without depending on `requested_subject` impersonation.
-- [ ] Token issuance latency and admin performance with 1k, 5k and 10k client scopes.
+**Spike S1 (informs the phase 1 JWT milestone)** — #2938, run 2026-10-14. **Outcome: K2.** C1 stays the fallback.
+- [x] Keycloak 26.3 exchange emits the mappers of the requested optional scope.
+- [ ] Autonomous runs: exchange an owner token that was itself minted by `requested_subject` impersonation (chained exchange). Not run in S1; moved to T118 as a JWT rollout gate.
+- [x] Token issuance latency and admin performance with 1k, 5k and 10k client scopes.
 - [ ] If any check fails → [C1](#identity-option-legend) (dynamic agents sign; key optionally in Vault or a cloud KMS).
+
+#### S1 results
+
+Setup: Keycloak 26.3.0 (`start-dev`, H2, single node, 4 vCPU), standard token exchange V2, with and without CAIPE's `token-exchange,admin-fine-grained-authz:v1` features. Gateway: AgentGateway v1.1.0 `jwtAuth` against the realm JWKS, mock upstream.
+
+```mermaid
+sequenceDiagram
+  participant DA as Exchanger (dynamic agents)
+  participant KC as Keycloak
+  participant GW as AgentGateway
+  DA->>KC: exchange(subject=user token, scope="llm-gateway llm-agent-X", audience=llm-gateway)
+  KC-->>DA: JWT {sub, act, agent_id, team_id, org, aud=llm-gateway}, 300 s
+  DA->>GW: Bearer JWT
+  GW-->>DA: 200, or 401 / 403
+```
+
+| Check | Result |
+|---|---|
+| Claims | `sub` (user), `agent_id`, `team_id`, `org`, `aud=llm-gateway`, `azp`, TTL 300 s ✓ |
+| `act` | Not emitted by Keycloak. A hardcoded JSON mapper on the shared `llm-gateway` scope adds `{"sub": "service-account-dynamic-agents"}` ✓ |
+| Unassigned agent scope | `400 invalid_scope` (fails closed) ✓ |
+| Two agent scopes in one request | `200` with one arbitrary `agent_id` ✗ |
+| Subject token without the exchanger in `aud` | `403 Client is not within the token audience` |
+| Legacy `token-exchange:v1` feature on | Same results; V2 applies to clients with `standard.token.exchange.enabled` ✓ |
+| Gateway: valid · none · foreign key · tampered claim · wrong `aud` · wrong issuer · no agent scope | 200 · 401 · 401 · 401 · 401 · 401 · 403 (CEL rule) ✓ |
+| Gateway: expired token | Accepted until `exp` + 60 s (validator leeway), then 401 |
+
+Scale (60 exchanges, 30 password logins per row; ms p50 / p95):
+
+| Agent scopes | Exchange | Password login | Create scope | Assign scope |
+|---|---|---|---|---|
+| 2 | 9 / 15 | 101 / 123 | — | — |
+| 1,000 | 11 / 17 | 58 / 97 | 32 / 86 | 40 / 90 |
+| 5,000 | 17 / 27 | 54 / 75 | 18 / 44 | 33 / 65 |
+| 10,000 (default realm cache) | **169 / 221** | **139 / 200** | 12 / 29 | 52 / 98 |
+| 10,000, `--cache-embedded-realms-max-count=50000` | 27 / 37 | 62 / 79 | — | — |
+
+- The 10k cliff is the realm cache's default 10,000-entry limit, not the scope count itself. It slows every login in the realm, not only exchanges. Raising the limit restores it.
+- Numbers are a single dev node on H2. Re-measure on the production database and cache topology before the phase 1 gate.
+
+#### What S1 changes
+
+| Finding | Consequence |
+|---|---|
+| No native `act` | Not added (2026-11-07). `azp` names the sending client; #2890 did not adopt actor-bearing tokens. The shared `llm-gateway` scope carries only the gateway audience; only the exchange client holds it |
+| Multiple agent scopes accepted | The exchanger requests exactly one agent scope and verifies the returned `agent_id`/`team_id` before use or caching |
+| Exchanger must be in the subject token's `aud` | Dynamic agents has no Keycloak client today and user tokens carry `aud=caipe-platform`. Phase 1 adds an exchange-only `caipe-dynamic-agents` client and its audience to user tokens. `caipe-platform` is not reused: it is the BFF's Keycloak admin client (`manage-users`). #3010 may reuse the new client |
+| Realm cache limit | Keycloak values size `cache-embedded-realms-max-count` to the agent count with headroom (50,000 held 10,000 agents) |
+| Gateway clock leeway | Gateway acceptance is bounded by TTL + documented expiry leeway, capped at 60 s (at most 6 min total). The runtime stops using tokens at `exp`. Conformance tests the gateway expiry boundary; S1 observed 60 s on AgentGateway |
+| LiteLLM OSS | Uses per-agent virtual keys (Decision 6); this is the first delivery and validation milestone, independent of JWT exchange |
+| #2901 per-agent clients | Not reused: they are opt-in, operator-enrolled and use client credentials, so their tokens name the agent, not the user. K2 keeps its own scope per agent |
 
 ## Decision 8 — Data and state
 
@@ -200,15 +254,17 @@ sequenceDiagram
 
 ## Decision 9 — Authorization at call time
 
-- **Runtime (always)**: dynamic agents use the CAS access API (#2889) to check OpenFGA relations `agent#can_use` (CAS action `use`, already enforced) and `llm_model#can_read` (runtime check to add) once per turn per (user, agent, model). Every LLM call in that turn reuses the decision.
+- **Runtime (always)**: dynamic agents use CAS (today's decision API in `dynamic_agents/auth/authz.py`; `/api/access` once #2889 resumes) to check OpenFGA relations `agent#can_use` (CAS action `use`, already enforced) and `llm_model#can_read` (runtime check to add) once per turn per (user, agent, model). Every LLM call in that turn reuses the decision.
 - **Gateway (optional)**: where ext_authz exists, the gateway asks the BFF CAS adapter (#2892, #2909), as AgentGateway does for MCP, for the same decision and verified identity headers.
 
-## Decision 10 — Budget errors without gateway code in agents
+## Decision 10 — Preserve errors; defer gateway-specific recognition
 
-- Named adapters ship documented declarative **budget-signal rules**: status codes plus a gateway header, structured error code or unambiguous pattern identifying a gateway-enforced limit, and where to read scope and reset time. Forwarded provider errors must remain distinguishable. Status codes or "budget"/"quota" keywords alone cannot establish the source of a rejection.
-- The rule is data in `llm_wrapper`, overridable with `LLM_GATEWAY_BUDGET_SIGNAL`. Agents contain no per-gateway code.
-- Adapter `none` has no default rule. Operators configure `LLM_GATEWAY_BUDGET_SIGNAL` for their gateway before budget-error conformance can pass.
-- Unmatched or ambiguous errors keep their original status and classification without inferred budget scope or budget-increase advice. Provider quota errors may use the same status codes and words as gateway limits; raising a gateway budget would not resolve them.
+- The gateway owns and enforces budgets and quotas. CAIPE preserves failed responses through its existing error handling without inferring whether the gateway or an upstream provider caused them.
+- `LLM_GATEWAY_ADAPTER` selects BFF management integration only. The runtime does not use it to classify errors.
+- No error-profile or budget-signal configuration is introduced. Adapter `none` requires no error-recognition setup.
+- Gateway-specific recognition, a dedicated budget exception, and inferred budget scope, reset time or increase advice are deferred until a future iteration or concrete user request.
+- Future recognition is an optional UX enhancement for explicitly supported, tested response formats, not a prerequisite for gateway compatibility. Supporting another gateway does not require adding a runtime error parser.
+- Failed requests remain failed. CAIPE never retries them through a direct provider to bypass gateway enforcement.
 
 ## Decision 11 — Availability and latency
 
@@ -222,7 +278,7 @@ Checked 2026-10-09; no duplicate found.
 
 | Item | Relation |
 |---|---|
-| #1753 JWT-only identity in dynamic agents | Dependency of phase 1: the gateway token needs a verified user |
+| #1753 JWT-only identity in dynamic agents | Not a phase 1 gate (2026-11-07): the LLM path uses only the validated bearer; #1753 still removes the header elsewhere |
 | #934 RFC 8693 token exchange and impersonation | Same mechanism; prior art for [K2](#identity-option-legend) |
 | #974, #973 dynamic LLM keys, LiteLLM keys | Answered by Decisions 6–7 |
 | #2610 tag LiteLLM requests by agent | Becomes the LiteLLM mapping of ③ |
@@ -230,12 +286,15 @@ Checked 2026-10-09; no duplicate found.
 | #2300 wire setup-caipe to LiteLLM | Re-scope to the dev/demo example gateway (T801) |
 | #2813, #2841, #2828, #2854 CAS authorization | `llm_model` joins the CAS scope and its audit |
 | #2884 CAS migration inventory | The `llm_model` call-time check is registered as a CAS path |
-| #2885 canonical platform identity | Gateway token claims (`sub`, `act`, `org`) follow it |
-| #2889 Dynamic Agents on the CAS access API | Path for the `llm_model#can_read` check |
-| #2890 OBO impersonation and delegation scope | Decides the autonomous exchange mechanism (spike S1) |
+| #2885 canonical platform identity | Gateway token claims (`sub`, `org`) follow it; the sending service is `azp` |
+| #2889 Dynamic Agents on the CAS access API | Target API for the `llm_model#can_read` check; deferred, so T107 uses today's call first |
+| #2890 OBO impersonation and delegation scope | Decides how the scheduler gets the owner token; the gateway exchange is unchanged |
 | #2891 trusted execution context for delegation | Source of the task owner for autonomous runs |
 | #2892, #2909 AgentGateway ext_authz through BFF CAS | Pattern for optional gateway-side authorization |
-| #2901 Keycloak-authenticated agent badges | Per-agent Keycloak binding that K2 can reuse |
+| #3034 CAS delegation approvals | Possible future proof of the task owner for autonomous runs |
+| #3010 audience-restricted MCP token exchange | May reuse the `caipe-dynamic-agents` client |
+| #3112 user, workload and delegated identities | May change how the sending service is represented |
+| #2901 Keycloak-authenticated agent badges | Separate optional badge clients; K2 maintains dedicated per-agent gateway scopes and does not depend on badge enrollment |
 | #2883 ACP native runtime (draft) | May move `dynamic_agents` call sites; the hook lives in `llm_wrapper` |
 | #1037, #1048 quota-increase requests | The user journey behind T502 |
 | #549 LLM fallback on throttling | The gateway's job |
