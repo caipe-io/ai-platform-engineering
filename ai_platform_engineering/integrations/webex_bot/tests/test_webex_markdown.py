@@ -122,6 +122,45 @@ def test_table_links_show_labels_and_prose_is_preserved() -> None:
     assert formatted.endswith("```\n\nThe table is complete.")
 
 
+def test_table_links_with_parenthesized_destinations_and_titles_show_labels() -> None:
+    source = (
+        "| Link | State |\n|---|---|\n"
+        '| [guide](https://example.com/path_(guide) "documentation") | ready |\n'
+        '| [reference](<https://example.com/reference_(v2)> "reference title") | ready |'
+    )
+
+    formatted = format_webex_markdown(source)
+
+    assert "guide     | ready" in formatted
+    assert "reference | ready" in formatted
+    assert "example.com" not in formatted
+    assert "documentation" not in formatted
+    assert "reference title" not in formatted
+
+
+def test_html_line_breaks_preserve_a_word_boundary_in_cells() -> None:
+    source = "| Name | State |\n|---|---|\n| Alpha<br>Beta<br/>Gamma<br />Delta | ready |"
+
+    formatted = format_webex_markdown(source)
+
+    assert "Alpha Beta Gamma Delta" in formatted
+
+
+def test_emoji_zwj_sequences_use_one_glyph_width_for_alignment() -> None:
+    source = "| Name | State |\n|---|---|\n| 👨‍👩‍👧‍👦 | ready |\n| 👩🏽‍💻 | ready |"
+
+    formatted = format_webex_markdown(source)
+
+    assert formatted == (
+        "```text\n"
+        "Name | State\n"
+        "-----+------\n"
+        "👨‍👩‍👧‍👦   | ready\n"
+        "👩🏽‍💻   | ready\n"
+        "```"
+    )
+
+
 def test_underscores_in_identifiers_are_preserved() -> None:
     source = "| VPC name | Status |\n|---|---|\n| vpc_example_metering_dev | _available_ |"
 
@@ -164,6 +203,59 @@ def test_fenced_code_and_malformed_table_like_text_are_unchanged() -> None:
     assert formatted == source
 
 
+def test_indented_code_pipe_examples_are_not_formatted() -> None:
+    for indentation in ("    ", "\t"):
+        source = (
+            f"{indentation}| A | B |\n"
+            f"{indentation}|---|---|\n"
+            f"{indentation}| one | two |"
+        )
+
+        assert format_webex_markdown(source) == source
+
+
+def test_indented_code_line_ends_pipe_table_row_collection() -> None:
+    source = (
+        "| ID | State |\n|---|---|\n| x1 | ready |\n\n"
+        "    | A | B |\n    |---|---|\n    | one | two |"
+    )
+
+    formatted = format_webex_markdown(source)
+
+    assert formatted.startswith("```text\nID | State\n---+------\nx1 | ready\n```")
+    assert formatted.endswith("\n\n    | A | B |\n    |---|---|\n    | one | two |")
+
+
+def test_blockquoted_table_keeps_quote_prefix_on_generated_code_block() -> None:
+    source = "> | Name | State |\n> |---|---|\n> | alpha | ready |\n> Done"
+
+    formatted = format_webex_markdown(source)
+
+    assert formatted == (
+        "> ```text\n"
+        "> Name  | State\n"
+        "> ------+------\n"
+        "> alpha | ready\n"
+        "> ```\n"
+        "> Done"
+    )
+
+
+def test_list_nested_table_keeps_continuation_indentation() -> None:
+    source = "- Results:\n  | Name | State |\n  |---|---|\n  | alpha | ready |"
+
+    formatted = format_webex_markdown(source)
+
+    assert formatted == (
+        "- Results:\n"
+        "  ```text\n"
+        "  Name  | State\n"
+        "  ------+------\n"
+        "  alpha | ready\n"
+        "  ```"
+    )
+
+
 def test_fence_marker_with_info_text_inside_code_block_does_not_close_it() -> None:
     source = "```text\ninside\n```example\n| A | B |\n|---|---|\n| one | two |\n```"
 
@@ -196,6 +288,31 @@ def test_inline_code_pipes_do_not_split_cells() -> None:
     assert "`a" not in formatted
     assert "[literal](https://example.com)" in formatted
     assert " | available" in formatted
+
+
+def test_unmatched_backtick_is_literal_and_pipes_still_split_cells() -> None:
+    source = "| Expr | State |\n|---|---|\n| a`b | ready |"
+
+    formatted = format_webex_markdown(source)
+
+    assert formatted == "```text\nExpr | State\n-----+------\na`b  | ready\n```"
+
+
+def test_inline_code_preserves_longer_backtick_runs_inside_span() -> None:
+    source = "| Value |\n|---|\n| `a``b` |"
+
+    formatted = format_webex_markdown(source)
+
+    assert "a``b" in formatted
+    assert "ab" not in formatted
+
+
+def test_inline_code_does_not_match_part_of_a_longer_closing_run() -> None:
+    source = "| Value |\n|---|\n| ``a`b``` |"
+
+    formatted = format_webex_markdown(source)
+
+    assert "``a`b```" in formatted
 
 
 def test_overlong_cell_wraps_without_exceeding_width_target() -> None:

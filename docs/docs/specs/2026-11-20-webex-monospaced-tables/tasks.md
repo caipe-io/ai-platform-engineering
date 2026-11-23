@@ -33,3 +33,9 @@
 - [X] T013 Choose a generated fence longer than any backtick run in compact and labeled output; verify bounded truncation closes the generated fence.
 - [X] T014 Preserve and wrap headers for a wide header-only table; add a regression case with two 40-character column names.
 - [X] T015 Keep complete lines from ordinary fenced code blocks while preserving labeled table records as complete blocks; add coverage for a large code-only Python response.
+- [X] T016 Keep compact table fences on line-boundary truncation even when a cell contains `: `; distinguish them using the generated compact-table separator row.
+- [X] T018 Skip four-space- and tab-indented code during table detection and stop table row collection before indented code; add preservation tests.
+- [X] T019 Match complete inline-code backtick runs by exact length; preserve longer interior runs and refuse partial matches against longer closing runs.
+- [X] T020 [US1] Treat unmatched backtick runs as literal text in table-row detection and cell splitting; only matching exact-length runs delimit inline code, with regression coverage for unmatched and balanced spans.
+- [X] T021 [US1] Preserve parenthesized Markdown link destinations, HTML line-break boundaries, joined-emoji display widths, and quote/list context when formatting tables; add focused regression coverage.
+- [X] T022 Run focused formatter, message-limit, and responder tests plus Ruff and `git diff --check`; 121 tests passed and all checks passed.

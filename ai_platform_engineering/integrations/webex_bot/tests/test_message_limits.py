@@ -115,6 +115,34 @@ def test_block_preserving_truncation_keeps_complete_lines_in_python_fence() -> N
     assert 0 < reply.count('print(1)') < 2000
 
 
+def test_block_preserving_truncation_keeps_compact_rows_with_colon_space() -> None:
+    footer = '\n\nAgent: Example'
+    notice = '\n\n_Response truncated._'
+    body = (
+        '```text\n'
+        'Name | Status\n'
+        '-----+--------\n'
+        'Name: Alice | ready\n'
+        'Name: Bob | ready\n'
+        + 'x' * 10000
+        + '\n```'
+    )
+
+    reply = bounded_markdown(
+        body,
+        footer=footer,
+        notice=notice,
+        preserve_line_boundaries=True,
+        preserve_block_boundaries=True,
+    )
+
+    assert len(reply.encode('utf-8')) <= WEBEX_MESSAGE_MAX_BYTES
+    assert reply.endswith('\n```\n' + notice + footer)
+    assert 'Name: Alice | ready' in reply
+    assert 'Name: Bob | ready' in reply
+    assert 'x' * 100 not in reply
+
+
 def test_truncation_closes_a_generated_fence_longer_than_three_backticks() -> None:
     footer = '\n\nAgent: Example'
     notice = '\n\n_Response truncated._'
@@ -125,3 +153,39 @@ def test_truncation_closes_a_generated_fence_longer_than_three_backticks() -> No
     assert len(reply.encode('utf-8')) <= WEBEX_MESSAGE_MAX_BYTES
     assert reply.endswith('\n````\n' + notice + footer)
     assert reply.count('````') == 2
+
+
+def test_truncation_closes_a_fenced_blockquote_table() -> None:
+    footer = '\n\nAgent: Example'
+    notice = '\n\n_Response truncated._'
+    body = '> ```text\n> Name | State\n> -----+------\n' + '> alpha | ready\n' * 1200
+
+    reply = bounded_markdown(body, footer=footer, notice=notice, preserve_line_boundaries=True)
+
+    assert len(reply.encode('utf-8')) <= WEBEX_MESSAGE_MAX_BYTES
+    assert reply.endswith('\n> ```\n' + notice + footer)
+
+
+def test_block_preserving_truncation_keeps_complete_blockquoted_records() -> None:
+    footer = '\n\nAgent: Example'
+    notice = '\n\n_Response truncated._'
+    body = (
+        '> ```text\n'
+        '> Record: one\n>   Region: example | Subnet: subnet-one\n> \n'
+        '> Record: two\n>   Region: example | Subnet: ' + 'x' * 10000 + '\n'
+        '> Record: three\n>   Region: example | Subnet: subnet-three\n> ```'
+    )
+
+    reply = bounded_markdown(
+        body,
+        footer=footer,
+        notice=notice,
+        preserve_line_boundaries=True,
+        preserve_block_boundaries=True,
+    )
+
+    assert len(reply.encode('utf-8')) <= WEBEX_MESSAGE_MAX_BYTES
+    assert reply.endswith('\n> ```\n' + notice + footer)
+    assert '> Record: one' in reply
+    assert '> Record: two' not in reply
+    assert '> Record: three' not in reply

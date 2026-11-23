@@ -2,7 +2,7 @@
 
 **Feature Branch**: `2026-11-20-webex-monospaced-tables`  
 **Created**: 2026-11-20  
-**Status**: Labeled wide-table layout implemented; focused pytest and Ruff passed
+**Status**: Labeled wide-table layout and follow-up formatting fixes implemented; focused pytest and Ruff passed
 **Input**: User request to format Dynamic Agent Markdown tables clearly in Webex, avoiding unsupported rendered tables and verbose row summaries.
 
 ## User Scenarios & Testing
@@ -42,6 +42,10 @@ As a Webex user, I want table previews to appear only after their rows and width
 - Rendered cell text may contain backtick runs; generated fences must be longer than every backtick run in the rendered block, and bounded replies must close that same fence.
 - Oversized output must truncate at complete table rows or labeled records, close any generated code fence, and retain the existing continuation notice behavior.
 - Oversized ordinary fenced code blocks must retain complete lines and close their original fence; record-boundary truncation applies to generated labeled table records.
+- Compact table rows containing `: ` in a cell must remain eligible for line-boundary truncation and must not be mistaken for labeled records.
+- Pipe-shaped examples indented by four spaces or a tab are code and must remain unchanged; indented code rows must not be collected into an unindented table.
+- Inline code spans must pair complete backtick runs of equal length; unmatched or longer runs remain visible cell content.
+- Inline links with balanced parentheses in destinations must display only their labels; HTML line breaks must preserve word boundaries; joined emoji sequences must use a compact display width; nested quote/list tables must retain their container.
 - A labeled field whose value cannot fit within the width budget must wrap within the record while keeping its label visible and every generated line within the width target.
 
 ## Requirements
@@ -59,6 +63,9 @@ As a Webex user, I want table previews to appear only after their rows and width
 - **FR-009**: The system MUST leave malformed or unsupported table-like content unchanged rather than corrupting the response.
 - **FR-010**: The system MUST choose a generated backtick fence longer than every backtick run in the rendered table and preserve compatibility with bounded fence closure.
 - **FR-011**: The system MUST preserve and wrap all headers when a valid table has no data rows and exceeds the 60-column limit.
+- **FR-012**: The system MUST match complete inline-code backtick runs by exact length and preserve their contents during cell normalization.
+- **FR-013**: The system MUST treat an unmatched backtick run as literal cell text so its surrounding pipes remain table delimiters; balanced code spans MUST continue to protect their internal pipes.
+- **FR-014**: The system MUST preserve visible text boundaries and Markdown containers when normalizing links, HTML line breaks, emoji widths, and nested tables for Webex.
 
 ### Key Entities
 
@@ -76,3 +83,8 @@ As a Webex user, I want table previews to appear only after their rows and width
 - **SC-005**: Stored assistant content remains byte-for-byte equal to the original streamed response.
 - **SC-006**: Compact and labeled tables containing backtick runs remain inside their generated code fences, including when the reply is truncated.
 - **SC-007**: Wide header-only tables retain every header and keep each rendered line within 60 display columns.
+- **SC-008**: Oversized compact tables with colon-space cell content retain all complete rows that fit and close the fence.
+- **SC-009**: Indented pipe-shaped code examples remain unchanged, while adjacent unindented tables continue to format correctly.
+- **SC-010**: Inline code cells retain backtick runs inside spans and do not partially match a longer closing run.
+- **SC-011**: A row containing an unmatched backtick still splits at its table pipes, while a balanced code span keeps its internal pipe within one cell.
+- **SC-012**: Links with parenthesized destinations display their labels, HTML line breaks do not join adjacent words, joined emoji do not create excess column padding, and blockquote/list tables retain their container formatting and close correctly when bounded.
