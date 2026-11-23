@@ -1,6 +1,6 @@
 "use client";
 
-import { Check,Copy } from "lucide-react";
+import { Check,Copy, type LucideIcon } from "lucide-react";
 import { useCallback,useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -55,6 +55,8 @@ export interface CopyButtonProps {
   copiedLabel?: string;
   /** Optional disabled flag. */
   disabled?: boolean;
+  /** Override the idle icon without changing success feedback or clipboard behavior. */
+  icon?: LucideIcon;
 }
 
 export function CopyButton({
@@ -66,6 +68,7 @@ export function CopyButton({
   className,
   copiedLabel = "Copied",
   disabled,
+  icon,
 }: CopyButtonProps) {
   const [state, setState] = useState<"idle" | "copied" | "error">("idle");
   const inlineLabel = children ?? null;
@@ -78,7 +81,7 @@ export function CopyButton({
     window.setTimeout(() => setState("idle"), 1800);
   }, [value]);
 
-  const Icon = state === "copied" ? Check : Copy;
+  const Icon = state === "copied" ? Check : icon ?? Copy;
   const ariaLive = state === "copied" ? copiedLabel : state === "error" ? "Copy failed" : label;
 
   return (
