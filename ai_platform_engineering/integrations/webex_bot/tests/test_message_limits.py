@@ -96,6 +96,25 @@ def test_block_preserving_truncation_drops_an_incomplete_first_record() -> None:
     assert 'x' * 100 not in reply
 
 
+def test_block_preserving_truncation_keeps_complete_lines_in_python_fence() -> None:
+    footer = '\n\nAgent: Example'
+    notice = '\n\n_Response truncated._'
+    body = '```python\n' + 'print(1)\n' * 2000 + '```'
+
+    reply = bounded_markdown(
+        body,
+        footer=footer,
+        notice=notice,
+        preserve_line_boundaries=True,
+        preserve_block_boundaries=True,
+    )
+
+    assert len(reply.encode('utf-8')) <= WEBEX_MESSAGE_MAX_BYTES
+    assert reply.startswith('```python\nprint(1)\n')
+    assert reply.endswith('\n```\n' + notice + footer)
+    assert 0 < reply.count('print(1)') < 2000
+
+
 def test_truncation_closes_a_generated_fence_longer_than_three_backticks() -> None:
     footer = '\n\nAgent: Example'
     notice = '\n\n_Response truncated._'

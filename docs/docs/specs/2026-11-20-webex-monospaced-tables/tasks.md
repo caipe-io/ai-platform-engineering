@@ -32,3 +32,4 @@
 - [X] T012 Require whitespace-only closing fences in the table formatter; cover fence-like content with info text and valid closers followed by whitespace.
 - [X] T013 Choose a generated fence longer than any backtick run in compact and labeled output; verify bounded truncation closes the generated fence.
 - [X] T014 Preserve and wrap headers for a wide header-only table; add a regression case with two 40-character column names.
+- [X] T015 Keep complete lines from ordinary fenced code blocks while preserving labeled table records as complete blocks; add coverage for a large code-only Python response.

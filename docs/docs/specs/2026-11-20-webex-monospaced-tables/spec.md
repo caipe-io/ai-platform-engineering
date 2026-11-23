@@ -41,6 +41,7 @@ As a Webex user, I want table previews to appear only after their rows and width
 - Cells may contain links, inline code, HTML entities, Unicode, or missing values; rendered columns must remain aligned by display width.
 - Rendered cell text may contain backtick runs; generated fences must be longer than every backtick run in the rendered block, and bounded replies must close that same fence.
 - Oversized output must truncate at complete table rows or labeled records, close any generated code fence, and retain the existing continuation notice behavior.
+- Oversized ordinary fenced code blocks must retain complete lines and close their original fence; record-boundary truncation applies to generated labeled table records.
 - A labeled field whose value cannot fit within the width budget must wrap within the record while keeping its label visible and every generated line within the width target.
 
 ## Requirements

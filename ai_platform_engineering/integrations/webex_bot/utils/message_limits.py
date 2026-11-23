@@ -18,12 +18,17 @@ def _utf8_prefix(
     prefix = text.encode("utf-8")[: max(0, budget)].decode("utf-8", errors="ignore")
     if preserve_lines and len(prefix) < len(text):
         if preserve_blocks:
-            last_block_boundary = prefix.rfind("\n\n")
-            if last_block_boundary >= 0:
-                return prefix[:last_block_boundary]
             open_fence_start = _open_fence_start(prefix)
             if open_fence_start is not None:
-                return prefix[:open_fence_start].rstrip()
+                if _is_labeled_record_fence(prefix, open_fence_start):
+                    last_block_boundary = prefix.rfind("\n\n")
+                    if last_block_boundary >= 0:
+                        return prefix[:last_block_boundary]
+                    return prefix[:open_fence_start].rstrip()
+            else:
+                last_block_boundary = prefix.rfind("\n\n")
+                if last_block_boundary >= 0:
+                    return prefix[:last_block_boundary]
         last_newline = prefix.rfind("\n")
         if last_newline >= 0:
             prefix = prefix[:last_newline]
@@ -51,6 +56,18 @@ def _open_fence_start(text: str) -> int | None:
         offset += len(line)
 
     return fence_start
+
+
+def _is_labeled_record_fence(text: str, fence_start: int) -> bool:
+    block_lines = text[fence_start:].splitlines()
+    if not block_lines:
+        return False
+
+    opening_fence = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", block_lines[0])
+    if opening_fence is None or opening_fence.group(2).strip() != "text":
+        return False
+
+    return any(re.match(r"^\s*[^:\n]+:\s", line) for line in block_lines[1:] if line.strip())
 
 
 def _code_closure(text: str) -> str:
