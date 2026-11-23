@@ -101,7 +101,7 @@ enough to determine which kind of evidence they provide.
 | AGT-01 | core | Private agent creation/edit/version/delete persist; owner executes; another user cannot discover/read/run/manage it |
 | AGT-02 | core | Team agent member can discover/run but cannot manage; outsider is denied; owner/team-admin policy holds |
 | AGT-03 | core | Global agent execution and management follow declared policy; exact global grants are present and revocable |
-| AGT-04 | core | Selected MCP tools and credential bindings persist; an actual allowed tool executes with caller/agent identity; unavailable or unauthorized tools fail closed |
+| AGT-04 | core | Selected MCP tools and credential bindings persist; an actual allowed tool executes with caller/agent identity after caller-token refresh, including existing chats; unavailable or unauthorized tools fail closed |
 | MODEL-01 | core | Existing environment models still run; saved provider/model create/test/edit/reload works; credential revisions and revoked access invalidate cached clients |
 | LEGACY-01 | deepagents | Capture a baseline-created SRE/Deep Agents chat; candidate resumes it with original runtime, context, tools and history; changing defaults does not silently migrate it |
 | LEGACY-02 | deepagents | Existing saved agent definitions, MCP bindings and model settings execute after upgrade; explicit migration, if supported, preserves history and can recover from interruption |
