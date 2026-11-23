@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from pymongo import MongoClient
 
+from dynamic_agents.auth.token_context import get_caller_token
 from dynamic_agents.config import get_settings
 from dynamic_agents.metrics import metrics as prom_metrics
 from dynamic_agents.models import (
@@ -180,6 +181,7 @@ class AgentRuntimeCache:
         key = self._make_key(agent_config.id, session_id)
         if cache_scope:
             key = f"{key}:caller:{cache_scope}"
+        caller_token = get_caller_token(user)
         requested_format = self._response_format(client_context)
 
         # Someone else is already initializing this key — wait for their result
@@ -187,7 +189,7 @@ class AgentRuntimeCache:
             pending = self._pending[key]
             if self._pending_response_formats.get(key) == requested_format:
                 ready = await asyncio.shield(pending)
-                if await ready.model_credentials_current(user):
+                if getattr(ready, "_auth_bearer", None) == caller_token and await ready.model_credentials_current(user):
                     return ready
                 continue
             try:
@@ -208,12 +210,15 @@ class AgentRuntimeCache:
             if key in self._cache:
                 runtime = self._cache[key]
                 format_changed = not self._response_format_matches(runtime, client_context)
+                # MCP, A2A and credential clients retain the bearer from initialization.
+                # Rebuild them together when the authenticated caller token changes.
+                caller_changed = getattr(runtime, "_auth_bearer", None) != caller_token
                 if runtime._is_streaming:
                     # Do not tear down a graph while another request is using it.
                     raise RuntimeCapacityError(self._max_size)
-                if format_changed or not await runtime.model_credentials_current(user) or await asyncio.to_thread(runtime.is_stale, agent_config, mcp_servers):
+                if caller_changed or format_changed or not await runtime.model_credentials_current(user) or await asyncio.to_thread(runtime.is_stale, agent_config, mcp_servers):
                     logger.info(
-                        "Runtime cache invalidated due to config change for agent %s",
+                        "Runtime cache invalidated due to configuration or credentials change for agent %s",
                         agent_config.id,
                     )
                     await runtime.cleanup()

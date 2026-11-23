@@ -19,7 +19,10 @@ concurrent requests are fully isolated.
 """
 
 from contextvars import ContextVar
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from dynamic_agents.models import UserContext
 
 current_user_token: ContextVar[Optional[str]] = ContextVar(
     "current_user_token", default=None
@@ -28,3 +31,8 @@ current_user_token: ContextVar[Optional[str]] = ContextVar(
 current_traceparent: ContextVar[Optional[str]] = ContextVar(
     "current_traceparent", default=None
 )
+
+
+def get_caller_token(user: "UserContext | None" = None) -> str | None:
+    """Resolve the same caller bearer for cache selection and runtime creation."""
+    return current_user_token.get() or ((user.obo_jwt or user.access_token) if user else None)
