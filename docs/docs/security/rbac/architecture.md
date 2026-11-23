@@ -116,6 +116,15 @@ Keycloak realm roles are **not created for CAIPE permissions**. New deployments 
 
 Rule of thumb: **Keycloak owns identity and JWT claims; OpenFGA owns who is related to which organization, team, or resource.**
 
+### Caller credentials in cached agent runtimes
+
+- Before reusing a runtime, Dynamic Agents compares the request's caller bearer
+  with the token captured at initialization, including initialization waiters.
+- A changed token rebuilds idle MCP, A2A and credential clients using the same
+  conversation ID. Active streams finish before their runtime can be replaced.
+- JWT validation and explicitly configured upstream provider credentials remain
+  unchanged. A cached connection never substitutes for valid caller credentials.
+
 ### Native app assistants from Webex
 
 Native dispatch keeps the linked human's identity and the stored `webex` client
