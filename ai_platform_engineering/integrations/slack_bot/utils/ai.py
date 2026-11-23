@@ -191,7 +191,7 @@ Please try a different approach:
 """
 RETRY_PROMPT_PREFIX = os.environ.get("SLACK_INTEGRATION_PROMPT_RETRY_PREFIX", _DEFAULT_RETRY_PREFIX)
 _CALLER_CONNECTION_WARNING = re.compile(
-  r"^(?P<server>.+?) needs your (?P<provider>.+?) account connected\."
+  r"^.+? needs your (?P<provider>.+?) account connected\."
 )
 _SKYNET_PROVIDER_LABELS = {
   "skynetsearch": "Skynet Search",
@@ -199,7 +199,7 @@ _SKYNET_PROVIDER_LABELS = {
 }
 
 
-def _format_connection_warning_for_slack(message):
+def _format_skynet_connection_warning_for_slack(message: str) -> str | None:
   """Format caller-scoped Skynet connection warnings as actionable Slack replies."""
   match = _CALLER_CONNECTION_WARNING.match(message)
   public_url = os.environ.get("CAIPE_PUBLIC_URL", "").rstrip("/")
@@ -715,7 +715,7 @@ def stream_response(
         if update.name == "WARNING":
           warning_msg = (update.value or {}).get("message", "unknown warning")
           logger.warning(f"[{thread_ts}] Agent warning: {warning_msg}")
-          connection_warning = _format_connection_warning_for_slack(warning_msg)
+          connection_warning = _format_skynet_connection_warning_for_slack(warning_msg)
           if connection_warning:
             try:
               slack_client.chat_postMessage(
