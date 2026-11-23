@@ -1,6 +1,6 @@
 # Contract ①③④: Agent ↔ Gateway (data plane)
 
-What every agent sends and what every gateway must honour. Agents reach the gateway through the `openai-compatible` provider in `ai_platform_engineering/llm_wrapper/` (`OPENAI_COMPATIBLE_BASE_URL`).
+What every agent sends and what every gateway must honour. Agents reach the gateway through the `openai-compatible` provider in `ai_platform_engineering/llm_wrapper/` pointed at `LLM_GATEWAY_BASE_URL` when the switch is on (FR-020).
 
 ```mermaid
 sequenceDiagram
@@ -13,8 +13,8 @@ sequenceDiagram
     P-->>G: response or upstream error
     G-->>A: OpenAI response, error class preserved
   else limit hit
-    G-->>A: 429 / 402 + budget signal
-    A->>A: LLMQuotaExceeded {scope, reset_at}
+    G-->>A: Error response
+    A->>A: Preserve error classification
   end
 ```
 
@@ -38,17 +38,7 @@ sequenceDiagram
 
 - **Success**: OpenAI schema, translated from the real upstream.
 - **Upstream error**: class preserved (429 stays 429, 5xx stays 5xx). No retry by CAIPE.
-- **Budget / quota rejection ④**: confirmed by a budget-signal rule identifying a gateway-enforced limit → `LLMQuotaExceeded`.
-
-| CAIPE error field | Source |
-|---|---|
-| `scope` | `user` · `agent` · `team` (from the rule, else `unknown`) |
-| `reset_at` | `Retry-After` or gateway body, if present |
-| `message` | "Budget for <scope> exhausted, resets <when>. Request an increase." |
-
-- Budget-signal rules are declarative data: documented defaults for named adapters, overridable with `LLM_GATEWAY_BUDGET_SIGNAL`. A rule must match a gateway header, structured error code or unambiguous configured pattern that distinguishes a gateway-enforced limit from a forwarded provider error. HTTP 402/429 or the words "budget" and "quota" alone are insufficient.
-- Adapter `none` has no default rule. Operators must configure a rule for their gateway before budget-error conformance can pass.
-- Unmatched or ambiguous errors retain their original status and classification, without an inferred budget scope or budget-increase advice. This also applies when no rule is configured; the request remains rejected.
+- **Rejected request ④**: preserve the response status and existing error classification. Do not infer gateway-versus-provider origin, budget scope, reset time or budget-increase advice. No gateway-specific parser or dedicated budget exception is required.
 - **Gateway unreachable**: fail closed and name the gateway. No direct-provider fallback.
 
 ## Invariants
