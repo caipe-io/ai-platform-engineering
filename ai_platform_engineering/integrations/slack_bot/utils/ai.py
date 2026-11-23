@@ -12,6 +12,7 @@ This module handles all interactions with dynamic agents via AG-UI protocol:
 """
 
 import os
+import re
 import threading
 import time
 
@@ -189,6 +190,24 @@ Please try a different approach:
 
 """
 RETRY_PROMPT_PREFIX = os.environ.get("SLACK_INTEGRATION_PROMPT_RETRY_PREFIX", _DEFAULT_RETRY_PREFIX)
+_CALLER_CONNECTION_WARNING = re.compile(
+  r"^(?P<server>.+?) needs your (?P<provider>.+?) account connected\."
+)
+
+
+def _format_connection_warning_for_slack(message):
+  """Turn a caller-scoped MCP connection warning into a clickable Slack reply."""
+  match = _CALLER_CONNECTION_WARNING.match(message)
+  public_url = os.environ.get("CAIPE_PUBLIC_URL", "").rstrip("/")
+  if not match or not public_url:
+    return None
+
+  provider = match.group("provider")
+  return (
+    f"{provider} isn't connected to your Forge account. Configure it in "
+    f"<{public_url}/credentials/connections|Forge Credentials → Connections>, "
+    "then retry your request."
+  )
 
 
 def stream_response(
@@ -688,6 +707,18 @@ def stream_response(
         if update.name == "WARNING":
           warning_msg = (update.value or {}).get("message", "unknown warning")
           logger.warning(f"[{thread_ts}] Agent warning: {warning_msg}")
+          connection_warning = _format_connection_warning_for_slack(warning_msg)
+          if connection_warning:
+            try:
+              slack_client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                text=connection_warning,
+              )
+            except Exception as slack_err:
+              logger.warning(
+                f"[{thread_ts}] Failed to post MCP connection guidance to Slack: {slack_err}"
+              )
         elif update.name == "NAMESPACE_CONTEXT":
           namespace = (update.value or {}).get("namespace", [])
           in_subagent = len(namespace) > 0
