@@ -258,6 +258,28 @@ describe("calling the app", () => {
     expect(await response.json()).toMatchObject({ code: "ASSISTANT_ACTION_BAD_RESPONSE" });
   });
 
+  it("rejects a response over the byte limit without buffering all of it", async () => {
+    appReply(200, JSON.stringify({ message: "x".repeat(70 * 1024) }));
+    const response = await call(valid);
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ code: "ASSISTANT_ACTION_BAD_RESPONSE" });
+  });
+
+  it("counts bytes, not characters, against the limit", async () => {
+    // 30,000 three-byte characters are 90,000 bytes but fewer than 64 K characters.
+    appReply(200, JSON.stringify({ message: "€".repeat(30_000) }));
+    expect((await call(valid)).status).toBe(502);
+  });
+
+  it("reports a body that fails after the headers arrived, and still audits it", async () => {
+    const body = new ReadableStream({ pull(controller) { controller.error(new Error("connection reset")); } });
+    jest.spyOn(global, "fetch").mockResolvedValue(new Response(body, { status: 200, headers: { "content-type": "application/json" } }));
+    const response = await call(valid);
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ code: "ASSISTANT_ACTION_BAD_RESPONSE" });
+    expect(mockAuditWrite).toHaveBeenCalledWith(expect.objectContaining({ outcome: "error", reason_code: "BAD_RESPONSE" }));
+  });
+
   it("does not follow a redirect", async () => {
     const fetchSpy = jest.spyOn(global, "fetch").mockResolvedValue(new Response(null, {
       status: 302, headers: { location: "https://other.example.test/x" },

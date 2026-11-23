@@ -18,7 +18,7 @@ configure({
 ```
 
 - Native: `configure(configuration)`. Iframe: `configureAssistant(configuration)`.
-- `validateAssistantConfiguration` rejects ids that were not declared.
+- `validateAssistantConfiguration` checks each id's shape and accepts ids the app did not declare. The host ignores them, so one stale id does not drop the rest.
 - A declared action with no entry stays hidden.
 - With `requireConfiguration`, nothing shows before the first `configure` call.
 - The host clears this state on unmount and account change. Apps call `configure` again.

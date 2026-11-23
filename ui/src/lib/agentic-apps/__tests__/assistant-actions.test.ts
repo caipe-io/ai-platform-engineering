@@ -62,11 +62,19 @@ describe("loadAssistantMessage", () => {
     expect(mockFindOne).toHaveBeenCalledWith({ conversation_id: "example-conversation", message_id: "example-message" });
   });
 
+  it("accepts a finished answer", async () => {
+    mockFindOne.mockResolvedValue({ role: "assistant", metadata: { turn_id: "t", is_final: true, turn_status: "done" } });
+    await expect(loadAssistantMessage("example-conversation", "example-message")).resolves.toEqual({ turnId: "t" });
+  });
+
   it.each([
     ["a missing message", null, "missing"],
     ["a user message", { role: "user", metadata: { turn_id: "t" } }, "not-assistant"],
     ["a system message", { role: "system", metadata: { turn_id: "t" } }, "not-assistant"],
     ["an assistant message without a turn", { role: "assistant", metadata: {} }, "not-assistant"],
+    ["an answer still streaming", { role: "assistant", metadata: { turn_id: "t", is_final: false } }, "not-assistant"],
+    ["an interrupted answer", { role: "assistant", metadata: { turn_id: "t", turn_status: "interrupted" } }, "not-assistant"],
+    ["a cancelled answer", { role: "assistant", metadata: { turn_id: "t", turn_status: "cancelled" } }, "not-assistant"],
   ])("reports %s", async (_name, stored, expected) => {
     mockFindOne.mockResolvedValue(stored);
     await expect(loadAssistantMessage("example-conversation", "example-message")).resolves.toBe(expected);

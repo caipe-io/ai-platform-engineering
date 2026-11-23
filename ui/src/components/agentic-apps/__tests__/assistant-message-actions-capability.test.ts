@@ -21,14 +21,17 @@ describe("native capability", () => {
     expect(assistant?.extensions).toContain("messageActions.v1");
   });
 
-  it("accepts a declared action and rejects an undeclared one", () => {
+  it("accepts a declared action and ignores an undeclared one", () => {
     const { assistant } = createHostChatCapability("example-app", true, options);
     const seen = jest.fn();
     window.addEventListener(HOST_ASSISTANT_EVENT, seen);
     expect(() => assistant!.configure!({ version: "1.0", visible: true, messageActions: { "flag-answer": { visible: true } } })).not.toThrow();
-    expect(() => assistant!.configure!({ version: "1.0", visible: true, messageActions: { other: { visible: true } } })).toThrow();
+    expect(() => assistant!.configure!({
+      version: "1.0", visible: true, messageActions: { "flag-answer": { visible: true }, other: { visible: true } },
+    })).not.toThrow();
+    expect(() => assistant!.configure!({ version: "1.0", visible: true, messageActions: { "Bad Id": { visible: true } } })).toThrow();
     window.removeEventListener(HOST_ASSISTANT_EVENT, seen);
-    expect(seen).toHaveBeenCalledTimes(1);
+    expect(seen).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -64,10 +67,14 @@ describe("iframe bridge", () => {
     }), window.location.origin);
   });
 
-  it("refuses visibility for an undeclared action", () => {
+  it("still sends the declared actions when the configuration also names an undeclared one", () => {
     connect([...ASSISTANT_EXTENSIONS]);
-    expect(() => bridge.configureAssistant({ version: "1.0", visible: true, messageActions: { other: { visible: true } } })).toThrow();
-    expect(configureCalls()).toHaveLength(0);
+    expect(() => bridge.configureAssistant({
+      version: "1.0", visible: true, messageActions: { "flag-answer": { visible: true }, other: { visible: true } },
+    })).not.toThrow();
+    expect(configureCalls()).toHaveLength(1);
+    expect(() => bridge.configureAssistant({ version: "1.0", visible: true, messageActions: { "Bad Id": { visible: true } } })).toThrow();
+    expect(configureCalls()).toHaveLength(1);
   });
 
   it("refuses visibility on a host without the capability, but still configures the rest", () => {

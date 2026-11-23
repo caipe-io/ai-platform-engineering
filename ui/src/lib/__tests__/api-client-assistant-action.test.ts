@@ -38,6 +38,12 @@ describe("postAssistantAction", () => {
     expect(await postAssistantAction(request)).toEqual({ ok: false, error: "Already recorded", code: "ALREADY_DONE" });
   });
 
+  it("treats a success whose body cannot be read as an error", async () => {
+    const body = new ReadableStream({ pull(controller) { controller.error(new Error("stalled")); } });
+    jest.spyOn(global, "fetch").mockClear().mockResolvedValue(new Response(body, { status: 200 }));
+    expect(await postAssistantAction(request)).toEqual({ ok: false, error: "The action could not be completed. Try again." });
+  });
+
   it("uses a generic message for an unreadable failure", async () => {
     reply(500, "<html>");
     expect(await postAssistantAction(request)).toEqual({ ok: false, error: "The action could not be completed" });

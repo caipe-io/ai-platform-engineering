@@ -18,6 +18,7 @@ help: ## Show this help
 	@echo
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  make %-9s %s\n", $$1, $$2}'
 
+.NOTPARALLEL: setup
 setup: env deps up seed ## Create config, start the containers and seed the agent
 	@echo
 	@echo "Ready. Next:"

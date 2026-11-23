@@ -21,7 +21,7 @@ describe("message action visibility configuration", () => {
   });
 
   it.each([
-    ["an undeclared id", { other: { visible: true } }],
+    ["a malformed id", { "Bad Id": { visible: true } }],
     ["a non-boolean flag", { mark: { visible: "yes" } }],
     ["extra state fields", { mark: { visible: true, grant: true } }],
     ["a non-object value", { mark: true }],
@@ -29,9 +29,12 @@ describe("message action visibility configuration", () => {
     expect(() => validateAssistantConfiguration({ version: "1.0", visible: true, messageActions }, options)).toThrow();
   });
 
-  it("rejects visibility when the app declared no actions", () => {
+  it("accepts an undeclared id so the declared ones still apply; the host ignores it", () => {
+    expect(() => validateAssistantConfiguration({
+      version: "1.0", visible: true, messageActions: { mark: { visible: true }, other: { visible: true } },
+    }, options)).not.toThrow();
     expect(() => validateAssistantConfiguration({
       version: "1.0", visible: true, messageActions: { mark: { visible: true } },
-    }, { version: "1.0" })).toThrow();
+    }, { version: "1.0" })).not.toThrow();
   });
 });

@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useLayoutEffect } from "react";
 import { configureHostAssistant, requestHostAssistant } from "@/lib/agentic-apps/assistant-events";
+import { enabledMessageActions } from "@/lib/agentic-apps/assistant-presentation";
 
 import { NativeExtensionAssistant } from "../NativeExtensionAssistant";
 
@@ -101,8 +102,9 @@ describe("NativeExtensionAssistant", () => {
       render(<NativeExtensionAssistant {...actions} />);
       await waitFor(() => expect(mockOverlay).toHaveBeenCalled());
       act(() => configureHostAssistant("example-app", { version: "1.0", visible: true, messageActions: { other: { visible: true } } }));
-      await screen.findByRole("alert");
-      expect(lastConfiguration()?.messageActions).toBeUndefined();
+      await waitFor(() => expect(lastConfiguration()?.messageActions).toEqual({ other: { visible: true } }));
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(enabledMessageActions(actions.assistant.hostOptions, lastConfiguration())).toEqual([]);
     });
   });
 

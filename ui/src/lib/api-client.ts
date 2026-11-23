@@ -512,11 +512,13 @@ export async function postAssistantAction(request: AssistantActionRequest): Prom
       }),
       signal: AbortSignal.timeout(ASSISTANT_ACTION_CLIENT_TIMEOUT_MS),
     });
-    const body = await response.json().catch(() => null) as
-      { error?: unknown; code?: unknown; data?: { message?: unknown } } | null;
+    type Body = { error?: unknown; code?: unknown; data?: { message?: unknown } } | null;
     if (response.ok) {
+      // A success whose body cannot be read is an error; the outer catch reports it.
+      const body = await response.json() as Body;
       return { ok: true, ...(typeof body?.data?.message === "string" ? { message: body.data.message } : {}) };
     }
+    const body = await response.json().catch(() => null) as Body;
     return {
       ok: false,
       error: typeof body?.error === "string" && body.error ? body.error : "The action could not be completed",

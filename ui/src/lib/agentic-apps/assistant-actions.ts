@@ -66,6 +66,10 @@ export async function loadAssistantMessage(
   if (!message) return "missing";
   const turnId = message.metadata?.turn_id;
   if (message.role !== "assistant" || typeof turnId !== "string" || !turnId) return "not-assistant";
+  // The panel hides actions until the answer is done; enforce the same here so a direct
+  // call cannot act on a streaming, failed or cancelled answer.
+  const status = message.metadata?.turn_status;
+  if (message.metadata?.is_final === false || (status !== undefined && status !== "done")) return "not-assistant";
   return { turnId };
 }
 
@@ -98,9 +102,28 @@ function auditMessageAction(
 async function readAppResponse(response: Response): Promise<unknown | undefined> {
   const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
   if (contentType !== "application/json") return undefined;
-  const text = await response.text();
-  if (text.length > MAX_APP_RESPONSE_BYTES) return undefined;
+  const text = await readBoundedText(response);
+  if (text === undefined) return undefined;
   try { return JSON.parse(text); } catch { return undefined; }
+}
+
+/** Reads at most MAX_APP_RESPONSE_BYTES, then cancels the stream; undefined when the app sends more. */
+async function readBoundedText(response: Response): Promise<string | undefined> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_APP_RESPONSE_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      return undefined;
+    }
+    chunks.push(value);
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
 /** Map the app's reply to a stable `{ error, code }`; nothing else from it reaches the browser. */
@@ -197,7 +220,15 @@ export async function runAgenticAppMessageAction(
     await response.body?.cancel();
     return done(fail(502, "The app returned an invalid response", "ASSISTANT_ACTION_BAD_RESPONSE"), "error", "BAD_RESPONSE");
   }
-  const result = await readAppResponse(response);
+  let result: unknown;
+  try {
+    result = await readAppResponse(response);
+  } catch {
+    // The connection failed or stalled after the headers arrived; the call still gets its audit event.
+    return timeout.aborted
+      ? done(fail(504, "The app did not respond in time", "ASSISTANT_ACTION_TIMEOUT"), "error", "TIMEOUT")
+      : done(fail(502, "The app returned an invalid response", "ASSISTANT_ACTION_BAD_RESPONSE"), "error", "BAD_RESPONSE");
+  }
   if (result === undefined) {
     return done(fail(502, "The app returned an invalid response", "ASSISTANT_ACTION_BAD_RESPONSE"), "error", "BAD_RESPONSE");
   }

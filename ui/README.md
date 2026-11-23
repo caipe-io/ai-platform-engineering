@@ -262,6 +262,8 @@ agentic_apps:
         ui:
           assistant:
             agentId: example-assistant
+            label: Example assistant
+            name: Example Assistant
             streamPath: /api/assistant/stream
             hostOptions:
               version: "1.0"

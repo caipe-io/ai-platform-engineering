@@ -34,7 +34,7 @@
 
 - [x] T003 Add `messageActions` to the `hostOptions` key allowlist and write `validateMessageActions` (max 4, `identifier()` ids, unique, label 1-24, host icon list, dialog fields, `maxLength` 1-60000) in `ui/app-sdk/assistant-options.mjs`, with the limits as named constants
 - [x] T004 In `ui/app-sdk/agentic-app-manifest.mjs` (next to the `validateAssistantOptions` call near line 232), validate each action `path` with the same rules as `streamPath`: `pathValue`, starts with `/api/`, app declares a runtime, and an allowed `POST` policy covers it. Reject `messageActions` when `overlay` is `"app"`.
-- [x] T005 [P] Extend `validateAssistantConfiguration` in `ui/app-sdk/assistant-options.mjs` to accept `messageActions: Record<id, { visible: boolean }>` and reject undeclared ids
+- [x] T005 [P] Extend `validateAssistantConfiguration` in `ui/app-sdk/assistant-options.mjs` to accept `messageActions: Record<id, { visible: boolean }>`; undeclared ids are accepted and ignored by the host (FR-009)
 - [x] T006 [P] Add `MessageActionDeclaration`, `MessageActionDialog` and the `messageActions` configuration type to `ui/app-sdk/assistant-options.d.mts`. Re-export from `ui/app-sdk/index.d.ts`.
 
 **Checkpoint**: a manifest with valid actions loads, an invalid one is rejected.
@@ -91,7 +91,7 @@
 
 **Goal**: visibility is per user, hidden by default, reset on account change. **Independent test**: two users, one enabled.
 
-- [x] T026 [P] [US3] Add configuration tests in new `ui/src/components/agentic-apps/__tests__/assistant-message-actions-config.test.ts`: undeclared id rejected, `visible: false` hides, missing entry hides
+- [x] T026 [P] [US3] Add configuration tests in new `ui/src/components/agentic-apps/__tests__/assistant-message-actions-config.test.ts`: undeclared id ignored, malformed id rejected, `visible: false` hides, missing entry hides
 - [x] T027 [P] [US3] Write overlay tests in `ui/src/components/agentic-apps/__tests__/AgenticAppAssistantOverlay.test.tsx`: hidden until configured, shown after `configure`, cleared on unmount, cleared on account change
 - [x] T028 [US3] In `ui/src/components/agentic-apps/AgenticAppAssistantOverlay.tsx` and `AgenticAppShell.tsx`, keep enablement in component state. Clear it on unmount and account change.
 - [x] T029 [US3] In `ui/src/lib/agentic-apps/assistant-presentation.ts`, drop `messageActions` from the configuration before `rememberAssistantPresentation` stores it, and ignore it in `readAssistantPresentation`. The stored copy is shared across tabs for 5 minutes and must not make an action visible before the app calls `configure`. Add a test: after remember and read, `messageActions` is absent.

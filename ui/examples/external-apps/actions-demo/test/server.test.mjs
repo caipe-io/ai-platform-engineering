@@ -12,7 +12,7 @@ const call = {
 };
 
 async function withServer(run, options = {}) {
-  const server = createActionsDemoServer({ secret: TEST_SECRET, ...options });
+  const server = createActionsDemoServer({ secret: TEST_SECRET, issuer: "caipe-agentic-apps", ...options });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   try {

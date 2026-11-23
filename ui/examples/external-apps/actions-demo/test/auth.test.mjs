@@ -6,11 +6,11 @@ import test from "node:test";
 import { createDemoJwtVerifier } from "../auth.mjs";
 import { bearer, mintTestToken, TEST_SECRET } from "./helpers.mjs";
 
-const verify = createDemoJwtVerifier({ secret: TEST_SECRET });
+const verify = createDemoJwtVerifier({ secret: TEST_SECRET, issuer: "caipe-agentic-apps" });
 
 test("requires a long dedicated secret", () => {
   assert.throws(() => createDemoJwtVerifier({ secret: "short" }), /at least 32 bytes/);
-  assert.throws(() => createDemoJwtVerifier({ secret: undefined }), /AGENTIC_APP_TOKEN_SECRET/);
+  assert.throws(() => createDemoJwtVerifier({ secret: "" }), /AGENTIC_APP_TOKEN_SECRET/);
 });
 
 test("accepts a valid token that carries the required scope", () => {

@@ -100,9 +100,12 @@ export function validateAssistantConfiguration(value, options) {
   object(value, ["version", "visible", "controls", "bottomInset", "messageActions"]);
   if (value.version !== "1.0" || typeof value.visible !== "boolean") throw new Error("Unsupported assistant configuration");
   if (value.messageActions !== undefined) {
-    // Visibility is cosmetic; only ids the manifest declared may be toggled.
-    object(value.messageActions, (options?.messageActions ?? []).map(a => a.id));
-    for (const state of Object.values(value.messageActions)) {
+    // Visibility is cosmetic. An id the manifest did not declare is accepted here and
+    // ignored when the host decides what to show, so one stale id cannot drop the rest.
+    if (!value.messageActions || typeof value.messageActions !== "object" || Array.isArray(value.messageActions))
+      throw new Error("Invalid assistant option fields");
+    for (const [id, state] of Object.entries(value.messageActions)) {
+      identifier(id);
       object(state, ["visible"]);
       if (typeof state.visible !== "boolean") throw new Error("Invalid message action visibility");
     }
