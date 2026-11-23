@@ -184,17 +184,17 @@ class AgentRuntimeCache:
         caller_token = get_caller_token(user)
         requested_format = self._response_format(client_context)
 
-        # Someone else is already initializing this key — wait for their result
+        # Wait for this key, then validate under our own single-flight reservation.
+        # Returning the completed future directly could race with another request
+        # cleaning up that runtime while credential validation is suspended.
         while key in self._pending:
             pending = self._pending[key]
-            if self._pending_response_formats.get(key) == requested_format:
-                ready = await asyncio.shield(pending)
-                if getattr(ready, "_auth_bearer", None) == caller_token and await ready.model_credentials_current(user):
-                    return ready
-                continue
+            same_format = self._pending_response_formats.get(key) == requested_format
             try:
                 await asyncio.shield(pending)
             except RuntimeInitError:
+                if same_format:
+                    raise
                 # Another schema's initialization failure does not reject this request.
                 logger.debug("Retrying initialization with a different schema for agent %s", agent_config.id)
 
