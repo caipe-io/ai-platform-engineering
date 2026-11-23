@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1064 467" role="img" aria-labelledby="title desc">
+<title id="title">Curated release announcements</title>
+<desc id="desc">A saved override applies when its target matches the deployed CAIPE host version.</desc>
+<rect width="1064" height="467" rx="20" fill="#f8faff"/>
+<g font-family="Inter, Helvetica, Arial, sans-serif">
+<text x="40" y="53" fill="#172644" font-size="31" font-weight="750">Curated release announcements</text>
+<text x="40" y="78" fill="#465978" font-size="16" font-weight="500">A saved override applies when its target matches the deployed CAIPE host version.</text>
+<rect x="40" y="105" width="264" height="110" rx="12" fill="#e8f3ff" stroke="#2162a7" stroke-width="1.4"/>
+<text x="58" y="126" fill="#2162a7" font-size="12" font-weight="750">USER INTERFACE</text>
+<text x="58" y="154" fill="#172644" font-size="19" font-weight="720">Admin editor</text>
+<text x="58" y="181" fill="#465978" font-size="15" font-weight="500">Enter Markdown or select a file</text>
+<text x="58" y="200" fill="#465978" font-size="15" font-weight="500">Choose the host release target</text>
+<rect x="400" y="105" width="264" height="110" rx="12" fill="#def6ee" stroke="#14705c" stroke-width="1.4"/>
+<text x="418" y="126" fill="#14705c" font-size="12" font-weight="750">STORE</text>
+<text x="418" y="154" fill="#172644" font-size="19" font-weight="720">Platform configuration</text>
+<text x="418" y="181" fill="#465978" font-size="15" font-weight="500">Save target version and source</text>
+<text x="418" y="200" fill="#465978" font-size="15" font-weight="500">Store manual Markdown or ref</text>
+<rect x="760" y="105" width="264" height="110" rx="12" fill="#fff3df" stroke="#895209" stroke-width="1.4"/>
+<text x="778" y="126" fill="#895209" font-size="12" font-weight="750">EXTERNAL</text>
+<text x="778" y="154" fill="#172644" font-size="19" font-weight="720">Approved GitHub</text>
+<text x="778" y="181" fill="#465978" font-size="15" font-weight="500">Repository Markdown</text>
+<text x="778" y="200" fill="#465978" font-size="15" font-weight="500">Selected ref and path</text>
+<rect x="40" y="285" width="264" height="110" rx="12" fill="#e8f3ff" stroke="#2162a7" stroke-width="1.4"/>
+<text x="58" y="306" fill="#2162a7" font-size="12" font-weight="750">USER INTERFACE</text>
+<text x="58" y="334" fill="#172644" font-size="19" font-weight="720">Notes preview or dialog</text>
+<text x="58" y="361" fill="#465978" font-size="15" font-weight="500">Sign-in prompt or manual view</text>
+<text x="58" y="380" fill="#465978" font-size="15" font-weight="500">Read the running host release</text>
+<rect x="400" y="285" width="264" height="110" rx="12" fill="#e9edff" stroke="#5243a9" stroke-width="1.4"/>
+<text x="418" y="306" fill="#5243a9" font-size="12" font-weight="750">CAIPE SERVICE</text>
+<text x="418" y="334" fill="#172644" font-size="19" font-weight="720">Release-notes service</text>
+<text x="418" y="361" fill="#465978" font-size="15" font-weight="500">Match target to host version</text>
+<text x="418" y="380" fill="#465978" font-size="15" font-weight="500">Read the applicable source</text>
+<path d="M304,160 L400,160 M391.1,164.6 L400,160 L391.1,155.4" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="308" y="151" fill="#465978" font-size="12" font-weight="600">Save</text>
+<path d="M532,285 L532,215 M536.6,223.9 L532,215 L527.4,223.9" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="542" y="252" fill="#465978" font-size="12" font-weight="600">Match target</text>
+<path d="M400,340 L304,340 M312.9,335.4 L304,340 L312.9,344.6" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="308" y="331" fill="#465978" font-size="12" font-weight="600">Display</text>
+<path d="M664,340 L892,215 M886.4,223.3 L892,215 L882.0,215.2" fill="none" stroke="#596b88" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="40" x2="1024" y1="407" y2="407" stroke="#d5deef"/>
+<text x="40" y="437" fill="#465978" font-size="15" font-weight="500">If the override targets another version, CAIPE uses the configured automatic release-notes path.</text>
+</g></svg>

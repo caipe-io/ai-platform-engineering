@@ -1,8 +1,8 @@
 # SharePoint MCP server
 
-Read-only Model Context Protocol server for one configured SharePoint Online
-site. It uses Microsoft Graph with an application identity and never exposes
-write tools.
+Read-only Model Context Protocol server that uses a configured SharePoint Online
+site for discovery and a Microsoft Entra application identity for Microsoft Graph
+reads.
 
 ## Security model
 
@@ -23,8 +23,10 @@ write tools.
   Graph version tags so successfully ingested unchanged files can be skipped before
   enforcing the ten-document per-run limit. No source records are rewritten by discovery.
 
-- The server is hard-scoped to `SHAREPOINT_SITE_URL`; tools cannot select a
-  different tenant, hostname, or site.
+- `SHAREPOINT_SITE_URL` selects the site for discovery. Document manifests
+  and document HTTP routes validate library membership. General MCP drive
+  tools rely on Microsoft Graph to enforce the Entra application's grants.
+  For single-site access, grant the application read access to that site only.
 - Microsoft credentials stay in the server environment. They are not tool
   arguments, MCP responses, or logs.
 - Every tool is annotated read-only and uses only Microsoft Graph `GET`

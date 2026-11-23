@@ -224,7 +224,7 @@ const sidebars: SidebarsConfig = {
         },
         { type: 'doc', id: 'repo-ops/ci', label: 'CI Workflows' },
         { type: 'doc', id: 'repo-ops/releases', label: 'How to Cut a Release' },
-        { type: 'doc', id: 'repo-ops/issue-triage', label: 'Issue Triage Dashboard' },
+        { type: 'link', href: 'https://github.com/orgs/caipe-io/projects/1', label: 'GitHub Project Board' },
         { type: 'doc', id: 'repo-ops/code-review', label: 'Code Review' },
         {
           type: 'category',
@@ -235,6 +235,7 @@ const sidebars: SidebarsConfig = {
               id: 'development/advanced/ci-infrastructure',
               label: 'CI Infrastructure',
             },
+            { type: 'doc', id: 'development/migrate-to-monorepo' },
           ],
         },
         {
@@ -257,8 +258,10 @@ const sidebars: SidebarsConfig = {
       },
       items: [
         { type: 'doc', id: 'architecture/index', label: 'Solution Architecture' },
+        { type: 'doc', id: 'architecture/ai-agent-vs-mcp-server' },
         { type: 'doc', id: 'architecture/gateway', label: 'AgentGateway' },
         { type: 'doc', id: 'architecture/claude-acp', label: 'Claude ACP' },
+        { type: 'doc', id: 'architecture/notification-framework', label: 'Notification Framework' },
         { type: 'doc', id: 'architecture/scheduler', label: 'Scheduler' },
         { type: 'doc', id: 'architecture/autonomous-agents', label: 'Autonomous Agents' },
         {
@@ -277,6 +280,11 @@ const sidebars: SidebarsConfig = {
       items: [
         { type: 'doc', id: 'features/index', label: 'Overview' },
         { type: 'doc', id: 'features/agent-builder', label: 'Agent Builder' },
+        { type: 'doc', id: 'features/harness-runtimes' },
+        { type: 'doc', id: 'features/remote-agents' },
+        { type: 'doc', id: 'features/model-providers' },
+        { type: 'doc', id: 'features/report-feedback' },
+        { type: 'doc', id: 'features/release-announcements' },
         { type: 'doc', id: 'features/workflows', label: 'Workflows' },
         { type: 'doc', id: 'features/agentic-apps', label: 'External Apps' },
         { type: 'doc', id: 'features/agentic-app-manifest', label: 'Shared App Manifest' },
@@ -384,6 +392,8 @@ const sidebars: SidebarsConfig = {
           id: 'agents/README',
           label: 'Overview',
         },
+        { type: 'doc', id: 'agents/sharepoint' },
+        { type: 'doc', id: 'agents/finops' },
       ],
     },
     {
@@ -435,6 +445,7 @@ const sidebars: SidebarsConfig = {
           id: 'community/meeting-recordings',
           label: 'Meeting Recordings',
         },
+        { type: 'doc', id: 'community/cncf-sandbox-application' },
       ],
     },
   ]

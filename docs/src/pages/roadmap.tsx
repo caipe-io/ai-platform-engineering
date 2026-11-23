@@ -4,26 +4,43 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import styles from './roadmap.module.css';
 
-const ROADMAP = [
+type RoadmapStatus = 'planned' | 'in-progress' | 'prototype' | 'stretch';
+type RoadmapMilestone = '1.5.0' | '2.0.0';
+
+type RoadmapItem = {
+  title: string;
+  description: string;
+  status: RoadmapStatus;
+  milestones?: RoadmapMilestone[];
+  milestoneScope?: string;
+  subItems?: string[];
+  issueRefs?: string[];
+  links?: { label: string; href: string }[];
+};
+
+const REPO_URL = 'https://github.com/caipe-io/ai-platform-engineering';
+const MILESTONE_URLS: Record<RoadmapMilestone, string> = {
+  '1.5.0': `${REPO_URL}/milestone/25`,
+  '2.0.0': `${REPO_URL}/milestone/26`,
+};
+
+const ROADMAP: RoadmapItem[] = [
   {
-    title: 'Comprehensive Human and Non-human Identity and RBAC',
-    description: 'Role and team-based access control touching all features — OAuth 2.1, audit logs, and channel-to-agent assignment.',
-    status: 'in-progress',
-    subItems: [
-      'OAuth 2.1 features: DCR, Token Exchange, three-legged auth for remote MCP servers',
-      'Manage RBAC user/teams/roles from UI',
-      'Assign Slack/Webex channels ↔ Custom agents',
-      'Detailed authorization audit logs (OBO agent actor logs)',
-      'Two-tier policy system for self-service workflow tool authorization',
+    title: 'CAIPE Authorization Service (CAS) v2',
+    description: 'Make CAS the supported authorization boundary across CAIPE services, with Keycloak for identity and OpenFGA for relationship-based access. The 2.0.0 epic builds on the 1.5.0 migration and evaluates CEL, OPA, and Cedar for business policy.',
+    status: 'planned',
+    milestones: ['2.0.0'],
+    links: [
+      { label: '2.0.0 CAS v2 epic #2927', href: `${REPO_URL}/issues/2927` },
+      { label: '1.5.0 CAS migration #2487', href: `${REPO_URL}/issues/2487` },
+      { label: 'OpenFGA policy administration #2561', href: `${REPO_URL}/issues/2561` },
     ],
-    issueRefs: ['#1742'],
   },
   {
-    title: 'Amazon Bedrock AgentCore Integration',
-    description: 'Integrate Amazon Bedrock AgentCore as a managed runtime backend for CAIPE Dynamic Agents — enabling AWS-native teams to run, scale, and observe agents using AgentCore\'s managed infrastructure, memory, and tool execution environment.',
+    title: 'Amazon Bedrock AgentCore Follow-ons',
+    description: 'Extend the experimental AgentCore runtime integration with lifecycle management, memory, tool execution, and observability.',
     status: 'planned',
     subItems: [
-      'AgentCore runtime adapter for the Dynamic Agents harness',
       'Agent lifecycle mapping: create / invoke / delete AgentCore agents from CAIPE UI',
       'Memory bridge: sync AgentCore session memory with CAIPE conversation context',
       'Tool execution: route MCP tool calls through AgentCore\'s tool executor',
@@ -33,32 +50,30 @@ const ROADMAP = [
     issueRefs: ['#2109'],
   },
   {
-    title: 'Multiple Agentic Harness SDK Integration',
-    description: 'Support multiple agentic harness SDKs — ADK, Strands, Claude SDK — so teams can bring their preferred agent framework without being locked into a single runtime.',
+    title: 'Harness Engine & Gateway v2',
+    description: 'Define how the Harness Gateway and agent runtimes work together, including runtime lifecycle, sandbox integration, and session isolation.',
     status: 'planned',
-    subItems: [
-      'Google ADK (Agent Development Kit) adapter',
-      'AWS Strands SDK adapter',
-      'Anthropic Claude SDK adapter',
-      'Pluggable harness adapter architecture — swap frameworks per agent',
+    milestones: ['2.0.0'],
+    links: [
+      { label: 'Harness v2 epic #2930', href: `${REPO_URL}/issues/2930` },
     ],
-    issueRefs: ['#2079'],
   },
   {
-    title: 'LLM Budget & Quota Management',
-    description: 'Per-user and per-agent LLM token budget enforcement using LiteLLM keys — track spend, set quotas, and prevent runaway inference costs.',
-    status: 'planned',
-    subItems: [
-      'LiteLLM key integration for per-agent token tracking',
-      'Dynamic LLM key creation for dynamic agents',
-      'Budget dashboards and quota alerts in the admin UI',
+    title: 'LLM Budget Tracking via Gateways',
+    description: 'Track LLM usage and enforce budgets through supported gateways. The 1.5.0 epic tracks per-agent budgets and model routing. The 2.0.0 follow-on covers broader policy enforcement and gateway responsibilities.',
+    status: 'in-progress',
+    milestones: ['1.5.0', '2.0.0'],
+    links: [
+      { label: '1.5.0 budget epic #2537', href: `${REPO_URL}/issues/2537` },
+      { label: '2.0.0 gateway epic #2926', href: `${REPO_URL}/issues/2926` },
     ],
-    issueRefs: ['#2080'],
   },
   {
     title: 'Automatic Agentic Evaluation',
     description: 'Automated evaluation pipeline for agent response quality — deepeval-based RAG precision/recall, F1 scoring, and a self-improving feedback loop that tightens agent accuracy over time.',
     status: 'planned',
+    milestones: ['1.5.0'],
+    milestoneScope: 'RAG Evaluation v1',
     subItems: [
       'deepeval pipeline: RAG precision, recall, F1 scoring',
       'Agent response quality scoring (relevance, faithfulness, context recall)',
@@ -66,43 +81,70 @@ const ROADMAP = [
       'Self-improving feedback loop',
     ],
     issueRefs: ['#2081'],
+    links: [
+      { label: 'RAG Evaluation v1 epic #2538', href: `${REPO_URL}/issues/2538` },
+    ],
   },
   {
-    title: 'Agent Sandbox Execution',
-    description: 'Isolated sandbox environments that let teams test agents safely without touching production data, credentials, or systems.',
+    title: 'Agent Sandboxes',
+    description: 'Integrate CAIPE Sandbox so teams can test agents in isolated workspaces with separate tools, data, and credentials. The Agent Substrate is a future direction for sandbox execution.',
     status: 'planned',
-    subItems: [
-      'Sandboxed agent execution with isolated credentials and tool stubs',
-      'UI toggle to launch any agent in sandbox mode',
-      'Sandbox audit log separate from production',
-      'Automatic sandbox teardown after session or TTL',
+    milestones: ['2.0.0'],
+    milestoneScope: 'Sandbox execution',
+    links: [
+      { label: 'CAIPE Sandbox', href: 'https://github.com/caipe-io/caipe-sandbox' },
+      { label: 'Sandbox execution epic #2082', href: `${REPO_URL}/issues/2082` },
+      { label: 'Sandbox v2 epic #2929', href: `${REPO_URL}/issues/2929` },
     ],
-    issueRefs: ['#2082'],
   },
   {
-    title: 'Agentic Apps with UI Plugin Architecture',
-    description: 'A plugin architecture that lets teams ship custom agentic apps — dashboards, workflow surfaces, or full UI panels — and register them into the CAIPE shell without forking the core frontend.',
-    status: 'planned',
-    subItems: [
-      'Plugin manifest spec: name, entrypoint, permissions, nav placement',
-      'Sandboxed plugin host in the CAIPE shell (module federation or iframe)',
-      'Plugin SDK: invoke agents, stream results, access auth token',
-      'Plugin registry UI — install, enable/disable, configure per-team',
-      'Reference plugin: SRE Runbook app',
+    title: 'AgentBridge Integration (A2A)',
+    description: 'An isolated prototype connected AgentBridge to CAIPE over A2A. The Direct A2A and Agent Teams epic tracks the broader chat and runtime integration.',
+    status: 'prototype',
+    milestones: ['1.5.0'],
+    milestoneScope: 'Direct A2A',
+    links: [
+      { label: 'Direct A2A epic #3432', href: `${REPO_URL}/issues/3432` },
+      { label: 'AgentBridge prototype PR #3261', href: `${REPO_URL}/pull/3261` },
     ],
-    issueRefs: ['#2085'],
   },
   {
-    title: 'Autonomous Agents',
-    description: 'Self-directed agents that proactively monitor, detect, and act on platform events without explicit user prompts.',
+    title: 'Agent Teams',
+    description: 'Work with multiple agents in one conversation. Add and mention participants, hand off tasks, and combine their contributions into a single response.',
     status: 'planned',
-    subItems: [
-      'Event-driven activation from alerts, webhooks, and scheduled checks',
-      'Policy guardrails scoping what actions agents may take without approval',
-      'Human-in-the-loop escalation to Slack/Webex when confidence is low',
-      'Full autonomous run audit trail',
+    milestones: ['1.5.0'],
+    links: [
+      { label: '1.5.0 Agent Teams epic #3432', href: `${REPO_URL}/issues/3432` },
+      { label: 'Participant workspace PR #3256', href: `${REPO_URL}/pull/3256` },
     ],
-    issueRefs: ['#2083'],
+  },
+  {
+    title: 'Agentic Apps v2',
+    description: 'Extend the app platform with runtime UI plugins and a shared manifest contract for native and iframe apps.',
+    status: 'planned',
+    milestones: ['1.5.0', '2.0.0'],
+    links: [
+      { label: '1.5.0 Runtime UI Plugins epic #2575', href: `${REPO_URL}/issues/2575` },
+      { label: '2.0.0 Manifest v2 epic #2928', href: `${REPO_URL}/issues/2928` },
+    ],
+  },
+  {
+    title: 'Notification Framework',
+    description: 'The event and preference contracts have landed. The stretch proposal covers reusable notifications for platform and app events, including delivery destinations, user controls, retries, and deduplication.',
+    status: 'stretch',
+    milestones: ['2.0.0'],
+    links: [
+      { label: '2.0.0 stretch epic #2934', href: `${REPO_URL}/issues/2934` },
+      { label: 'Event and preference contracts PR #2993', href: `${REPO_URL}/pull/2993` },
+    ],
+  },
+  {
+    title: 'Autonomous Agents v2',
+    description: 'Extend autonomous runs with policy guardrails, human escalation, and expanded audit coverage.',
+    status: 'planned',
+    links: [
+      { label: 'Autonomous Agents v2 epic #2578', href: `${REPO_URL}/issues/2578` },
+    ],
   },
   {
     title: 'Agentic SDLC Loops',
@@ -119,17 +161,18 @@ const ROADMAP = [
   },
 ];
 
-const STATUS_LABELS: Record<string, {label: string; className: string}> = {
+const STATUS_LABELS: Record<RoadmapStatus, {label: string; className: string}> = {
   planned: { label: 'Planned', className: styles.statusPlanned },
   'in-progress': { label: 'In Progress', className: styles.statusInProgress },
-  done: { label: 'Done', className: styles.statusDone },
+  prototype: { label: 'Prototype', className: styles.statusInProgress },
+  stretch: { label: 'Stretch proposal', className: styles.statusPlanned },
 };
 
 export default function RoadmapPage() {
   return (
     <Layout
       title="Roadmap · CAIPE"
-      description="CAIPE planned roadmap — upcoming features and improvements for the community AI platform engineering project."
+      description="Explore upcoming features, active work, and proposals for the CAIPE project."
     >
       <main>
         <section className={styles.hero}>
@@ -138,9 +181,8 @@ export default function RoadmapPage() {
               CAIPE Roadmap
             </Heading>
             <p className={styles.heroSubtitle}>
-              What we're working on next. The roadmap is driven by the community —
-              vote on issues, open feature requests, or join the weekly meeting to
-              influence priorities.
+              Explore what we're working on and what's planned. Vote on issues,
+              open feature requests, or join the weekly meeting to influence priorities.
             </p>
             <div className={styles.heroCtas}>
               <Link
@@ -149,11 +191,8 @@ export default function RoadmapPage() {
               >
                 View on GitHub Projects ↗
               </Link>
-              <Link className={styles.secondaryBtn} to="/community">
-                Join the Community
-              </Link>
-              <Link className={styles.secondaryBtn} to="/docs/repo-ops/issue-triage">
-                Live Issue Classification →
+              <Link className={styles.secondaryBtn} to="/features">
+                Explore Available Features
               </Link>
             </div>
           </div>
@@ -172,6 +211,11 @@ export default function RoadmapPage() {
                       <span className={`${styles.statusBadge} ${status.className}`}>
                         {status.label}
                       </span>
+                      {item.milestones?.map((milestone) => (
+                        <a key={milestone} className={styles.milestone} href={MILESTONE_URLS[milestone]}>
+                          {milestone} milestone{item.milestoneScope && ` · ${item.milestoneScope}`}
+                        </a>
+                      ))}
                     </div>
                     <p className={styles.itemDesc}>{item.description}</p>
                     {item.subItems && (
@@ -181,17 +225,28 @@ export default function RoadmapPage() {
                         ))}
                       </ul>
                     )}
-                    {(item as any).issueRefs && (
+                    {(item.issueRefs || item.links) && (
                       <div className={styles.issueRefs}>
-                        {(item as any).issueRefs.map((ref: string) => (
+                        {item.issueRefs?.map((ref) => (
                           <a
                             key={ref}
-                            href={`https://github.com/caipe-io/ai-platform-engineering/issues/${ref.replace('#', '')}`}
+                            href={`${REPO_URL}/issues/${ref.slice(1)}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className={styles.issueRef}
                           >
                             {ref}
+                          </a>
+                        ))}
+                        {item.links?.map(({ label, href }) => (
+                          <a
+                            key={href}
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className={styles.issueRef}
+                          >
+                            {label}
                           </a>
                         ))}
                       </div>

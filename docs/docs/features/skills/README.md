@@ -67,6 +67,22 @@ Attach skills to a dynamic agent from the UI. The runtime exposes the selected
 skills to that agent during chat. Scan-gated skills are excluded before they
 reach the model.
 
+## Pin an upstream skill package
+
+In CAIPE 1.4.0, a **GitHub skill hub** can import original entry files and supporting
+assets from one immutable commit. In the administrator's Skill Hubs form:
+
+1. Enter the repository and its full commit SHA in **Pinned commit**.
+2. Let the crawler discover `SKILL.md` files or list explicit command Markdown
+   entries. CAIPE preserves the original file contents and fetches supporting
+   files from the same commit.
+3. Crawl the hub, review scan results, and attach the package to an agent. When
+   an agent pins package content, Dynamic Agents verifies the entry and supporting
+   files before loading them. Incomplete or changed pinned content blocks loading.
+
+Use the Gallery to review and attach skills to CAIPE agents. Use the Skills Gateway
+to create catalog API keys and install skills into a supported local coding agent.
+
 ## Install Skills Locally
 
 The Skills Gateway renders an installer for supported coding agents:
@@ -95,3 +111,9 @@ agents query the live CAIPE catalog without reinstalling every skill manually.
 
 Use `SKILL_SCANNER_URL` to point CAIPE at the scanner service and
 `SKILL_SCANNER_GATE` to choose the gate.
+
+## Solution architecture
+
+![The hub crawler reads an immutable GitHub revision into the skills catalog. CAIPE checks package pins before loading skills, while local clients use a catalog API key through Skills Gateway.](/diagrams/skills-packages.svg)
+
+[Download editable Excalidraw](/diagrams/skills-packages.excalidraw)

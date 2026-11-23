@@ -26,6 +26,19 @@ The app remains responsible for its own screens, data, and business rules.
 Users do not need a second CAIPE login, but they still need the roles and scopes
 required by that app.
 
+## App assistants
+
+An installed app can show an assistant in the shared chat experience. The host
+resolves the assistant from the installed app's trusted bindings and checks
+whether the caller can use it. CAIPE 1.4.0 supports shared platform assistants and
+optional composer checkboxes declared through the [App SDK](https://github.com/caipe-io/ai-platform-engineering/tree/main/ui/app-sdk).
+See the [shared manifest](./agentic-app-manifest.md#app-identity-in-agent-catalogs)
+for how an assistant appears in the catalog.
+
+![The CAIPE host loads an eligible app from the installed catalog. It proxies allowed requests to the app runtime and opens the bound assistant through host chat.](/diagrams/app-assistants.svg)
+
+[Download editable Excalidraw](/diagrams/app-assistants.excalidraw)
+
 ## When to use External Apps
 
 Choose External Apps for a complete web experience with its own UI and domain

@@ -1,75 +1,9 @@
 ---
 id: issue-triage
-title: Issue Triage Dashboard
-sidebar_label: Issue Triage Dashboard
+title: Issue Triage
+sidebar_label: Issue Triage
 sidebar_position: 4
-description: Interactive dashboard classifying open GitHub issues by area and type, plus a per-release "by area" breakdown. Regenerated manually with `make triage-snapshot`.
+description: Track CAIPE issues and their status on the GitHub project board.
 ---
 
-import useBaseUrl from '@docusaurus/useBaseUrl';
-
-export const dashboardUrl = '/triage/open-issues.html';
-
-# Issue Triage Dashboard
-
-An interactive snapshot of the repo's **open GitHub issues**, auto-classified by
-**area** (RBAC/Auth, RAG/KB, UI/Admin, …) and **type** (bug, feature, architecture,
-docs, chore, ops), plus a **Releases by area** view that breaks down the merged
-commits of recent releases across the same areas.
-
-<a className="button button--primary" href={useBaseUrl(dashboardUrl)} target="_blank" rel="noopener noreferrer">
-  Open the dashboard in a new tab ↗
-</a>
-
-<iframe
-  src={useBaseUrl(dashboardUrl)}
-  title="CAIPE Open Issues — Classification"
-  style={{ width: '100%', height: '1000px', border: '1px solid var(--ifm-color-emphasis-300)', borderRadius: '8px', marginTop: '16px' }}
-/>
-
-:::note Point-in-time snapshot
-The embedded page is a static snapshot generated from a script — the timestamp in
-its caption shows when it was last refreshed. Counts and classification are
-**heuristic** (derived from labels + title/commit keywords); verify before acting.
-:::
-
-## Refreshing the snapshot
-
-The dashboard is regenerated manually (no automation yet):
-
-```bash
-make triage-snapshot
-```
-
-This runs `scripts/triage/classify-open-issues.mjs` and writes the HTML to
-`docs/static/triage/open-issues.html`, which Docusaurus serves at
-`/triage/open-issues.html`. Commit the regenerated file to publish it.
-
-### Requirements
-
-- **`gh` CLI**, authenticated (`gh auth login`) — used to fetch open issues.
-- **`git`** with tags fetched — used for the per-release "by area" breakdown.
-- **Node** 18+.
-
-### Options
-
-You can run the generator directly for finer control:
-
-```bash
-node scripts/triage/classify-open-issues.mjs \
-  --out docs/static/triage/open-issues.html \
-  --repo caipe-io/ai-platform-engineering \
-  --tags 10 \        # initial number of releases shown (in-page slider goes 1–20)
-  --stale-days 90    # age threshold for the "stale" flag
-```
-
-## How classification works
-
-- **Area** — first-match-wins keyword rules over `labels + title` (for issues) or
-  the commit subject (for releases). Anything unmatched falls into `Docs/Misc`.
-- **Type** — GitHub labels first (`bug`, `enhancement`, `documentation`, …), then
-  title-keyword heuristics as a fallback.
-- **Releases by area** — for the last _N_ final-release tags (`X.Y.Z`, RCs
-  excluded), each release's non-merge commits (minus release-bot version bumps)
-  are classified by area. **Bars** shows per-release stacked composition; **Pie**
-  shows the aggregate area share across the selected releases.
+[View issue triage on the CAIPE GitHub project board](https://github.com/orgs/caipe-io/projects/1)

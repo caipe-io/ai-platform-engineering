@@ -16,12 +16,16 @@ focused guide for the feature.
 |---|---|---|
 | Chat with an agent | [Getting Started](../getting-started/quick-start.md) | Start a conversation and choose the right client |
 | Build an agent without application code | [Agent Builder](./agent-builder.md) | Define behavior, connect capabilities, test, and share an agent |
+| Pick a runtime or connect a remote agent | [Harness Engine](./harness-runtimes.md) and [Remote agents](./remote-agents.md) | Use durable runs, delegate over A2A, and chat with configured ACP workers |
+| Connect and test a language model | [Model Providers](./model-providers.md) | Register model IDs and use saved credentials |
 | Give an agent trusted organizational context | [Knowledge Bases](../knowledge_bases/index.md) | Add sources, search content, create collections, and control access |
 | Automate a repeatable process | [Workflows](./workflows.md) | Chain agent steps, pass context, handle approvals, and inspect runs |
 | Reuse instructions and procedures | [Skills](./skills/README.md) | Browse, import, scan, attach, and run reusable skills |
 | Connect an independently deployed web experience | [External Apps](./agentic-apps.md) | Publish an app in the CAIPE Apps hub with scoped access |
 | Connect tools and services | [MCP Servers](../agents/README.md) | Register MCP servers and expose approved tools to agents |
 | Manage people, defaults, and platform health | [Settings and Admin](./admin-settings.md) | Configure personal preferences and administer the platform |
+| Set up a new workspace | [Your first agent](../getting-started/first-agent.md) | Complete guided setup and replay workspace tours |
+| Report a problem or announce a release | [Report feedback](./report-feedback.md) and [Release announcements](./release-announcements.md) | Route issues and publish notes for the current host release |
 | Understand identity and access | [Security](../security/index.md) | Learn how sign-in, resource sharing, and policy checks work |
 
 ## How the features fit together

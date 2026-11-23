@@ -1,9 +1,8 @@
 ---
-slug: ai-agent-vs-mcp-server
 title: AI Agent vs MCP Server
-authors: [sriaradhyula]
-tags: [articles, faqs]
 ---
+
+*Originally published by Sri Aradhyula on July 8, 2025.*
 
 ## Introduction
 

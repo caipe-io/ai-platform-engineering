@@ -148,6 +148,14 @@
   color: color-mix(in srgb, var(--card-color, #38bdf8) 80%, white);
 }
 
+.cardSince {
+  display: block;
+  margin-top: 0.2rem;
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
 .cardList {
   margin: 0;
   padding: 1.1rem 1.4rem 1.4rem 2.4rem;
