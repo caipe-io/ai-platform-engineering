@@ -65,6 +65,7 @@ helm show values oci://ghcr.io/caipe-io/charts/webex-bot --version 1.1.0
 | image.pullPolicy | string | `"Always"` |  |
 | image.repository | string | `"ghcr.io/caipe-io/caipe-webex-bot"` |  |
 | image.tag | string | `""` |  |
+| imagePullSecrets | list | `[]` | References to existing registry Secrets in the release namespace. |
 | keycloakAdmin | object | `{"clientId":"","clientSecretFromSecret":{"key":"KC_PLATFORM_CLIENT_SECRET","name":""}}` | Keycloak Admin API credentials for webex_user_id lookups (typically caipe-platform). |
 | keycloakBot | object | `{"clientSecretFromSecret":{"key":"KC_WEBEX_BOT_CLIENT_SECRET","name":""}}` | Single source of truth: Keycloak chart Secret {{release}}-keycloak-webex-bot (KC_WEBEX_BOT_CLIENT_SECRET). |
 | nameOverride | string | `""` |  |
