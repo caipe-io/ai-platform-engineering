@@ -193,18 +193,26 @@ RETRY_PROMPT_PREFIX = os.environ.get("SLACK_INTEGRATION_PROMPT_RETRY_PREFIX", _D
 _CALLER_CONNECTION_WARNING = re.compile(
   r"^(?P<server>.+?) needs your (?P<provider>.+?) account connected\."
 )
+_SKYNET_PROVIDER_LABELS = {
+  "skynetsearch": "Skynet Search",
+  "skynetstaging": "Skynet Staging",
+}
 
 
 def _format_connection_warning_for_slack(message):
-  """Turn a caller-scoped MCP connection warning into a clickable Slack reply."""
+  """Format caller-scoped Skynet connection warnings as actionable Slack replies."""
   match = _CALLER_CONNECTION_WARNING.match(message)
   public_url = os.environ.get("CAIPE_PUBLIC_URL", "").rstrip("/")
   if not match or not public_url:
     return None
 
-  provider = match.group("provider")
+  provider_key = re.sub(r"[\s_-]+", "", match.group("provider")).lower()
+  provider = _SKYNET_PROVIDER_LABELS.get(provider_key)
+  if not provider:
+    return None
+
   return (
-    f"{provider} isn't connected to your Forge account. Configure it in "
+    f"Your {provider} connection isn't configured in Forge. Configure it in "
     f"<{public_url}/credentials/connections|Forge Credentials → Connections>, "
     "then retry your request."
   )
@@ -715,9 +723,10 @@ def stream_response(
                 thread_ts=thread_ts,
                 text=connection_warning,
               )
-            except Exception as slack_err:
+            except Exception as post_error:
+              # Failure to post optional setup guidance must not fail the agent turn.
               logger.warning(
-                f"[{thread_ts}] Failed to post MCP connection guidance to Slack: {slack_err}"
+                f"[{thread_ts}] Failed to post Skynet connection guidance to Slack: {post_error}"
               )
         elif update.name == "NAMESPACE_CONTEXT":
           namespace = (update.value or {}).get("namespace", [])
