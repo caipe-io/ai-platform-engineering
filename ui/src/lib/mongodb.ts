@@ -364,6 +364,8 @@ async function createIndexes(db: Db) {
     safeCreateIndex(db, 'notification_deliveries', { status: 1, leaseUntil: 1 }),
     safeCreateIndex(db, 'notification_deliveries', { 'recipient.subject': 1, createdAt: -1 }),
     safeCreateIndex(db, 'notification_deliveries', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
+    safeCreateIndex(db, 'notification_push_devices', { subject: 1 }),
+    safeCreateIndex(db, 'notification_push_devices', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
     safeCreateIndex(db, 'notification_subscriptions', { subject: 1 }),
     safeCreateIndex(db, 'notification_publish_limits', { expiresAt: 1 }, { expireAfterSeconds: 0 }),
     safeCreateIndex(db, 'notification_test_limits', { expiresAt: 1 }, { expireAfterSeconds: 0 }),

@@ -138,6 +138,23 @@ spec:
                   name: {{ $notificationSecretName | quote }}
                   key: {{ $notificationSecretKey | quote }}
             {{- end }}
+            {{- if .Values.notifications.webPush.secretName }}
+            - name: NOTIFICATION_WEB_PUSH_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.notifications.webPush.secretName | quote }}
+                  key: publicKey
+            - name: NOTIFICATION_WEB_PUSH_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.notifications.webPush.secretName | quote }}
+                  key: privateKey
+            - name: NOTIFICATION_WEB_PUSH_SUBJECT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.notifications.webPush.secretName | quote }}
+                  key: subject
+            {{- end }}
             {{- /* Service URL defaults: env: takes precedence over envFrom (ConfigMap),
                    so these entries provide release-name-derived defaults while still
                    allowing operators to override via .Values.config. */}}
