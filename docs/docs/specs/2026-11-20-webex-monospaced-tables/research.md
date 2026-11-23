@@ -12,6 +12,12 @@
 - **Alternatives considered**: Row-summary bullets were rejected because repeated field labels make larger tables verbose. Adaptive Cards were rejected for this feature because of delivery/update and payload complexity.
 - **Source**: [Webex REST API Basics — Formatting Messages](https://developer.webex.com/docs/rest-api-basics)
 
+### Avoid fence collisions with cell content
+
+- **Decision**: Use a backtick fence longer than the longest backtick run in the rendered table, for both compact tables and labeled records.
+- **Rationale**: Cell content must not accidentally close the outer code block. `message_limits.py` already detects the opening fence length and uses it when closing a truncated reply.
+- **Alternatives considered**: A fixed three-backtick fence collides with cells containing three backticks; switching to tildes can collide with cell text and complicates the existing closure logic.
+
 ### Measure full tables and choose a narrow layout
 
 - **Decision**: Compute widths from the entire complete table. Use aligned columns up to 60 display columns; above that, render labeled record blocks, packing complete header-value fields onto lines up to the width limit and separating records with a blank line.

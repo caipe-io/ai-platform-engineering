@@ -21,6 +21,7 @@ As a Webex user, I want tabular agent results displayed as compact aligned text,
 2. **Given** a table wider than 60 display columns, **When** the final response is delivered, **Then** each row appears as a labeled record, complete header-value pairs stay together where possible, records are separated by a blank line, and every line is at most 60 display columns.
 3. **Given** a table containing Markdown links, **When** it is rendered as code, **Then** users see the link label as plain text without the Markdown destination syntax.
 4. **Given** ordinary prose and Markdown before or after a table, **When** the response is delivered, **Then** non-table content and its supported formatting are preserved.
+5. **Given** a valid wide table with headers but no data rows, **When** the response is delivered, **Then** all headers appear in a wrapped monospaced representation within the 60-column limit.
 
 ### User Story 2 - Receive Stable Streaming Replies (Priority: P2)
 
@@ -38,7 +39,8 @@ As a Webex user, I want table previews to appear only after their rows and width
 
 - Escaped pipes, pipes inside code spans, fenced code blocks, and malformed table syntax must not be mistaken for table delimiters.
 - Cells may contain links, inline code, HTML entities, Unicode, or missing values; rendered columns must remain aligned by display width.
-- Oversized output must truncate at complete table rows, close any generated code fence, and retain the existing continuation notice behavior.
+- Rendered cell text may contain backtick runs; generated fences must be longer than every backtick run in the rendered block, and bounded replies must close that same fence.
+- Oversized output must truncate at complete table rows or labeled records, close any generated code fence, and retain the existing continuation notice behavior.
 - A labeled field whose value cannot fit within the width budget must wrap within the record while keeping its label visible and every generated line within the width target.
 
 ## Requirements
@@ -54,6 +56,8 @@ As a Webex user, I want table previews to appear only after their rows and width
 - **FR-007**: The system MUST preserve complete table records, valid code fences, and the existing Webex byte limit and continuation behavior when replies are bounded.
 - **FR-008**: The system MUST retain the original agent response when recording the conversation turn so the web UI can render its original GFM table.
 - **FR-009**: The system MUST leave malformed or unsupported table-like content unchanged rather than corrupting the response.
+- **FR-010**: The system MUST choose a generated backtick fence longer than every backtick run in the rendered table and preserve compatibility with bounded fence closure.
+- **FR-011**: The system MUST preserve and wrap all headers when a valid table has no data rows and exceeds the 60-column limit.
 
 ### Key Entities
 
@@ -67,5 +71,7 @@ As a Webex user, I want table previews to appear only after their rows and width
 - **SC-001**: All valid fixtures up to 60 display columns produce aligned output with no trailing column padding.
 - **SC-002**: All fixtures over 60 display columns use labeled records, preserve header-value associations, and remain within the 60-column target.
 - **SC-003**: Streaming previews never contain a partial GFM table block, while non-table response previews retain existing behavior.
-- **SC-004**: Bounded replies remain within the existing Webex byte cap, contain no partial generated data row, and preserve the continuation notice.
+- **SC-004**: Bounded replies remain within the existing Webex byte cap, contain no partial generated row or record, and preserve the continuation notice.
 - **SC-005**: Stored assistant content remains byte-for-byte equal to the original streamed response.
+- **SC-006**: Compact and labeled tables containing backtick runs remain inside their generated code fences, including when the reply is truncated.
+- **SC-007**: Wide header-only tables retain every header and keep each rendered line within 60 display columns.

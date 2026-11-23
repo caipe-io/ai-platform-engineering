@@ -7,7 +7,7 @@ import re
 import unicodedata
 from collections.abc import Sequence
 
-_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _SEPARATOR_CELL_RE = re.compile(r"^:?-+:?$")
 _LINK_RE = re.compile(r"!?\[([^\]]*)\]\((?:<([^>]+)>|([^\s)]+))(?:\s+\"[^\"]*\")?\)")
 _TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9]*(?:\s[^>]*)?\s*/?>")
@@ -34,11 +34,15 @@ def format_webex_markdown(content: str, *, preview: bool = False) -> str:
         line = lines[index]
         fence_match = _FENCE_RE.match(line)
         if fence_match:
-            marker = fence_match.group(1)
+            marker, trailing = fence_match.groups()
             if not fence_character:
                 fence_character = marker[0]
                 fence_length = len(marker)
-            elif marker[0] == fence_character and len(marker) >= fence_length:
+            elif (
+                marker[0] == fence_character
+                and len(marker) >= fence_length
+                and not trailing.strip()
+            ):
                 fence_character = ""
                 fence_length = 0
             output.append(line)
@@ -240,7 +244,7 @@ def _render_table(headers: list[str], rows: list[list[str]]) -> str:
 
     if total_width <= WEBEX_TABLE_MAX_COLUMNS:
         separator = "-+-".join("-" * width for width in widths)
-        return "```text\n" + "\n".join([aligned[0], separator, *aligned[1:]]) + "\n```"
+        return _fenced_text_block("\n".join([aligned[0], separator, *aligned[1:]]))
 
     return _render_narrow_table(display_headers, display_rows)
 
@@ -256,6 +260,19 @@ def _aligned_row(row: Sequence[str], widths: Sequence[int]) -> str:
 
 
 def _render_narrow_table(headers: list[str], rows: list[list[str]]) -> str:
+    if not rows:
+        header_lines = ["Columns:"]
+        for header in headers:
+            header_lines.extend(
+                _wrap_text(
+                    header or "Item",
+                    WEBEX_TABLE_MAX_COLUMNS,
+                    initial_indent="  ",
+                    subsequent_indent="  ",
+                )
+            )
+        return _fenced_text_block("\n".join(header_lines))
+
     output: list[str] = []
     for row in rows:
         current_line = ""
@@ -289,7 +306,13 @@ def _render_narrow_table(headers: list[str], rows: list[list[str]]) -> str:
     if output and not output[-1]:
         output.pop()
 
-    return "```text\n" + "\n".join(output) + "\n```"
+    return _fenced_text_block("\n".join(output))
+
+
+def _fenced_text_block(content: str) -> str:
+    longest_backtick_run = max((len(run) for run in re.findall(r"`+", content)), default=0)
+    fence = "`" * max(3, longest_backtick_run + 1)
+    return f"{fence}text\n{content}\n{fence}"
 
 
 def _wrap_text(value: str, width: int, *, initial_indent: str = "", subsequent_indent: str = "") -> list[str]:

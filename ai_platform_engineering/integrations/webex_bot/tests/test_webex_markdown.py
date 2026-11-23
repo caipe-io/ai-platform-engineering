@@ -23,6 +23,14 @@ def test_compact_table_aligns_columns_without_final_padding() -> None:
     assert not formatted.splitlines()[-2].endswith(" ")
 
 
+def test_compact_table_uses_longer_fence_than_cell_backticks() -> None:
+    source = "| Value |\n|---|\n| &#96;&#96;&#96; |"
+
+    formatted = format_webex_markdown(source)
+
+    assert formatted == "````text\nValue\n-----\n```\n````"
+
+
 def test_wide_table_uses_labeled_records_within_width_limit() -> None:
     source = (
         "| VPC ID | Region | Primary CIDR | Default | State |\n"
@@ -43,6 +51,20 @@ def test_wide_table_uses_labeled_records_within_width_limit() -> None:
     assert all(len(line) <= WEBEX_TABLE_MAX_COLUMNS for line in lines)
     assert all(not line.endswith(" ") for line in lines)
     assert all(not line.endswith("|") for line in lines)
+
+
+def test_wide_header_only_table_preserves_and_wraps_all_headers() -> None:
+    first_header = "first-column-" + "a" * 27
+    second_header = "second-column-" + "b" * 26
+    source = f"| {first_header} | {second_header} |\n|---|---|"
+
+    formatted = format_webex_markdown(source)
+    lines = formatted.splitlines()[1:-1]
+
+    assert formatted.startswith("```text\nColumns:\n")
+    assert first_header in formatted
+    assert second_header in formatted
+    assert all(len(line) <= WEBEX_TABLE_MAX_COLUMNS for line in lines)
 
 
 def test_wide_subnet_table_keeps_each_value_with_its_header() -> None:
@@ -67,6 +89,20 @@ def test_wide_subnet_table_keeps_each_value_with_its_header() -> None:
     assert "\n\nVPC ID: vpc-example-primary" in formatted
     assert all(len(line) <= WEBEX_TABLE_MAX_COLUMNS for line in lines)
     assert all(not line.endswith("|") for line in lines)
+
+
+def test_labeled_records_use_longer_fence_than_cell_backticks() -> None:
+    identifier = "x" * 55
+    source = (
+        "| ID | Value | Note |\n|---|---|---|\n"
+        f"| {identifier} | &#96;&#96;&#96; | example |"
+    )
+
+    formatted = format_webex_markdown(source)
+
+    assert formatted.startswith("````text\n")
+    assert "Value: ```" in formatted
+    assert formatted.endswith("\n````")
 
 
 def test_table_links_show_labels_and_prose_is_preserved() -> None:
@@ -126,6 +162,25 @@ def test_fenced_code_and_malformed_table_like_text_are_unchanged() -> None:
     formatted = format_webex_markdown(source)
 
     assert formatted == source
+
+
+def test_fence_marker_with_info_text_inside_code_block_does_not_close_it() -> None:
+    source = "```text\ninside\n```example\n| A | B |\n|---|---|\n| one | two |\n```"
+
+    formatted = format_webex_markdown(source)
+
+    assert formatted == source
+
+
+def test_fence_with_trailing_whitespace_closes_code_block() -> None:
+    source = "```md\n| A | B |\n|---|---|\n| one | two |\n``` \t\n\n| ID | State |\n|---|---|\n| x1 | ready |"
+
+    formatted = format_webex_markdown(source)
+
+    assert formatted == (
+        "```md\n| A | B |\n|---|---|\n| one | two |\n``` \t\n\n"
+        "```text\nID | State\n---+------\nx1 | ready\n```"
+    )
 
 
 def test_inline_code_pipes_do_not_split_cells() -> None:

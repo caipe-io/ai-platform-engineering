@@ -21,10 +21,36 @@ def _utf8_prefix(
             last_block_boundary = prefix.rfind("\n\n")
             if last_block_boundary >= 0:
                 return prefix[:last_block_boundary]
+            open_fence_start = _open_fence_start(prefix)
+            if open_fence_start is not None:
+                return prefix[:open_fence_start].rstrip()
         last_newline = prefix.rfind("\n")
         if last_newline >= 0:
             prefix = prefix[:last_newline]
     return prefix
+
+
+def _open_fence_start(text: str) -> int | None:
+    fence_character = ""
+    fence_length = 0
+    fence_start: int | None = None
+    offset = 0
+
+    for line in text.splitlines(keepends=True):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+        if marker:
+            run, rest = marker.groups()
+            if not fence_character:
+                fence_character = run[0]
+                fence_length = len(run)
+                fence_start = offset
+            elif run[0] == fence_character and len(run) >= fence_length and not rest.strip():
+                fence_character = ""
+                fence_length = 0
+                fence_start = None
+        offset += len(line)
+
+    return fence_start
 
 
 def _code_closure(text: str) -> str:
