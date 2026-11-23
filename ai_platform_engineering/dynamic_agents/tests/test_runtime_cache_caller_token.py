@@ -222,6 +222,82 @@ async def test_refresh_preserves_active_stream_until_it_finishes(
         await cache.clear()
 
 
+async def test_pending_waiter_does_not_receive_runtime_during_cleanup(
+    cache: AgentRuntimeCache,
+    agent: DynamicAgentConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initializing, finish_initializing = asyncio.Event(), asyncio.Event()
+    checking, finish_checking = asyncio.Event(), asyncio.Event()
+    cleaning, finish_cleaning = asyncio.Event(), asyncio.Event()
+    create = cache._create_runtime.side_effect
+    waiter_task = None
+    original = None
+
+    async def create_delayed(*args: Any) -> AgentRuntime:
+        nonlocal original
+        runtime = await create(*args)
+        if original is None:
+            original = runtime
+            cleanup = runtime.cleanup
+
+            async def check_credentials(_user: UserContext | None) -> bool:
+                if asyncio.current_task() is waiter_task:
+                    checking.set()
+                    await finish_checking.wait()
+                return True
+
+            async def cleanup_delayed() -> None:
+                cleaning.set()
+                await finish_cleaning.wait()
+                await cleanup()
+
+            monkeypatch.setattr(runtime, "model_credentials_current", check_credentials)
+            monkeypatch.setattr(runtime, "cleanup", cleanup_delayed)
+            initializing.set()
+            await finish_initializing.wait()
+        return runtime
+
+    cache._create_runtime.side_effect = create_delayed
+
+    async def request(bearer: str) -> tuple[AgentRuntime, bool]:
+        token = current_user_token.set(bearer)
+        try:
+            runtime = await cache.get_or_create(agent, [], "example-chat")
+            return runtime, runtime is original and cleaning.is_set()
+        finally:
+            current_user_token.reset(token)
+
+    original_task = asyncio.create_task(request("original-token"))
+    refreshed_task = None
+    try:
+        await asyncio.wait_for(initializing.wait(), timeout=2)
+        waiter_task = asyncio.create_task(request("original-token"))
+        await asyncio.sleep(0)
+        finish_initializing.set()
+        await asyncio.wait_for(checking.wait(), timeout=2)
+        refreshed_task = asyncio.create_task(request("refreshed-token"))
+        await asyncio.sleep(0)
+        finish_checking.set()
+
+        reused, cleanup_had_started = await asyncio.wait_for(waiter_task, timeout=2)
+        await asyncio.wait_for(cleaning.wait(), timeout=2)
+        finish_cleaning.set()
+        _, (refreshed, _) = await asyncio.wait_for(asyncio.gather(original_task, refreshed_task), timeout=2)
+        assert reused is original
+        assert not cleanup_had_started
+        assert refreshed is not original
+        assert refreshed._auth_bearer == "refreshed-token"
+    finally:
+        finish_initializing.set()
+        finish_checking.set()
+        finish_cleaning.set()
+        await asyncio.gather(
+            *[task for task in [original_task, waiter_task, refreshed_task] if task], return_exceptions=True
+        )
+        await cache.clear()
+
+
 @pytest.mark.parametrize("header", ["Authorization", "authorization"])
 async def test_explicit_upstream_authorization_is_preserved(header: str) -> None:
     token = current_user_token.set("request-token")
