@@ -36,7 +36,7 @@ All variables start with `LLM_GW_CONFORMANCE_`.
 | `AGENT_LIMIT_KEY` / `TEAM_LIMIT_KEY` | Keys whose agent / team limit is nearly spent |
 | `ERROR_MODELS` | `429=<model>,500=<model>,402=<model>`: models whose upstream returns that error |
 | `LIMIT_STORE_DOWN` | `1` only for the fail-closed run, after stopping the limit store |
-| `LIMIT_STORE_GRACE_SECONDS` | How long the gateway may keep admitting cached keys after the store goes down (default `0`) |
+| `LIMIT_STORE_GRACE_SECONDS` | How long the gateway may keep admitting cached keys after the store goes down (default `0`, at most `60` per the contract) |
 | `GATEWAY`, `GATEWAY_VERSION`, `REPORT` | Recorded in the JSON report written to `REPORT` |
 
 ## Run against the local LiteLLM OSS harness

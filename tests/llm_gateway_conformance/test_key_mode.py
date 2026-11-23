@@ -14,6 +14,7 @@ from .gateway import GatewayProfile, chat, require
 pytestmark = pytest.mark.integration
 
 LIMIT_ATTEMPTS = 5
+MAX_LIMIT_STORE_GRACE_SECONDS = 60
 
 
 @pytest.fixture(autouse=True)
@@ -114,6 +115,7 @@ def test_upstream_error_keeps_class(client: httpx.Client, profile: GatewayProfil
 def test_limit_store_down_fails_closed(client: httpx.Client, profile: GatewayProfile, record_property) -> None:
     """Some gateways keep admitting cached credentials for a bounded window; the profile declares it."""
     key = require(profile.key, "KEY")
+    assert profile.limit_store_grace_seconds <= MAX_LIMIT_STORE_GRACE_SECONDS, "the contract caps the grace window at 60 s"
     started = time.monotonic()
     response = chat(client, key, profile.model)
     while response.status_code < 400 and time.monotonic() - started < profile.limit_store_grace_seconds:
