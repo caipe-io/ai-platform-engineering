@@ -1,0 +1,35 @@
+# Throwaway LiteLLM OSS stack for local conformance runs. Not a supported CAIPE deployment.
+# docker compose -f tests/llm_gateway_conformance/harness/compose.yaml up -d
+services:
+  litellm-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_PASSWORD: conformance-only
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      retries: 30
+
+  mock-upstream:
+    image: python:3.13-slim
+    command: sh -c "pip install -q fastapi==0.141.1 uvicorn==0.38.0 && uvicorn --app-dir /harness mock_upstream:app --host 0.0.0.0 --port 8090"
+    volumes:
+      - ./mock_upstream.py:/harness/mock_upstream.py:ro
+
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.108.3
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: sk-conformance-master
+      DATABASE_URL: postgresql://postgres:conformance-only@litellm-db:5432/litellm
+      MOCK_UPSTREAM_URL: http://mock-upstream:8090/v1
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    ports:
+      - "127.0.0.1:4000:4000"
+    depends_on:
+      litellm-db:
+        condition: service_healthy
+      mock-upstream:
+        condition: service_started

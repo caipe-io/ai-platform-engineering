@@ -31,6 +31,8 @@ Any gateway CAIPE supports must satisfy this contract. It is what keeps gateways
 
 ## Conformance check
 
+Automated by the [conformance suite](https://github.com/caipe-io/ai-platform-engineering/tree/main/tests/llm_gateway_conformance) (key-mode checks first).
+
 A gateway passes for its configured authentication mode when:
 
 - [ ] Every agent path in scope returns a correct completion, streaming and tool calls included.

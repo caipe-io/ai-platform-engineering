@@ -1,0 +1,23 @@
+# LiteLLM OSS configuration for local conformance runs only. Not a supported deployment.
+model_list:
+  - model_name: mock-chat
+    litellm_params: {model: openai/mock-chat, api_base: "os.environ/MOCK_UPSTREAM_URL", api_key: mock, input_cost_per_token: 0.001, output_cost_per_token: 0.001}
+  - model_name: mock-429
+    litellm_params: {model: openai/mock-429, api_base: "os.environ/MOCK_UPSTREAM_URL", api_key: mock, input_cost_per_token: 0.001, output_cost_per_token: 0.001}
+  - model_name: mock-500
+    litellm_params: {model: openai/mock-500, api_base: "os.environ/MOCK_UPSTREAM_URL", api_key: mock, input_cost_per_token: 0.001, output_cost_per_token: 0.001}
+  - model_name: mock-402-quota
+    litellm_params: {model: openai/mock-402-quota, api_base: "os.environ/MOCK_UPSTREAM_URL", api_key: mock, input_cost_per_token: 0.001, output_cost_per_token: 0.001}
+
+litellm_settings:
+  num_retries: 0
+
+router_settings:
+  num_retries: 0
+  disable_cooldowns: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  # Cached keys keep working this long after the database goes down (default 60 s).
+  user_api_key_cache_ttl: 10
