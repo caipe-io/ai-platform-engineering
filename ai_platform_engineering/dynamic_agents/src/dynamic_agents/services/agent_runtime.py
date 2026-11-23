@@ -39,6 +39,7 @@ from langgraph.types import Command
 from llm_wrapper.bedrock_family import resolve_bedrock_client
 from pymongo import MongoClient
 
+from dynamic_agents.auth.token_context import get_caller_token
 from dynamic_agents.config import Settings, get_settings
 from dynamic_agents.metrics import metrics as prom_metrics
 from dynamic_agents.models import (
@@ -620,16 +621,7 @@ class AgentRuntime:
         self._remote_agent_versions: dict[str, str | None] = {}
         self._user = user
         self._client_context = client_context.model_copy(deep=True) if client_context else None
-        # Spec 102 Phase 8 / T107: prefer the per-request bearer from
-        # current_user_token (set by JwtAuthMiddleware) so the same token
-        # the BFF authenticated us with is forwarded to MCP servers.
-        # Fall back to UserContext-attached fields for backward compat
-        # with the X-User-Context legacy path.
-        from dynamic_agents.auth.token_context import current_user_token as _ctx_tok
-
-        ctx_token = _ctx_tok.get()
-        legacy_token = (user.obo_jwt or user.access_token) if user else None
-        self._auth_bearer: str | None = ctx_token or legacy_token
+        self._auth_bearer: str | None = get_caller_token(user)
         # Spec 104: never silently substitute the dynamic-agents service
         # account token here — the runtime must run with the user's OBO
         # token so AgentGateway/OpenFGA can evaluate the signed active-team
