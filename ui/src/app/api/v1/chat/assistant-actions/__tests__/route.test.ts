@@ -258,11 +258,31 @@ describe("calling the app", () => {
     expect(await response.json()).toMatchObject({ code: "ASSISTANT_ACTION_BAD_RESPONSE" });
   });
 
-  it("rejects a response over the byte limit without buffering all of it", async () => {
+  it("rejects a response over the byte limit", async () => {
     appReply(200, JSON.stringify({ message: "x".repeat(70 * 1024) }));
     const response = await call(valid);
     expect(response.status).toBe(502);
     expect(await response.json()).toMatchObject({ code: "ASSISTANT_ACTION_BAD_RESPONSE" });
+  });
+
+  it("stops reading and cancels the stream once the limit is crossed", async () => {
+    const chunk = new TextEncoder().encode("x".repeat(1024));
+    const totalChunks = 1000;
+    let pulled = 0;
+    const cancelled = jest.fn();
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        if (pulled > totalChunks) controller.close(); else controller.enqueue(chunk);
+      },
+      cancel: cancelled,
+    }, { highWaterMark: 0 });
+    jest.spyOn(global, "fetch").mockResolvedValue(new Response(body, { status: 200, headers: { "content-type": "application/json" } }));
+    const response = await call(valid);
+    expect(response.status).toBe(502);
+    expect(cancelled).toHaveBeenCalledTimes(1);
+    // 64 KiB is 64 chunks; allow a little read-ahead, but never the remaining ~900 chunks.
+    expect(pulled).toBeLessThan(80);
   });
 
   it("counts bytes, not characters, against the limit", async () => {
