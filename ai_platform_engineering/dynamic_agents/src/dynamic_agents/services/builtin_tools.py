@@ -13,13 +13,14 @@ import socket
 import subprocess
 import time
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from urllib.parse import quote, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 from langchain_core.tools import tool
 from langgraph.store.base import GetOp, PutOp
+from requests.adapters import HTTPAdapter
 
 from dynamic_agents.models import BuiltinToolConfigField, BuiltinToolDefinition, InputField, UserContext
 
@@ -52,44 +53,122 @@ def _resolve_host_addresses(hostname: str) -> list[str]:
     return [sockaddr[0] for _family, _type, _proto, _canonname, sockaddr in results]
 
 
-def _is_publicly_routable_host(hostname: str) -> tuple[bool, str]:
+def _publicly_routable_addresses(hostname: str) -> tuple[list[str], str]:
     if not hostname:
-        return False, "missing hostname"
+        return [], "missing hostname"
 
     try:
         addresses = _resolve_host_addresses(hostname)
     except (socket.gaierror, OSError) as e:
-        return False, f"hostname could not be resolved: {e}"
+        return [], f"hostname could not be resolved: {e}"
 
     if not addresses:
-        return False, "hostname did not resolve to any address"
+        return [], "hostname did not resolve to any address"
 
     for address in addresses:
         try:
             if not _is_publicly_routable_ip(address):
-                return False, f"{address} is not publicly routable"
+                return [], f"{address} is not publicly routable"
         except ValueError:
-            return False, f"{address} is not a valid IP address"
+            return [], f"{address} is not a valid IP address"
 
-    return True, ""
+    return addresses, ""
+
+
+def _is_publicly_routable_host(hostname: str) -> tuple[bool, str]:
+    addresses, error = _publicly_routable_addresses(hostname)
+    return bool(addresses), error
+
+
+def _validate_and_resolve_fetch_url(
+    url: str,
+    allowed_domains: str,
+    allow_non_public_urls: bool = False,
+) -> tuple[bool, str, str, str]:
+    """Validate a URL and return the exact address approved for the connection."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False, "Invalid URL - must start with http:// or https://", "", ""
+
+    domain = (parsed.hostname or "").lower()
+    is_allowed, error_msg = is_domain_allowed(domain, allowed_domains)
+    if not is_allowed:
+        return False, error_msg, domain, ""
+
+    try:
+        addresses = _resolve_host_addresses(domain)
+    except (socket.gaierror, OSError) as e:
+        return False, f"URL hostname could not be resolved: {e}", domain, ""
+    if not addresses:
+        return False, "URL hostname did not resolve to any address", domain, ""
+
+    if not allow_non_public_urls:
+        for address in addresses:
+            try:
+                if not _is_publicly_routable_ip(address):
+                    error = f"{address} is not publicly routable"
+                    return False, f"URL host must resolve only to publicly routable IP addresses: {error}", domain, ""
+            except ValueError:
+                error = f"{address} is not a valid IP address"
+                return False, f"URL host must resolve only to publicly routable IP addresses: {error}", domain, ""
+
+    return True, "", domain, addresses[0]
 
 
 def _validate_fetch_url(url: str, allowed_domains: str, allow_non_public_urls: bool = False) -> tuple[bool, str, str]:
+    is_valid, error_msg, domain, _address = _validate_and_resolve_fetch_url(
+        url,
+        allowed_domains,
+        allow_non_public_urls,
+    )
+    return is_valid, error_msg, domain
+
+
+class _PinnedAddressAdapter(HTTPAdapter):
+    """Connect to one validated address while preserving the URL's TLS identity."""
+
+    def __init__(self, hostname: str, address: str) -> None:
+        self._hostname = hostname
+        self._address = address
+        super().__init__()
+
+    def get_connection_with_tls_context(
+        self,
+        request: requests.PreparedRequest,
+        verify: bool | str,
+        proxies: dict[str, str] | None = None,
+        cert: Any = None,
+    ) -> Any:
+        host_params, pool_kwargs = self.build_connection_pool_key_attributes(request, verify, cert)
+        host_params["host"] = self._address
+        if host_params["scheme"] == "https":
+            pool_kwargs["assert_hostname"] = self._hostname
+            pool_kwargs["server_hostname"] = self._hostname
+        return self.poolmanager.connection_from_host(**host_params, pool_kwargs=pool_kwargs)
+
+
+def _host_header(url: str) -> str:
     parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        return False, "Invalid URL - must start with http:// or https://", ""
+    hostname = parsed.hostname or ""
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    default_port = 443 if parsed.scheme == "https" else 80
+    return f"{hostname}:{parsed.port}" if parsed.port and parsed.port != default_port else hostname
 
-    domain = (parsed.hostname or "").lower()
-    if not allow_non_public_urls:
-        is_routable, route_error = _is_publicly_routable_host(domain)
-        if not is_routable:
-            return False, f"URL host must resolve only to publicly routable IP addresses: {route_error}", domain
 
-    is_allowed, error_msg = is_domain_allowed(domain, allowed_domains)
-    if not is_allowed:
-        return False, error_msg, domain
-
-    return True, "", domain
+def _request_pinned_url(url: str, address: str, timeout: int) -> requests.Response:
+    """Make one request without allowing DNS or environment proxies to change the destination."""
+    parsed = urlparse(url)
+    adapter = _PinnedAddressAdapter(parsed.hostname or "", address)
+    with requests.Session() as session:
+        session.trust_env = False
+        session.mount(f"{parsed.scheme}://", adapter)
+        return session.get(
+            url,
+            headers={"Host": _host_header(url)},
+            timeout=timeout,
+            allow_redirects=False,
+        )
 
 
 def get_builtin_tool_definitions() -> list[BuiltinToolDefinition]:
@@ -259,11 +338,14 @@ def _fetch_url_content(url: str, format: Literal["text", "raw"], timeout: int, a
         current_url = url
         response = None
         for _redirect_count in range(_MAX_FETCH_REDIRECTS + 1):
-            is_valid, error_msg, _domain = _validate_fetch_url(current_url, allowed_domains)
+            is_valid, error_msg, _domain, address = _validate_and_resolve_fetch_url(
+                current_url,
+                allowed_domains,
+            )
             if not is_valid:
                 return f"ERROR: {error_msg}"
 
-            response = requests.get(current_url, timeout=timeout, allow_redirects=False)
+            response = _request_pinned_url(current_url, address, timeout)
             if getattr(response, "status_code", None) not in _REDIRECT_STATUS_CODES:
                 break
 
