@@ -267,6 +267,31 @@ describe("OAuthConnectorService", () => {
     });
   });
 
+  it("upsertConnector persists client_secret_basic and clears it when the declared config drops it", async () => {
+    const connectors = new MemoryCollection<OAuthConnectorDocument>();
+    const service = new OAuthConnectorService({
+      connectorsCollection: connectors,
+      payloadStore: { putSecret: mockPutSecret() },
+      idGenerator: () => "connector-1",
+    });
+    const input = {
+      name: "Acme",
+      provider: "acme",
+      clientId: "client-id",
+      clientSecret: "secret",
+      authorizationUrl: "https://identity.acme.example.com/oauth2/authorize",
+      tokenUrl: "https://identity.acme.example.com/oauth2/token",
+      scopes: ["openid"],
+      redirectUri: "https://caipe.example.com/api/credentials/oauth/acme/callback",
+    };
+
+    await service.upsertConnector({ ...input, tokenEndpointAuthMethod: "client_secret_basic" });
+    expect(connectors.docs[0].tokenEndpointAuthMethod).toBe("client_secret_basic");
+
+    await service.upsertConnector({ ...input, tokenEndpointAuthMethod: "client_secret_post" });
+    expect(connectors.docs[0].tokenEndpointAuthMethod).toBeUndefined();
+  });
+
   it("allows localhost redirect URIs outside production and behind a production opt-in", async () => {
     const connectors = new MemoryCollection<OAuthConnectorDocument>();
     const payloadStore = { putSecret: mockPutSecret() };
@@ -703,6 +728,56 @@ describe("ProviderConnectionService", () => {
       secretRefId: "provider_connection:conn-1:refresh_token",
       plaintext: "new-refresh-token",
     });
+  });
+
+  it("authenticates token requests with HTTP Basic when the connector uses client_secret_basic", async () => {
+    const providerConnections = new MemoryCollection<ProviderConnectionDocument>();
+    providerConnections.docs.push({
+      id: "conn-1",
+      connectorId: "connector-1",
+      owner: { type: "user", id: "alice-sub" },
+      status: "connected",
+      refreshTokenRef: "provider_connection:conn-1:refresh_token",
+      accessTokenRef: "provider_connection:conn-1:access_token",
+    });
+    const connectors = new MemoryCollection<OAuthConnectorDocument>();
+    connectors.docs.push({
+      id: "connector-1",
+      name: "Acme",
+      provider: "acme",
+      clientId: "client-id",
+      clientSecretRef: "oauth_connector:connector-1:client_secret",
+      authorizationUrl: "https://identity.acme.example.com/oauth2/authorize",
+      tokenUrl: "https://identity.acme.example.com/oauth2/token",
+      scopes: ["openid", "offline_access"],
+      redirectUri: "https://caipe.example.com/api/credentials/oauth/acme/callback",
+      enabled: true,
+      tokenEndpointAuthMethod: "client_secret_basic",
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+      updatedAt: new Date("2026-01-01T00:00:00Z"),
+    });
+    const tokenClient = mockTokenClient({ access_token: "new-access-token", expires_in: 3600 });
+    const service = new ProviderConnectionService({
+      providerConnectionsCollection: providerConnections,
+      connectorsCollection: connectors,
+      payloadStore: {
+        getSecret: jest.fn(async (ref: string) => `${ref}:value`),
+        putSecret: mockPutSecret(),
+      },
+      tokenClient,
+      now: () => new Date("2026-05-21T00:00:00.000Z"),
+    });
+
+    await service.refreshConnection("conn-1");
+
+    expect(tokenClient).toHaveBeenCalledWith(
+      "https://identity.acme.example.com/oauth2/token",
+      {
+        grant_type: "refresh_token",
+        refresh_token: "provider_connection:conn-1:refresh_token:value",
+      },
+      { basicAuth: { clientId: "client-id", clientSecret: "oauth_connector:connector-1:client_secret:value" } },
+    );
   });
 
   it("keeps renewable=true on refresh when the provider omits refresh_token (non-rotating refresh)", async () => {
