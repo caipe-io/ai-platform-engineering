@@ -384,7 +384,10 @@ export async function deliveryAllowed(
     ]);
     if (
       identity.enabled === false ||
-      !canLaunchAgenticApp(app, { roles: roles.map((role) => role.name) })
+      // Sign-in assigns every authenticated person the baseline user role;
+      // it need not exist as an explicit realm-role mapping. Never infer an
+      // admin/custom role from the cached user document at delivery time.
+      !canLaunchAgenticApp(app, { role: "user", roles: roles.map((role) => role.name) })
     )
       return false;
     const registration = await getNotificationSource(sourceId);
