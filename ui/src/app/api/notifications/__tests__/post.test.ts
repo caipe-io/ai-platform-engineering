@@ -86,6 +86,7 @@ describe("POST /api/notifications", () => {
       message: "Open the report page to read it.",
       href: "/example/report",
       severity: "info",
+      sourceId: "app:example-app",
       sourceLabel: "Example App",
     });
   });

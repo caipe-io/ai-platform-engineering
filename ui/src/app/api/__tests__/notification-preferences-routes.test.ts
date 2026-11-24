@@ -3,14 +3,20 @@
 import { NextRequest } from "next/server";
 
 import { GET, PATCH } from "@/app/api/settings/notification-preferences/route";
+import { POST as sendTest } from "@/app/api/settings/notification-preferences/test/route";
 import { createFakeUserSettings } from "@/lib/notifications/testing/fake-user-settings";
 
 const fake = createFakeUserSettings();
 const store = fake.docs;
+const mockPublish = jest.fn();
 let currentUser: { email: string; sub: string } | null = null;
 
 jest.mock("@/lib/mongodb", () => ({
   getCollection: async () => fake.collection,
+}));
+
+jest.mock("@/lib/notifications/consumer.server", () => ({
+  publishNotificationEvent: (...args: unknown[]) => mockPublish(...args),
 }));
 
 jest.mock("@/lib/api-middleware", () => {
@@ -49,6 +55,7 @@ beforeEach(() => {
   store.clear();
   jest.clearAllMocks();
   currentUser = { email: "alice@example.com", sub: "sub-alice" };
+  mockPublish.mockResolvedValue("delivered");
 });
 
 describe("GET /api/settings/notification-preferences", () => {
@@ -136,5 +143,74 @@ describe("PATCH /api/settings/notification-preferences", () => {
     const response = await PATCH(req("PATCH", "{not json"));
     expect(response.status).toBe(400);
     expect(store.size).toBe(0);
+  });
+});
+
+describe("POST /api/settings/notification-preferences/test", () => {
+  it("requires a signed-in user", async () => {
+    currentUser = null;
+    expect((await sendTest(req("POST", { type: "workflow.completed" }, "test"))).status).toBe(401);
+    expect(mockPublish).not.toHaveBeenCalled();
+  });
+
+  it("sends one test notification to the caller, using the session identity", async () => {
+    const response = await sendTest(req("POST", { type: "workflow.completed" }, "test"));
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).data).toEqual({ outcome: "delivered" });
+    expect(mockPublish).toHaveBeenCalledTimes(1);
+    expect(mockPublish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "workflow.completed",
+        recipient_subject: "sub-alice",
+        recipient_email: "alice@example.com",
+        data: expect.objectContaining({ status: "test", href: "/settings/notifications" }),
+      }),
+    );
+  });
+
+  it("cannot be aimed at someone else: recipient fields in the body are ignored", async () => {
+    await sendTest(
+      req("POST", { type: "workflow.completed", recipient_subject: "sub-bob", recipient_email: "bob@example.com" }, "test"),
+    );
+    expect(mockPublish).toHaveBeenCalledWith(
+      expect.objectContaining({ recipient_subject: "sub-alice", recipient_email: "alice@example.com" }),
+    );
+  });
+
+  it("reports a skipped test when the user turned that event off", async () => {
+    mockPublish.mockResolvedValue("disabled");
+    const response = await sendTest(req("POST", { type: "workflow.started" }, "test"));
+    expect((await response.json()).data).toEqual({ outcome: "disabled" });
+  });
+
+  it.each([{}, { type: "billing.paid" }, { type: 5 }, "nope"])("rejects an invalid type %p", async (body) => {
+    const response = await sendTest(req("POST", body, "test"));
+    expect(response.status).toBe(400);
+    expect(mockPublish).not.toHaveBeenCalled();
+  });
+
+  it("returns 503 when delivery fails", async () => {
+    mockPublish.mockResolvedValue("failed");
+    const response = await sendTest(req("POST", { type: "workflow.completed" }, "test"));
+    expect(response.status).toBe(503);
+  });
+
+  it("limits how many tests one user can send per minute", async () => {
+    currentUser = { email: "limited@example.com", sub: "sub-limited" };
+    const statuses: number[] = [];
+    for (let i = 0; i < 12; i += 1) {
+      statuses.push((await sendTest(req("POST", { type: "workflow.completed" }, "test"))).status);
+    }
+    expect(statuses.slice(0, 10).every((status) => status === 200)).toBe(true);
+    expect(statuses.slice(10)).toEqual([429, 429]);
+    expect(mockPublish).toHaveBeenCalledTimes(10);
+  });
+
+  it("does not share the limit between users", async () => {
+    currentUser = { email: "busy@example.com", sub: "sub-busy" };
+    for (let i = 0; i < 10; i += 1) await sendTest(req("POST", { type: "workflow.completed" }, "test"));
+    currentUser = { email: "quiet@example.com", sub: "sub-quiet" };
+    expect((await sendTest(req("POST", { type: "workflow.completed" }, "test"))).status).toBe(200);
   });
 });

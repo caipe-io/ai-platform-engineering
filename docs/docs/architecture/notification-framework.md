@@ -27,3 +27,25 @@ CAIPE 1.4.0 adds event and preference contracts for the existing inbox.
 - Validate versioned metadata envelopes, bounded text, stable retry keys, and same-host relative destinations.
 - Query strings and fragments are preserved. Conflicting `callbackUri` and legacy `href` values are rejected.
 - Channel identifiers are contracts only; external delivery remains off until an adapter is installed and explicitly enabled.
+
+## App registration and subscriptions
+
+- Installed apps register 1–30 stable event types using their bound service account and `host.notifications` capability. Registration does not subscribe users.
+- Users can subscribe, pause, select events/channels, and set quiet hours. App subscriptions and all external channels default off.
+- Channel availability and enablement go through an adapter registry; missing integrations are unavailable.
+- The host checks current app launch access. Resource-specific authorization remains the publisher responsibility pending resource-level CAS integration.
+
+## Durable inbox queue
+
+- Accepted jobs are durable before acknowledgement. Per-channel deliveries use deterministic keys, expiring leases, capped retries and expiry.
+- Recheck current subscriptions and app launch access before delivery. Existing inbox entries remain readable.
+- Only in-app delivery is implemented here. Missing external adapters fail explicitly. External adapters must honor the cancellation signal and use the delivery ID as an idempotency key where the provider supports it.
+- `NOTIFICATION_EVENTS_ENABLED=false` stops workers and new queue acceptance. No NATS service is required.
+
+## Trusted platform publishing
+
+- Trusted backend producers use `POST /api/internal/notifications/events` with the configured internal publisher token. Keep this endpoint blocked at public ingress.
+- Recipient subject/email must resolve to one canonical user record; mismatches are rejected.
+- Direct publishing persists delivery jobs and reports failures explicitly. Publication failure must not fail the originating task.
+- `NOTIFICATIONS_INTERNAL_TOKEN` enables the internal endpoint; producers are added separately.
+- Selecting `NOTIFICATIONS_TRANSPORT=jetstream` before its optional implementation is installed fails publication explicitly; it never falls back to direct delivery.

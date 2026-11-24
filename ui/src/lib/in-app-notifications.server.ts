@@ -15,6 +15,18 @@ import type {
 
 const NOTIFICATION_COLLECTION = "in_app_notifications";
 
+type InboxVisibilityOptions = {
+  includePlatformNotifications?: boolean;
+  allowedAppSourceIds?: string[];
+  excludedEventTypes?: string[];
+};
+
+const LEGACY_APP_EVENT_KEY = /^app:/;
+
+function legacyAppKeyPrefix(sourceId: string): RegExp {
+  return new RegExp(`^${sourceId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:`);
+}
+
 function normalizedStrings(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort();
 }
@@ -26,7 +38,7 @@ function teamSlugFromObject(value: string): string | null {
 
 async function notificationAudienceQuery(
   subject: string,
-  options: { includePlatformNotifications?: boolean } = {},
+  options: InboxVisibilityOptions = {},
 ): Promise<Record<string, unknown>> {
   let teamSlugs: string[] = [];
   let organizationAdmin = false;
@@ -61,8 +73,33 @@ async function notificationAudienceQuery(
       adminResult.reason,
     );
   }
+  const visibility: Record<string, unknown>[] = [];
+  const withoutSource = { $exists: false };
+  if (options.allowedAppSourceIds) {
+    visibility.push({
+      $or: [
+        { source_id: "platform" },
+        { source_id: { $in: options.allowedAppSourceIds } },
+        { source_id: withoutSource, event_key: { $not: LEGACY_APP_EVENT_KEY } },
+        ...(options.allowedAppSourceIds.length ? [{
+          source_id: withoutSource,
+          event_key: { $in: options.allowedAppSourceIds.map(legacyAppKeyPrefix) },
+        }] : []),
+      ],
+    });
+  }
+  if (options.excludedEventTypes?.length) {
+    const eventType = { $in: options.excludedEventTypes };
+    visibility.push({
+      $nor: [
+        { source_id: "platform", event_type: eventType },
+        { source_id: withoutSource, event_key: { $not: LEGACY_APP_EVENT_KEY }, event_type: eventType },
+      ],
+    });
+  }
   return {
     archived_at: { $exists: false },
+    ...(visibility.length ? { $and: visibility } : {}),
     ...(options.includePlatformNotifications === false
       ? { category: { $ne: "platform_health" } }
       : {}),
@@ -86,10 +123,15 @@ export async function createInAppNotification(input: {
   title: string;
   message: string;
   href?: string;
+  callbackMarker?: string;
   severity?: InAppNotificationSeverity;
   category?: InAppNotificationCategory;
   sourceLabel?: string;
+  sourceId?: string;
   correlationKey?: string;
+  eventType?: string;
+  /** Keep the entry this many days, then let MongoDB delete it. Omit to keep it. */
+  retentionDays?: number;
   lifecycleStatus?: InAppNotificationLifecycleStatus;
 }): Promise<boolean> {
   const recipientUserSubjects = normalizedStrings(input.recipientUserSubjects ?? []);
@@ -121,10 +163,16 @@ export async function createInAppNotification(input: {
         title: input.title,
         message: input.message,
         ...(input.href ? { href: input.href } : {}),
+        ...(input.callbackMarker ? { callback_marker: input.callbackMarker } : {}),
         severity,
         category: input.category ?? "general",
         ...(input.sourceLabel ? { source_label: input.sourceLabel } : {}),
+        ...(input.sourceId ? { source_id: input.sourceId } : {}),
         ...(input.correlationKey ? { correlation_key: input.correlationKey } : {}),
+        ...(input.eventType ? { event_type: input.eventType } : {}),
+        ...(input.retentionDays && input.retentionDays > 0
+          ? { expires_at: new Date(Date.now() + input.retentionDays * 24 * 60 * 60 * 1000) }
+          : {}),
         ...(input.lifecycleStatus ? { lifecycle_status: input.lifecycleStatus } : {}),
         created_at: now,
         updated_at: now,
@@ -196,11 +244,7 @@ export async function archiveInAppNotifications(
 
 export async function listInAppNotifications(
   subject: string,
-  options: {
-    page?: number;
-    pageSize?: number;
-    includePlatformNotifications?: boolean;
-  } = {},
+  options: InboxVisibilityOptions & { page?: number; pageSize?: number } = {},
 ): Promise<InAppNotificationPage> {
   const collection = await getCollection<InAppNotificationDocument>(
     NOTIFICATION_COLLECTION,
@@ -232,6 +276,8 @@ export async function listInAppNotifications(
       severity: row.severity,
       category: row.category ?? "general",
       ...(row.source_label ? { source_label: row.source_label } : {}),
+      ...(row.source_id ? { source_id: row.source_id } : {}),
+      ...(row.event_type ? { event_type: row.event_type } : {}),
       ...(row.lifecycle_status
         ? { lifecycle_status: row.lifecycle_status }
         : {}),
@@ -252,7 +298,7 @@ export async function listInAppNotifications(
 export async function markInAppNotificationRead(
   subject: string,
   id: string,
-  options: { includePlatformNotifications?: boolean } = {},
+  options: InboxVisibilityOptions = {},
 ): Promise<boolean> {
   const collection = await getCollection<InAppNotificationDocument>(
     NOTIFICATION_COLLECTION,
@@ -270,7 +316,7 @@ export async function markInAppNotificationRead(
 
 export async function markAllInAppNotificationsRead(
   subject: string,
-  options: { includePlatformNotifications?: boolean } = {},
+  options: InboxVisibilityOptions = {},
 ): Promise<number> {
   const collection = await getCollection<InAppNotificationDocument>(
     NOTIFICATION_COLLECTION,
