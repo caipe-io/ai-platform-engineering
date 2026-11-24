@@ -110,6 +110,17 @@ describe("notification subscriptions and app boundaries", () => {
       .toEqual(["platform", "app:example-app"]);
     expect(mockRoles).toHaveBeenCalledWith("test-user", true);
   });
+  it("shows a saved platform event opt-out even when the catalog defaults to enabled", async () => {
+    mockUser.mockResolvedValue(null);
+    mockSubscriptions.mockResolvedValue([{
+      _id: notificationKey("test-user", "platform", "workflow.failed"),
+      enabled: false,
+    }]);
+    const [platform] = await listNotificationSources("test-user", {}, "user", "test-user@example.test");
+    expect(platform.events.find((event) => event.id === "workflow.failed")?.subscription.enabled).toBe(false);
+    expect(platform.events.find((event) => event.id === "workflow.completed")?.subscription.enabled).toBe(true);
+  });
+
   it("updates one owned choice without overwriting other events or channels", async () => {
     await writeSubscription("test-user", "app:example-app", "report.ready", {
       channels: { slack: false },
@@ -192,6 +203,14 @@ describe("notification subscriptions and app boundaries", () => {
     mockRoles.mockResolvedValue([]);
     expect(await deliveryAllowed("test-user", "app:example-app", "report.ready", "in_app")).toBe(false);
   });
+  it("requires an administrator session for admin-only apps even with the realm mapping", async () => {
+    mockUser.mockResolvedValue({ email: "test-user@example.test", events: [{ id: "report.ready" }] });
+    mockApp.mockReturnValue({ manifest: { access: { requiredRoles: ["admin"] } }, installation: { installed: true, enabled: true } });
+    mockIdentity.mockResolvedValue({ enabled: true });
+    mockRoles.mockResolvedValue([{ name: "admin" }]);
+    expect(await deliveryAllowed("test-user", "app:example-app", "report.ready", "slack")).toBe(false);
+  });
+
   it("continues to require a live custom role and honors its revocation", async () => {
     mockUser.mockResolvedValue({ email: "test-user@example.test", events: [{ id: "report.ready" }] });
     mockApp.mockReturnValue({ manifest: { access: { requiredRoles: ["example-editor"] } }, installation: { installed: true, enabled: true } });

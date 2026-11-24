@@ -190,6 +190,13 @@ describe("POST /api/settings/notification-preferences/test", () => {
     expect(mockPublish).not.toHaveBeenCalled();
   });
 
+  it("rejects an oversized request before publishing", async () => {
+    currentUser = { email: "large@example.com", sub: "sub-large" };
+    const response = await sendTest(req("POST", { type: "workflow.completed", padding: "x".repeat(32 * 1024) }, "test"));
+    expect(response.status).toBe(413);
+    expect(mockPublish).not.toHaveBeenCalled();
+  });
+
   it("returns 503 when delivery fails", async () => {
     mockPublish.mockResolvedValue("failed");
     const response = await sendTest(req("POST", { type: "workflow.completed" }, "test"));
@@ -204,6 +211,10 @@ describe("POST /api/settings/notification-preferences/test", () => {
     }
     expect(statuses.slice(0, 10).every((status) => status === 200)).toBe(true);
     expect(statuses.slice(10)).toEqual([429, 429]);
+    const blocked = req("POST", "{not json", "test");
+    const reader = jest.spyOn(blocked.body!, "getReader");
+    expect((await sendTest(blocked)).status).toBe(429);
+    expect(reader).not.toHaveBeenCalled();
     expect(mockPublish).toHaveBeenCalledTimes(10);
   });
 

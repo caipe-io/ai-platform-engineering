@@ -24,8 +24,12 @@ export const notificationChannelAdapters: Partial<Record<ExternalChannel, Notifi
 export async function notificationChannelAvailability(subject: string): Promise<ChannelChoices> {
   const choices: ChannelChoices = { in_app: true, web_push: false, webex: false, slack: false };
   for (const [channel, adapter] of Object.entries(notificationChannelAdapters)) {
-    try { choices[channel as ExternalChannel] = await adapter.available(subject); }
-    catch { choices[channel as ExternalChannel] = false; }
+    try {
+      choices[channel as ExternalChannel] = await adapter.available(subject);
+    } catch (error) {
+      console.warn("[notifications] channel availability check failed", channel, error instanceof Error ? error.name : "unknown");
+      choices[channel as ExternalChannel] = false;
+    }
   }
   return choices;
 }

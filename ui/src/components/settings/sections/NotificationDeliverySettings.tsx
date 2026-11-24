@@ -80,12 +80,13 @@ export function NotificationDeliverySettings({
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const browserReady = false;
-  const [quiet, setQuiet] = useState({
+  const [quietDraft, setQuietDraft] = useState<NotificationSubscription["quietHours"]>(undefined);
+  const quiet = quietDraft ?? view?.global.quietHours ?? {
     enabled: false,
     start: "22:00",
     end: "07:00",
-    timeZone: "UTC",
-  });
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
   const sourceIds = view?.sources.map((source) => source.id).join(",") ?? "";
   useEffect(() => {
     onSectionsLoaded?.([
@@ -102,7 +103,6 @@ export function NotificationDeliverySettings({
     if (!result || !result.global || !Array.isArray(result.sources))
       throw new Error("Unexpected notification settings response");
     setView(result);
-    if (result.global.quietHours) setQuiet(result.global.quietHours);
   }, []);
 
   useEffect(() => {
@@ -110,13 +110,9 @@ export function NotificationDeliverySettings({
     void jsonRequest("/api/notifications/channels")
       .then(setAvailable)
       .catch(() => undefined);
-    setQuiet((current) => ({
-      ...current,
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    }));
   }, [load]);
 
-  async function save(patch: Record<string, unknown>) {
+  async function save(patch: Record<string, unknown>): Promise<boolean> {
     setSaving(true);
     setError(null);
     setMessage(null);
@@ -124,14 +120,22 @@ export function NotificationDeliverySettings({
       await jsonRequest("/api/notifications/subscriptions", patch);
       await load();
       setMessage("Notification preferences saved.");
+      return true;
     } catch (reason) {
       setError(
         reason instanceof Error
           ? reason.message
           : "Could not save notification preferences",
       );
+      return false;
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveQuietHours() {
+    if (await save({ quietHours: quiet })) {
+      setQuietDraft((current) => current === quiet ? undefined : current);
     }
   }
 
@@ -253,8 +257,8 @@ export function NotificationDeliverySettings({
                 checked={channels[channel]}
                 disabled={
                   saving ||
-                  !available[channel] ||
-                  (channel === "web_push" && !browserReady)
+                  (!channels[channel] &&
+                    (!available[channel] || (channel === "web_push" && !browserReady)))
                 }
                 onCheckedChange={(enabled) =>
                   void toggleChannel(channel, enabled)
@@ -269,7 +273,7 @@ export function NotificationDeliverySettings({
               checked={quiet.enabled}
               disabled={saving}
               onCheckedChange={(enabled) =>
-                setQuiet((current) => ({ ...current, enabled }))
+                setQuietDraft({ ...quiet, enabled })
               }
             />
             <div className="flex flex-wrap items-end gap-3">
@@ -280,7 +284,7 @@ export function NotificationDeliverySettings({
                   type="time"
                   value={quiet.start}
                   onChange={(event) =>
-                    setQuiet({ ...quiet, start: event.target.value })
+                    setQuietDraft({ ...quiet, start: event.target.value })
                   }
                 />
               </label>
@@ -291,7 +295,7 @@ export function NotificationDeliverySettings({
                   type="time"
                   value={quiet.end}
                   onChange={(event) =>
-                    setQuiet({ ...quiet, end: event.target.value })
+                    setQuietDraft({ ...quiet, end: event.target.value })
                   }
                 />
               </label>
@@ -301,7 +305,7 @@ export function NotificationDeliverySettings({
                   aria-label="Quiet hours time zone"
                   value={quiet.timeZone}
                   onChange={(event) =>
-                    setQuiet({ ...quiet, timeZone: event.target.value })
+                    setQuietDraft({ ...quiet, timeZone: event.target.value })
                   }
                 />
               </label>
@@ -309,7 +313,7 @@ export function NotificationDeliverySettings({
                 size="sm"
                 variant="outline"
                 disabled={saving}
-                onClick={() => void save({ quietHours: quiet })}
+                onClick={() => void saveQuietHours()}
               >
                 Save quiet hours
               </Button>

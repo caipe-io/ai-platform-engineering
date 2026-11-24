@@ -3,12 +3,16 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
+import { isSameTabNavigation } from "@/components/layout/NavigationProgressLink";
 import { Button } from "@/components/ui/button";
 import { NotificationPreferenceSwitch } from "@/components/notifications/NotificationPreferenceSwitch";
 import {
   isPaused,
   type NotificationSourceView,
 } from "@/lib/notifications/channels";
+import { useUnsavedChangesStore } from "@/store/unsaved-changes-store";
+
+const NOTIFICATION_SETTINGS_HREF = "/settings/notifications";
 
 export function NotificationInboxSubscriptions() {
   const [sources, setSources] = useState<NotificationSourceView[]>([]);
@@ -86,7 +90,14 @@ export function NotificationInboxSubscriptions() {
       ))}
       <Link
         className="text-xs text-primary underline"
-        href="/settings/notifications"
+        href={NOTIFICATION_SETTINGS_HREF}
+        onClick={(event) => {
+          const { hasUnsavedChanges, requestNavigation } = useUnsavedChangesStore.getState();
+          if (hasUnsavedChanges && isSameTabNavigation(event)) {
+            event.preventDefault();
+            requestNavigation(NOTIFICATION_SETTINGS_HREF);
+          }
+        }}
       >
         Manage notification settings
       </Link>

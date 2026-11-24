@@ -8,8 +8,14 @@ it("keeps missing integrations unavailable", async () => {
   await expect(validateNotificationChannelChoices("example-user", { web_push: true })).rejects.toThrow();
 });
 it("does not mistake a provider failure for readiness", async () => {
-  notificationChannelAdapters.slack = { available: async () => { throw new Error("unavailable"); } };
-  expect((await notificationChannelAvailability("example-user")).slack).toBe(false);
+  const warning = jest.spyOn(console, "warn").mockImplementation(() => {});
+  notificationChannelAdapters.slack = { available: async () => { throw new Error("provider detail"); } };
+  try {
+    expect((await notificationChannelAvailability("example-user")).slack).toBe(false);
+    expect(warning).toHaveBeenCalledWith("[notifications] channel availability check failed", "slack", "Error");
+  } finally {
+    warning.mockRestore();
+  }
 });
 it("checks the owned destination before enabling a channel", async () => {
   const validateEnable = jest.fn().mockRejectedValue(new Error("not subscribed"));

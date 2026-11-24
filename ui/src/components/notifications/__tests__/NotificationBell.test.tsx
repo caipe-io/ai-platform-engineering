@@ -4,20 +4,28 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const mockPush = jest.fn();
 const mockDeferred = jest.fn();
+const mockRequestNavigation = jest.fn();
+let mockHasUnsavedChanges = false;
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
 }));
 
-jest.mock("@/store/unsaved-changes-store", () => ({
-  useUnsavedChangesStore: () => ({
-    hasUnsavedChanges: false,
-    requestNavigation: jest.fn(),
+jest.mock("@/store/unsaved-changes-store", () => {
+  const state = () => ({
+    hasUnsavedChanges: mockHasUnsavedChanges,
+    requestNavigation: mockRequestNavigation,
     requestDeferredAction: mockDeferred,
-  }),
-}));
+  });
+  return { useUnsavedChangesStore: Object.assign(state, { getState: state }) };
+});
 
 import { NotificationBell } from "../NotificationBell";
+
+afterEach(() => {
+  mockHasUnsavedChanges = false;
+  mockRequestNavigation.mockClear();
+});
 
 it("shows a friendly empty state",async () => {
   global.fetch = jest.fn(async () => ({
@@ -117,4 +125,23 @@ it("uses document navigation for callback markers through the existing unsaved-e
   fireEvent.click(await screen.findByRole("button", { name: "Notifications" }));
   fireEvent.click(await screen.findByText("Example update"));
   expect(mockDeferred).toHaveBeenCalledWith(expect.any(Function));
+});
+
+it("guards same-tab navigation to settings from the subscriptions panel", async () => {
+  mockHasUnsavedChanges = true;
+  global.fetch = jest.fn(async (url) => ({
+    ok: true,
+    json: async () => String(url).startsWith("/api/notifications/subscriptions")
+      ? { success: true, data: { sources: [] } }
+      : { notifications: [], unread_count: 0, pagination: { page: 1, page_size: 10, total: 0, total_pages: 1 } },
+  })) as jest.Mock;
+  render(<NotificationBell enabled />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Notifications" }));
+  fireEvent.click(screen.getByRole("button", { name: "Subscriptions" }));
+  const link = screen.getByRole("link", { name: "Manage notification settings" });
+  fireEvent.click(link, { ctrlKey: true });
+  expect(mockRequestNavigation).not.toHaveBeenCalled();
+  expect(fireEvent.click(link)).toBe(false);
+  expect(mockRequestNavigation).toHaveBeenCalledWith("/settings/notifications");
 });

@@ -177,6 +177,15 @@ describe("recipient resolution", () => {
     expect(audience.rejected).toBe(1);
   });
 
+  it("rejects a subject shared by records with different email addresses", async () => {
+    mockFind.mockResolvedValue([alice, { ...alice, email: "previous@example.com" }]);
+    const audience = await resolveRecipients(
+      [{ subject: "sub-alice" }, { subject: "sub-alice", email: alice.email }],
+      { includeOrgAdmins: false },
+    );
+    expect(audience).toEqual({ recipients: [], skipped: 0, rejected: 2 });
+  });
+
   it("accepts a consistent complete pair", async () => {
     const audience = await resolveRecipients([{ subject: "sub-alice", email: "alice@example.com" }], {
       includeOrgAdmins: false,

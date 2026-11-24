@@ -92,6 +92,12 @@ describe("POST /api/internal/notifications/events", () => {
     expect(mockPublish).not.toHaveBeenCalled();
   });
 
+  it("rejects an oversized streamed body without publishing", async () => {
+    const response = await POST(request({ ...validEnvelope, padding: "x".repeat(32 * 1024) }, authorized));
+    expect(response.status).toBe(413);
+    expect(mockPublish).not.toHaveBeenCalled();
+  });
+
   it("returns 400 for an unknown event type, without publishing", async () => {
     const response = await POST(request({ ...validEnvelope, type: "billing.paid" }, authorized));
     expect(response.status).toBe(400);

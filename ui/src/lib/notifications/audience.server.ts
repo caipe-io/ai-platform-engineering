@@ -16,7 +16,7 @@ export interface ResolvedAudience {
   recipients: ResolvedRecipient[];
   /** Recipients dropped because no user record matched them. */
   skipped: number;
-  /** Recipients rejected because the supplied subject and email name different users. */
+  /** Recipients rejected because their identifiers disagree or are ambiguous. */
   rejected: number;
 }
 
@@ -82,11 +82,11 @@ export async function resolveRecipients(
           .toArray()
       : [];
 
-  const bySubject = new Map<string, UserLookup>();
+  const bySubject = new Map<string, UserLookup | null>();
   const byEmail = new Map<string, UserLookup | null>();
   for (const user of matches) {
     const subject = subjectOf(user);
-    if (subject) bySubject.set(subject, user);
+    if (subject) bySubject.set(subject, bySubject.has(subject) ? null : user);
     if (user.email) {
       const email = user.email.toLowerCase();
       const previous = byEmail.get(email);
@@ -107,7 +107,7 @@ export async function resolveRecipients(
       ? byEmail.get(ref.email.toLowerCase())
       : undefined;
 
-    if (byEmailMatch === null) {
+    if (bySubjectMatch === null || byEmailMatch === null) {
       rejected += 1;
       continue;
     }
@@ -137,6 +137,10 @@ export async function resolveRecipients(
     const email = user?.email;
     if (!subject || !email) {
       skipped += 1;
+      continue;
+    }
+    if (bySubject.get(subject) === null) {
+      rejected += 1;
       continue;
     }
     if (!resolved.has(subject)) resolved.set(subject, { subject, email });
