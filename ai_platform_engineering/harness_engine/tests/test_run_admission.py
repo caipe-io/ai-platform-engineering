@@ -154,6 +154,61 @@ async def test_cancel_before_preparation_starts_releases_the_reservation(durable
     assert binding and binding.active_run is None
 
 
+@pytest.mark.parametrize("terminal_status", [RunStatus.CANCELLED, RunStatus.COMPLETED])
+async def test_local_cancel_waits_for_terminal_producer_to_release_the_reservation(
+    durable_repository: RunRepository, monkeypatch: pytest.MonkeyPatch, terminal_status: RunStatus,
+) -> None:
+    first, second, compiler, _ = await coordinators(durable_repository)
+    releasing, release, observed_cancellation = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    original_release = durable_repository.release_run
+    original_cancel = durable_repository.request_cancellation
+
+    async def delayed_release(binding_id: str, run_id: str) -> None:
+        releasing.set()
+        await release.wait()
+        await original_release(binding_id, run_id)
+
+    async def observe_cancellation(run_id: str) -> RunRecord | None:
+        result = await original_cancel(run_id)
+        observed_cancellation.set()
+        return result
+
+    monkeypatch.setattr(durable_repository, "release_run", delayed_release)
+    run = await first.start_run(request(), "test-user")
+    producer = first._tasks[run.run_id]
+    cancellation: asyncio.Task[RunRecord | None] | None = None
+    try:
+        await asyncio.wait_for(compiler.entered.wait(), 1)
+        if terminal_status == RunStatus.CANCELLED:
+            await original_cancel(run.run_id)
+        else:
+            compiler.resume.set()
+        await asyncio.wait_for(releasing.wait(), 1)
+        stored = await durable_repository.get_run(run.run_id)
+        assert stored and stored.status == terminal_status
+        monkeypatch.setattr(durable_repository, "request_cancellation", observe_cancellation)
+        cancellation = asyncio.create_task(first.cancel(run.run_id))
+        await asyncio.wait_for(observed_cancellation.wait(), 1)
+        assert not cancellation.done()
+        assert not producer.done()
+        release.set()
+        result = await asyncio.wait_for(cancellation, 1)
+        assert result and result.status == terminal_status
+        binding = await second._session_manager.current("test-user", "agent-example", "conversation-example")
+        assert binding and binding.active_run is None
+        continued = await second.start_run(request("request-2"), "test-user")
+        compiler.resume.set()
+        await asyncio.wait_for(second._tasks[continued.run_id], 1)
+    finally:
+        release.set()
+        compiler.resume.set()
+        if cancellation is not None:
+            with suppress(asyncio.CancelledError):
+                await cancellation
+        await first.shutdown()
+        await second.shutdown()
+
+
 class PausingAdapter(FakeHarnessAdapter):
     def __init__(self) -> None:
         super().__init__()
