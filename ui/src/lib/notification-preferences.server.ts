@@ -48,7 +48,7 @@ export async function inboxViewOptions(userEmail: string, subject?: string): Pro
   const preferences: NotificationPreferences | null = userSettings?.notification_preferences ?? null;
   const excluded = SHARED_INBOX_EVENT_TYPES.filter((type) => !isNotificationEnabled(type, preferences));
   if (subject) {
-    const { global, source, events } = await readSourceSubscriptions(subject, "platform");
+    const { global, source, events } = await readSourceSubscriptions(subject, "platform", NOTIFICATION_EVENT_TYPES);
     for (const type of NOTIFICATION_EVENT_TYPES) {
       const event = events.get(type) ?? null;
       if (!channelEnabled("in_app", global, source, event)) excluded.push(type);
