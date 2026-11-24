@@ -108,6 +108,14 @@
   text-align: right;
 }
 
+.heroBadges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 1rem;
+}
+
 .heroBadge {
   display: inline-flex;
   align-items: center;
@@ -120,7 +128,6 @@
   font-weight: 600;
   color: #e0f2fe;
   text-decoration: none !important;
-  margin-bottom: 1rem;
 }
 
 .heroBadge:hover {
@@ -131,6 +138,10 @@
 
 .heroBadge img {
   flex-shrink: 0;
+}
+
+.heroBaselineBadge {
+  display: block;
 }
 
 .heroTitle {
@@ -919,6 +930,7 @@
   }
 
   .heroLeft { align-items: center; text-align: center; }
+  .heroBadges { justify-content: center; }
   .heroDemo { margin: 0 auto; }
   .heroButtons { justify-content: center; }
   .heroTitle { white-space: normal; }
