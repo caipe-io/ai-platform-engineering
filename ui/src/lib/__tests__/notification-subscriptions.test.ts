@@ -4,6 +4,8 @@ import {
   registerAppNotificationTypes,
   writeSubscription,
   deliveryAllowed,
+  listNotificationSources,
+  parseSubscriptionPatch,
   notificationKey,
 } from "@/lib/notifications/subscriptions.server";
 
@@ -13,16 +15,26 @@ const mockApp = jest.fn();
 const mockIdentity = jest.fn();
 const mockRoles = jest.fn();
 const mockSubscriptions = jest.fn();
+const mockRegistrations = jest.fn();
+const mockConfiguredApps = jest.fn();
 jest.mock("@/lib/mongodb", () => ({
-  getCollection: async () => ({
+  getCollection: async (name: string) => ({
     updateOne: mockUpdate,
     findOne: (...args: unknown[]) => mockUser(...args),
-    find: () => ({ limit: () => ({ toArray: () => mockSubscriptions() }) }),
+    find: (filter: { _id?: { $in: string[] } }) => {
+      const load = name === "notification_sources" ? mockRegistrations : mockSubscriptions;
+      const toArray = async () => {
+        const rows: Array<{ _id: string }> = await load();
+        const ids = filter._id?.$in;
+        return ids ? rows.filter((row) => ids.includes(row._id)) : rows;
+      };
+      return { toArray, limit: (count: number) => ({ toArray: async () => (await toArray()).slice(0, count) }) };
+    },
   }),
 }));
 jest.mock("@/lib/agentic-apps/config", () => ({
   getConfiguredAgenticApp: (...args: unknown[]) => mockApp(...args),
-  loadConfiguredAgenticApps: () => [],
+  loadConfiguredAgenticApps: () => mockConfiguredApps(),
 }));
 jest.mock("@/lib/rbac/keycloak-admin", () => ({
   getRealmUserById: (...args: unknown[]) => mockIdentity(...args),
@@ -33,9 +45,11 @@ describe("notification subscriptions and app boundaries", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockSubscriptions.mockResolvedValue([
-      { sourceId: "*", eventType: "*", channels: { slack: true } },
-      { sourceId: "app:example-app", eventType: "*", enabled: true },
+      { _id: notificationKey("test-user", "*", "*"), sourceId: "*", eventType: "*", channels: { slack: true } },
+      { _id: notificationKey("test-user", "app:example-app", "*"), sourceId: "app:example-app", eventType: "*", enabled: true },
     ]);
+    mockConfiguredApps.mockReturnValue([]);
+    mockRegistrations.mockResolvedValue([]);
   });
   it("namespaces registrations and rejects duplicate type ids", async () => {
     await registerAppNotificationTypes("example-app", "Example app", [
@@ -53,6 +67,49 @@ describe("notification subscriptions and app boundaries", () => {
       ]),
     ).rejects.toThrow("unique");
   });
+  it("rejects coerced registration IDs before writing", async () => {
+    await expect(registerAppNotificationTypes("example-app", "Example app", [
+      { id: ["report.ready"], label: "Report ready" },
+    ])).rejects.toMatchObject({ statusCode: 400 });
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+  it("enforces a global opt-out even after many stale event rules", async () => {
+    mockUser.mockResolvedValue({ email: "test-user@example.test", events: [{ id: "report.ready" }] });
+    mockApp.mockReturnValue({
+      manifest: { access: { requiredRoles: ["example-editor"] } },
+      installation: { installed: true, enabled: true },
+    });
+    mockIdentity.mockResolvedValue({ enabled: true });
+    mockRoles.mockResolvedValue([{ name: "example-editor" }]);
+    mockSubscriptions.mockResolvedValue([
+      { _id: notificationKey("test-user", "app:example-app", "*"), sourceId: "app:example-app", eventType: "*", enabled: true },
+      ...Array.from({ length: 101 }, (_, index) => ({
+        _id: notificationKey("test-user", "app:example-app", `retired.${index}`),
+        sourceId: "app:example-app",
+        eventType: `retired.${index}`,
+        enabled: true,
+      })),
+      { _id: notificationKey("test-user", "*", "*"), sourceId: "*", eventType: "*", enabled: false },
+    ]);
+    expect(await deliveryAllowed("test-user", "app:example-app", "report.ready", "in_app")).toBe(false);
+    expect(mockIdentity).not.toHaveBeenCalled();
+  });
+  it("lists registered apps for an OIDC bearer user's effective custom role", async () => {
+    const app = (id: string, requiredRole: string) => ({
+      manifest: { id, access: { requiredRoles: [requiredRole] } },
+      installation: { installed: true, enabled: true },
+    });
+    mockConfiguredApps.mockReturnValue([app("example-app", "example-editor"), app("example-admin", "admin")]);
+    mockRegistrations.mockResolvedValue([
+      { _id: "app:example-app", label: "Example app", events: [] },
+      { _id: "app:example-admin", label: "Example admin", events: [] },
+    ]);
+    mockRoles.mockResolvedValue([{ name: "example-editor" }, { name: "admin" }]);
+    const session = { authMethod: "bearer", principalType: "oidc_user", role: "user" };
+    expect((await listNotificationSources("test-user", session)).map((source) => source.id))
+      .toEqual(["platform", "app:example-app"]);
+    expect(mockRoles).toHaveBeenCalledWith("test-user", true);
+  });
   it("updates one owned choice without overwriting other events or channels", async () => {
     await writeSubscription("test-user", "app:example-app", "report.ready", {
       channels: { slack: false },
@@ -68,28 +125,15 @@ describe("notification subscriptions and app boundaries", () => {
       { upsert: true },
     );
     expect(mockUpdate.mock.calls[0][1].$set.channels).toBeUndefined();
-    await expect(
-      writeSubscription("test-user", "app:example-app", "*", {
-        subject: "other-user",
-      }),
-    ).rejects.toThrow("Unknown");
+    expect(() => parseSubscriptionPatch({ subject: "other-user" })).toThrow("Unknown");
   });
-  it("rejects invalid quiet hours and channels", async () => {
-    await expect(
-      writeSubscription("test-user", "*", "*", {
-        channels: { arbitrary: true },
-      }),
-    ).rejects.toThrow();
-    await expect(
-      writeSubscription("test-user", "*", "*", {
-        quietHours: {
-          enabled: true,
-          start: "22:00",
-          end: "07:00",
-          timeZone: "not-a-zone",
-        },
-      }),
-    ).rejects.toThrow();
+  it("rejects invalid quiet hours and channels", () => {
+    expect(() => parseSubscriptionPatch({
+      channels: { arbitrary: true },
+    })).toThrow("Unknown channel");
+    expect(() => parseSubscriptionPatch({
+      quietHours: { enabled: true, start: "22:00", end: "07:00", timeZone: "not-a-zone" },
+    })).toThrow("Unknown time zone");
   });
   it("rechecks disabled apps and revoked roles before any delivery", async () => {
     mockUser.mockResolvedValue({ email: "test-user@example.test" });
