@@ -9,6 +9,7 @@ import {
 import { notificationUser } from "@/lib/notifications/request-user.server";
 import {
   listNotificationSources,
+  parseSubscriptionPatch,
   readSubscription,
   writeSubscription,
 } from "@/lib/notifications/subscriptions.server";
@@ -38,7 +39,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
   const body = await readNotificationJson(request);
   if (!body || typeof body !== "object" || Array.isArray(body))
     throw new ApiError("Request body must be an object", 400);
-  const { sourceId = "*", eventType = "*", ...patch } = body;
+  const { sourceId = "*", eventType = "*", ...rawPatch } = body;
   if (typeof sourceId !== "string" || typeof eventType !== "string")
     throw new ApiError("Invalid notification source", 400);
   if (sourceId !== "*") {
@@ -53,12 +54,9 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
       throw new ApiError("Notification source not found", 404);
   } else if (eventType !== "*")
     throw new ApiError("Select a source before an event", 400);
-  if (
-    sourceId === "*" &&
-    patch.channels &&
-    typeof patch.channels === "object"
-  ) {
-    await validateNotificationChannelChoices(subject, patch.channels as Record<string, unknown>);
+  const patch = parseSubscriptionPatch(rawPatch);
+  if (sourceId === "*" && patch.channels) {
+    await validateNotificationChannelChoices(subject, patch.channels);
   }
 
   if (
@@ -66,10 +64,22 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
     isNotificationEventType(eventType) &&
     typeof patch.enabled === "boolean"
   ) {
+    const { enabled, ...subscriptionPatch } = patch;
     await updateNotificationPreferences(user.email, {
-      events: { [eventType]: patch.enabled },
+      events: { [eventType]: enabled },
     });
-    delete patch.enabled;
+    if (Object.keys(subscriptionPatch).length > 0) {
+      try {
+        await writeSubscription(subject, sourceId, eventType, subscriptionPatch);
+      } catch (error) {
+        throw Object.assign(new ApiError(
+          "The event preference was saved. Other notification settings could not be confirmed. Reload and try again.",
+          503,
+          "NOTIFICATION_SUBSCRIPTION_PARTIAL_SAVE",
+        ), { cause: error });
+      }
+    }
+    return successResponse({ saved: true });
   }
   await writeSubscription(subject, sourceId, eventType, patch);
   return successResponse({ saved: true });
