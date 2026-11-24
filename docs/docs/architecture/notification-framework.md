@@ -39,7 +39,7 @@ CAIPE 1.4.0 adds event and preference contracts for the existing inbox.
 
 - Accepted jobs are durable before acknowledgement. Per-channel deliveries use deterministic keys, expiring leases, capped retries and expiry.
 - Recheck current subscriptions and app launch access before delivery. Existing inbox entries remain readable.
-- Only in-app delivery is implemented here; missing external adapters fail explicitly.
+- Only in-app delivery is implemented here. Missing external adapters fail explicitly. External adapters must honor the cancellation signal and use the delivery ID as an idempotency key where the provider supports it.
 - `NOTIFICATION_EVENTS_ENABLED=false` stops workers and new queue acceptance. No NATS service is required.
 
 ## Trusted platform publishing

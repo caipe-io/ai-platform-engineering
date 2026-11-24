@@ -52,7 +52,6 @@ global:
   # to the UI and producer pods. Disabled leaves existing deployments unchanged.
   notifications:
     enabled: false
-    internalUrl: "" # defaults to this release's caipe-ui Service
     tokenSecret:
       name: ""
       key: token

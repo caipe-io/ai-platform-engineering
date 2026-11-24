@@ -7,7 +7,7 @@ import {
   withErrorHandler,
 } from "@/lib/api-middleware";
 import { markInAppNotificationRead } from "@/lib/in-app-notifications.server";
-import { inboxViewOptions } from "@/lib/notification-preferences.server";
+import { inboxAccessOptions } from "@/lib/notification-preferences.server";
 
 export const PATCH = withErrorHandler(async (
   request: NextRequest,
@@ -17,10 +17,8 @@ export const PATCH = withErrorHandler(async (
   const subject = typeof session.sub === "string" ? session.sub.trim() : "";
   if (!subject) throw new ApiError("Your session has expired. Please sign in again.", 401);
   const { id } = await context.params;
-  const viewOptions = await inboxViewOptions(user.email, subject);
-  const updated = await markInAppNotificationRead(subject, id, {
-    ...viewOptions,
-  });
+  const viewOptions = await inboxAccessOptions(subject, session, user);
+  const updated = await markInAppNotificationRead(subject, id, viewOptions);
   if (!updated) throw new ApiError("Notification not found", 404);
   return successResponse({ read: true });
 });

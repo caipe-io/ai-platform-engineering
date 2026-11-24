@@ -248,12 +248,11 @@ export async function writeSubscription(
   );
 }
 
-export async function listNotificationSources(
+export async function allowedNotificationAppSourceIds(
   subject: string,
   session: Record<string, unknown>,
   role?: string,
-  email?: string,
-): Promise<NotificationSourceView[]> {
+): Promise<string[]> {
   const context = agenticAppUserContextFromSession(session, role);
   if (session.authMethod === "bearer" && session.principalType === "oidc_user") {
     // Bearer sessions do not carry realm roles. App-specific roles are read
@@ -261,15 +260,22 @@ export async function listNotificationSources(
     const mappings = await listRealmRoleMappingsForUser(subject, true);
     context.roles = mappings.map((mapping) => mapping.name).filter((name) => name !== "admin");
   }
-  const allowed = new Set(
-    loadConfiguredAgenticApps()
-      .filter((app) => canLaunchAgenticApp(app, context))
-      .map((app) => `app:${app.manifest.id}`),
-  );
+  return loadConfiguredAgenticApps()
+    .filter((app) => canLaunchAgenticApp(app, context))
+    .map((app) => `app:${app.manifest.id}`);
+}
+
+export async function listNotificationSources(
+  subject: string,
+  session: Record<string, unknown>,
+  role?: string,
+  email?: string,
+): Promise<NotificationSourceView[]> {
+  const allowed = await allowedNotificationAppSourceIds(subject, session, role);
   const registrations = await (
     await getCollection<SourceRegistration>("notification_sources")
   )
-    .find({ _id: { $in: [...allowed] } })
+    .find({ _id: { $in: allowed } })
     .limit(100)
     .toArray();
   const platform = await getNotificationSource("platform");

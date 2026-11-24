@@ -84,7 +84,12 @@ describe("inbox event_type", () => {
     await listInAppNotifications("subject-example", { excludedEventTypes: ["service.recovered"] });
 
     const audience = collection.countDocuments.mock.calls[0][0] as Record<string, unknown>;
-    expect(audience.event_type).toEqual({ $nin: ["service.recovered"] });
+    expect(audience.$and).toEqual([
+      { $nor: [
+        { source_id: "platform", event_type: { $in: ["service.recovered"] } },
+        { source_id: { $exists: false }, event_key: { $not: /^app:/ }, event_type: { $in: ["service.recovered"] } },
+      ] },
+    ]);
     const unreadQuery = JSON.stringify(collection.countDocuments.mock.calls[1][0]);
     expect(unreadQuery).toContain("service.recovered");
   });
@@ -96,6 +101,6 @@ describe("inbox event_type", () => {
     await listInAppNotifications("subject-example", { excludedEventTypes: [] });
 
     const audience = collection.countDocuments.mock.calls[0][0] as Record<string, unknown>;
-    expect(audience).not.toHaveProperty("event_type");
+    expect(audience).not.toHaveProperty("$and");
   });
 });

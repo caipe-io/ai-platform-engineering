@@ -158,6 +158,25 @@ describe("recipient resolution", () => {
     expect(audience.recipients).toEqual([{ subject: "sub-alice", email: "alice@example.com" }]);
   });
 
+  it("looks up an email-only recipient case-insensitively and matches literal punctuation", async () => {
+    const matched = { email: "alice+ops@example.com", keycloak_sub: "sub-alice" };
+    const similar = { email: "aliceops@example.com", keycloak_sub: "sub-similar" };
+    mockFind.mockImplementationOnce((query) => [matched, similar].filter((user) =>
+      query.$or.some((clause: { email?: { $in: RegExp[] } }) =>
+        clause.email?.$in.some((pattern) => pattern.test(user.email)),
+      ),
+    ));
+    const audience = await resolveRecipients([{ email: "ALICE+OPS@EXAMPLE.COM" }], { includeOrgAdmins: false });
+    expect(audience.recipients).toEqual([{ subject: "sub-alice", email: matched.email }]);
+  });
+
+  it("rejects ambiguous case-insensitive emails instead of selecting an account", async () => {
+    mockFind.mockResolvedValue([alice, { email: "ALICE@example.com", keycloak_sub: "sub-other" }]);
+    const audience = await resolveRecipients([{ email: "alice@example.com" }], { includeOrgAdmins: false });
+    expect(audience.recipients).toEqual([]);
+    expect(audience.rejected).toBe(1);
+  });
+
   it("accepts a consistent complete pair", async () => {
     const audience = await resolveRecipients([{ subject: "sub-alice", email: "alice@example.com" }], {
       includeOrgAdmins: false,
@@ -218,14 +237,6 @@ describe("recipient resolution", () => {
     expect(audience.skipped).toBe(1);
   });
 
-  it("still returns explicit recipients when OpenFGA is unavailable", async () => {
-    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
-    mockReadTuples.mockRejectedValue(new Error("OPENFGA_HTTP is not set"));
-    const audience = await resolveRecipients([{ email: "alice@example.com" }], { includeOrgAdmins: true });
-    expect(audience.recipients).toHaveLength(1);
-    consoleError.mockRestore();
-  });
-
   it("counts a person once when they are both listed and an org admin", async () => {
     mockReadTuples.mockResolvedValue({
       tuples: [{ key: { user: "user:sub-alice", relation: "admin", object: "organization:primary" } }],
@@ -281,6 +292,24 @@ describe("fan-out", () => {
     expect(result.recipients).toBe(0);
     expect(mockPublishEvent).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  it.each([false, true])("does not accept a partial admin audience (first page succeeded: %s)", async (firstPageSucceeded) => {
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      if (firstPageSucceeded) {
+        mockReadTuples.mockResolvedValueOnce({
+          tuples: [{ key: { user: "user:sub-alice" } }],
+          continuationToken: "next-page",
+        });
+      }
+      mockReadTuples.mockRejectedValueOnce(new Error("authorization unavailable"));
+      const result = await publishNotificationRequest({ ...request, includeOrgAdmins: true });
+      expect(result.results.failed).toBe(1);
+      expect(mockPublishEvent).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("reports one failure and publishes nothing when recipients cannot be resolved", async () => {

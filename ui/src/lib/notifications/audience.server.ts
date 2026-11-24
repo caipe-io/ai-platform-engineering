@@ -35,6 +35,10 @@ function sameUser(a: UserLookup, b: UserLookup): boolean {
   );
 }
 
+function exactEmailPattern(email: string): RegExp {
+  return new RegExp(`^${email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+}
+
 /**
  * Turns producer-supplied references into complete {subject, email} pairs.
  * The inbox is keyed by subject and preferences by email, so both must name
@@ -72,18 +76,26 @@ export async function resolveRecipients(
                     { "metadata.keycloak_sub": { $in: subjects } },
                   ]
                 : []),
-              ...(emails.length > 0 ? [{ email: { $in: emails } }] : []),
+              ...(emails.length > 0 ? [{ email: { $in: emails.map(exactEmailPattern) } }] : []),
             ],
           } as never)
           .toArray()
       : [];
 
   const bySubject = new Map<string, UserLookup>();
-  const byEmail = new Map<string, UserLookup>();
+  const byEmail = new Map<string, UserLookup | null>();
   for (const user of matches) {
     const subject = subjectOf(user);
     if (subject) bySubject.set(subject, user);
-    if (user.email) byEmail.set(user.email.toLowerCase(), user);
+    if (user.email) {
+      const email = user.email.toLowerCase();
+      const previous = byEmail.get(email);
+      // Older records may differ only by casing. Never choose the recipient
+      // or preference record based on the database's iteration order.
+      const ambiguous = previous === null ||
+        (previous !== undefined && (!sameUser(previous, user) || previous.email !== user.email));
+      byEmail.set(email, ambiguous ? null : user);
+    }
   }
 
   const resolved = new Map<string, ResolvedRecipient>();
@@ -95,6 +107,10 @@ export async function resolveRecipients(
       ? byEmail.get(ref.email.toLowerCase())
       : undefined;
 
+    if (byEmailMatch === null) {
+      rejected += 1;
+      continue;
+    }
     if (ref.subject && ref.email) {
       // A complete pair is only trusted when both halves find the same user.
       if (
@@ -136,22 +152,18 @@ export async function resolveRecipients(
  */
 export async function listOrgAdminSubjects(): Promise<string[]> {
   const subjects = new Set<string>();
-  try {
-    let continuationToken: string | undefined;
-    do {
-      const page = await readOpenFgaTuples({
-        tuple: { relation: "admin", object: organizationObjectId() },
-        pageSize: 100,
-        continuationToken,
-      });
-      for (const tuple of page.tuples) {
-        const match = /^user:(.+)$/.exec(tuple.key.user);
-        if (match?.[1]) subjects.add(match[1]);
-      }
-      continuationToken = page.continuationToken;
-    } while (continuationToken && subjects.size < MAX_RESOLVED_RECIPIENTS);
-  } catch (error) {
-    console.error("[notifications] could not list organization admins", error);
-  }
+  let continuationToken: string | undefined;
+  do {
+    const page = await readOpenFgaTuples({
+      tuple: { relation: "admin", object: organizationObjectId() },
+      pageSize: 100,
+      continuationToken,
+    });
+    for (const tuple of page.tuples) {
+      const match = /^user:(.+)$/.exec(tuple.key.user);
+      if (match?.[1]) subjects.add(match[1]);
+    }
+    continuationToken = page.continuationToken;
+  } while (continuationToken && subjects.size < MAX_RESOLVED_RECIPIENTS);
   return [...subjects];
 }

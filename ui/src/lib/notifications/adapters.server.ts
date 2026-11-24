@@ -4,8 +4,16 @@ import { NotificationDeliveryError } from "./delivery-types";
 import type { ChannelChoices, NotificationChannel } from "./channels";
 
 type ExternalChannel = Exclude<NotificationChannel, "in_app">;
+
+export const EXTERNAL_NOTIFICATION_TIMEOUT_MS = 30_000;
+
+interface NotificationSendOptions {
+  signal: AbortSignal;
+  idempotencyKey: string;
+}
 export interface NotificationChannelAdapter {
-  send?(delivery: NotificationDelivery): Promise<void>;
+  /** Honor cancellation and forward the key if the provider supports idempotency. */
+  send?(delivery: NotificationDelivery, options: NotificationSendOptions): Promise<void>;
   available(subject: string): Promise<boolean>;
   validateEnable?(subject: string): Promise<void>;
   publicKey?(): string | null;
@@ -37,5 +45,21 @@ export async function sendExternalNotification(delivery: NotificationDelivery): 
   if (delivery.channel === "in_app") throw new NotificationDeliveryError("Inbox uses its own adapter", false);
   const adapter = notificationChannelAdapters[delivery.channel];
   if (!adapter?.send) throw new NotificationDeliveryError("Notification channel is not installed", false);
-  await adapter.send(delivery);
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new NotificationDeliveryError("Notification adapter timed out");
+      reject(error);
+      controller.abort(error);
+    }, EXTERNAL_NOTIFICATION_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([
+      adapter.send(delivery, { signal: controller.signal, idempotencyKey: delivery._id }),
+      deadline,
+    ]);
+  } finally {
+    clearTimeout(timer!);
+  }
 }

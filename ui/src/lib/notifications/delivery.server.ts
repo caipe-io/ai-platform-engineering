@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { createInAppNotification } from "@/lib/in-app-notifications.server";
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
-import { sendExternalNotification } from "./adapters.server";
+import { EXTERNAL_NOTIFICATION_TIMEOUT_MS, sendExternalNotification } from "./adapters.server";
 import {
   notificationKey,
   deliveryAllowed,
@@ -20,6 +20,8 @@ export type {
 } from "./delivery-types";
 interface BrowserPushDevice { _id: string; subject: string; expiresAt: Date; }
 type QueuedDelivery = NotificationDelivery;
+
+const DELIVERY_LEASE_MS = 60_000;
 
 interface NotificationJob extends NotificationDispatch {
   _id: string;
@@ -125,7 +127,7 @@ export async function runNotificationDeliveriesOnce(): Promise<number> {
         $set: {
           status: "processing",
           leaseToken: token,
-          leaseUntil: new Date(Date.now() + 60_000),
+          leaseUntil: new Date(Date.now() + DELIVERY_LEASE_MS),
           updatedAt: new Date(),
         },
         $inc: { attempts: 1 },
@@ -177,7 +179,21 @@ export async function runNotificationDeliveriesOnce(): Promise<number> {
               eventType: delivery.eventType,
               retentionDays: delivery.retentionDays,
             });
-          } else await sendExternalNotification(delivery);
+          } else {
+            // Consent and quiet-hours checks can outlive the original claim.
+            // Start a send only while we still own enough time for its deadline.
+            const checkedAt = new Date();
+            const leaseUntil = new Date(checkedAt.getTime() + DELIVERY_LEASE_MS);
+            const renewed = await deliveries.updateOne(
+              { _id: delivery._id, leaseToken: token, leaseUntil: { $gt: checkedAt } },
+              { $set: { leaseUntil } },
+            );
+            if (
+              renewed.matchedCount === 0 ||
+              leaseUntil.getTime() - Date.now() <= EXTERNAL_NOTIFICATION_TIMEOUT_MS
+            ) continue;
+            await sendExternalNotification(delivery);
+          }
         }
       await deliveries.updateOne(
         { _id: delivery._id, leaseToken: token },

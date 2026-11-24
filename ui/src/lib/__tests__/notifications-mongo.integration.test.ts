@@ -1,5 +1,7 @@
 /** @jest-environment node */
 
+import { createInAppNotification, listInAppNotifications, markAllInAppNotificationsRead, markInAppNotificationRead } from "@/lib/in-app-notifications.server";
+import { notificationEventKey, type NotificationEnvelope } from "@/lib/notifications/envelope";
 import { runNotificationDeliveriesOnce } from "@/lib/notifications/delivery.server";
 import { notificationKey } from "@/lib/notifications/subscriptions.server";
 
@@ -22,7 +24,7 @@ const EMAIL = "test-verify-user@example.com";
 const SUBJECT = "test-verify-subject";
 const PREFIX = "test-verify:";
 
-function envelope(attempt: string) {
+function envelope(attempt: string): NotificationEnvelope {
   return {
     id: `${PREFIX}evt-${attempt}`,
     type: "workflow.completed",
@@ -49,7 +51,7 @@ async function publishAndRun(input: unknown) {
 function inboxKey(attempt: string) {
   return notificationKey(
     "platform",
-    `workflow.completed:workflow_run:${PREFIX}run:${attempt}:${SUBJECT}`,
+    notificationEventKey(envelope(attempt), SUBJECT),
     SUBJECT,
   );
 }
@@ -110,6 +112,37 @@ describeIfMongo("notification persistence against MongoDB", () => {
       event_key: inboxKey("a1"),
     } as never);
     expect(count).toBe(1);
+  });
+
+  it("shares app visibility across inbox reads and read markers, including legacy rows", async () => {
+    for (const entry of [
+      { eventKey: "app:example-app:legacy", title: "Allowed legacy" },
+      { eventKey: "app:example-app-extra:legacy", title: "Hidden legacy" },
+      { eventKey: "example-hidden", sourceId: "app:example-app-extra", title: "Hidden current" },
+      { eventKey: "example-app-event", sourceId: "app:example-app", eventType: "service.degraded", title: "Allowed current" },
+      { eventKey: "example-platform-event", sourceId: "platform", eventType: "service.degraded", title: "Hidden platform" },
+      { eventKey: "example-old-platform-event", eventType: "service.degraded", title: "Hidden legacy platform" },
+    ]) {
+      await createInAppNotification({ ...entry, message: "Example update", recipientUserSubjects: [SUBJECT] });
+    }
+    const view = { allowedAppSourceIds: ["app:example-app"], excludedEventTypes: ["service.degraded"] };
+    const page = await listInAppNotifications(SUBJECT, view);
+    const titles = page.notifications.map((notification) => notification.title);
+    expect(titles).toEqual(expect.arrayContaining(["Allowed legacy", "Allowed current"]));
+    expect(titles.filter((title) => title.startsWith("Hidden"))).toEqual([]);
+    const inbox = await getCollection<InAppNotificationDocument>("in_app_notifications");
+    const hidden = await inbox.findOne({ event_key: "app:example-app-extra:legacy" });
+    expect(hidden).not.toBeNull();
+    await expect(markInAppNotificationRead(SUBJECT, hidden!._id, view)).resolves.toBe(false);
+    await markAllInAppNotificationsRead(SUBJECT, view);
+    const restored = await listInAppNotifications(SUBJECT, {
+      ...view,
+      allowedAppSourceIds: ["app:example-app", "app:example-app-extra"],
+    });
+    expect(restored.notifications.filter((row) => row.title.startsWith("Hidden"))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ title: "Hidden current", read: false }),
+      expect.objectContaining({ title: "Hidden legacy", read: false }),
+    ]));
   });
 
   it("skips delivery once the user turns the category off, and resumes after reset", async () => {

@@ -19,6 +19,7 @@ jest.mock("@/lib/in-app-notifications.server", () => ({
   createInAppNotification: (...args: unknown[]) => mockCreateInbox(...args),
 }));
 jest.mock("@/lib/notifications/adapters.server", () => ({
+  ...jest.requireActual("@/lib/notifications/adapters.server"),
   sendExternalNotification: (...args: unknown[]) => mockExternal(...args),
 }));
 jest.mock("@/lib/notifications/subscriptions.server", () => ({
@@ -155,6 +156,21 @@ run("durable notification deliveries against MongoDB", () => {
         .countDocuments({ status: "pending", attempts: 0 }),
     ).toBe(2);
   });
+  it("does not send when the claim expired during authorization", async () => {
+    await enqueueNotification({ ...input, channels: ["slack"] });
+    mockAllowed.mockImplementationOnce(async () => {
+      await mockDb.collection("notification_deliveries").updateOne(
+        { channel: "slack" },
+        { $set: { leaseUntil: new Date(0) } },
+      );
+      return true;
+    });
+    await runNotificationDeliveriesOnce();
+    expect(mockExternal).not.toHaveBeenCalled();
+    await runNotificationDeliveriesOnce();
+    expect(mockExternal).toHaveBeenCalledTimes(1);
+  });
+
   it("fences a stale worker after its lease expires", async () => {
     await enqueueNotification({ ...input, channels: ["slack"] });
     let rejectFirst: (reason: Error) => void = () => undefined;

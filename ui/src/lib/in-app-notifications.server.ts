@@ -15,6 +15,18 @@ import type {
 
 const NOTIFICATION_COLLECTION = "in_app_notifications";
 
+type InboxVisibilityOptions = {
+  includePlatformNotifications?: boolean;
+  allowedAppSourceIds?: string[];
+  excludedEventTypes?: string[];
+};
+
+const LEGACY_APP_EVENT_KEY = /^app:/;
+
+function legacyAppKeyPrefix(sourceId: string): RegExp {
+  return new RegExp(`^${sourceId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:`);
+}
+
 function normalizedStrings(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort();
 }
@@ -26,7 +38,7 @@ function teamSlugFromObject(value: string): string | null {
 
 async function notificationAudienceQuery(
   subject: string,
-  options: { includePlatformNotifications?: boolean; allowedAppSourceIds?: string[]; excludedEventTypes?: string[] } = {},
+  options: InboxVisibilityOptions = {},
 ): Promise<Record<string, unknown>> {
   let teamSlugs: string[] = [];
   let organizationAdmin = false;
@@ -61,17 +73,35 @@ async function notificationAudienceQuery(
       adminResult.reason,
     );
   }
+  const visibility: Record<string, unknown>[] = [];
+  const withoutSource = { $exists: false };
+  if (options.allowedAppSourceIds) {
+    visibility.push({
+      $or: [
+        { source_id: "platform" },
+        { source_id: { $in: options.allowedAppSourceIds } },
+        { source_id: withoutSource, event_key: { $not: LEGACY_APP_EVENT_KEY } },
+        ...(options.allowedAppSourceIds.length ? [{
+          source_id: withoutSource,
+          event_key: { $in: options.allowedAppSourceIds.map(legacyAppKeyPrefix) },
+        }] : []),
+      ],
+    });
+  }
+  if (options.excludedEventTypes?.length) {
+    const eventType = { $in: options.excludedEventTypes };
+    visibility.push({
+      $nor: [
+        { source_id: "platform", event_type: eventType },
+        { source_id: withoutSource, event_key: { $not: LEGACY_APP_EVENT_KEY }, event_type: eventType },
+      ],
+    });
+  }
   return {
     archived_at: { $exists: false },
-    ...(options.allowedAppSourceIds ? { $and: [{ $or: [
-      { source_id: { $exists: false } }, { source_id: "platform" }, { source_id: { $in: options.allowedAppSourceIds } },
-    ] }] } : {}),
+    ...(visibility.length ? { $and: visibility } : {}),
     ...(options.includePlatformNotifications === false
       ? { category: { $ne: "platform_health" } }
-      : {}),
-    // Entries without an event_type (older rows, other producers) always show.
-    ...(options.excludedEventTypes && options.excludedEventTypes.length > 0
-      ? { event_type: { $nin: options.excludedEventTypes } }
       : {}),
     $or: [
       { recipient_user_subjects: subject },
@@ -214,12 +244,7 @@ export async function archiveInAppNotifications(
 
 export async function listInAppNotifications(
   subject: string,
-  options: {
-    page?: number;
-    pageSize?: number;
-    includePlatformNotifications?: boolean;
-    allowedAppSourceIds?: string[]; excludedEventTypes?: string[];
-  } = {},
+  options: InboxVisibilityOptions & { page?: number; pageSize?: number } = {},
 ): Promise<InAppNotificationPage> {
   const collection = await getCollection<InAppNotificationDocument>(
     NOTIFICATION_COLLECTION,
@@ -273,7 +298,7 @@ export async function listInAppNotifications(
 export async function markInAppNotificationRead(
   subject: string,
   id: string,
-  options: { includePlatformNotifications?: boolean; allowedAppSourceIds?: string[]; excludedEventTypes?: string[] } = {},
+  options: InboxVisibilityOptions = {},
 ): Promise<boolean> {
   const collection = await getCollection<InAppNotificationDocument>(
     NOTIFICATION_COLLECTION,
@@ -291,7 +316,7 @@ export async function markInAppNotificationRead(
 
 export async function markAllInAppNotificationsRead(
   subject: string,
-  options: { includePlatformNotifications?: boolean; allowedAppSourceIds?: string[]; excludedEventTypes?: string[] } = {},
+  options: InboxVisibilityOptions = {},
 ): Promise<number> {
   const collection = await getCollection<InAppNotificationDocument>(
     NOTIFICATION_COLLECTION,

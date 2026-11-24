@@ -1,5 +1,5 @@
 import { channelEnabled } from "@/lib/notifications/channels";
-import { readSourceSubscriptions } from "@/lib/notifications/subscriptions.server";
+import { allowedNotificationAppSourceIds, readSourceSubscriptions } from "@/lib/notifications/subscriptions.server";
 import { NOTIFICATION_EVENT_TYPES } from "@/lib/notifications/taxonomy";
 import { getCollection } from "@/lib/mongodb";
 import {
@@ -58,4 +58,17 @@ export async function inboxViewOptions(userEmail: string, subject?: string): Pro
     includePlatformNotifications: userSettings?.notifications?.platform_health !== false,
     excludedEventTypes: [...new Set(excluded)],
   };
+}
+
+/** Resolve the same preferences and app visibility for inbox reads and updates. */
+export async function inboxAccessOptions(
+  subject: string,
+  session: Record<string, unknown>,
+  user: { email: string; role?: string },
+): Promise<InboxViewOptions & { allowedAppSourceIds: string[] }> {
+  const [preferences, allowedAppSourceIds] = await Promise.all([
+    inboxViewOptions(user.email, subject),
+    allowedNotificationAppSourceIds(subject, session, user.role),
+  ]);
+  return { ...preferences, allowedAppSourceIds };
 }
