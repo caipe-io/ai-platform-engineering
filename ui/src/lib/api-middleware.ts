@@ -556,6 +556,12 @@ export function isBearerBaselineEligible(
   return hasRequiredGroup(extractGroups(identity.claims ?? {}));
 }
 
+/** The token's email only when the issuer marked it verified; never a username fallback. */
+export function verifiedBearerEmail(claims: Record<string, unknown> | undefined): string | undefined {
+  if (claims?.email_verified !== true || typeof claims.email !== 'string') return undefined;
+  return claims.email.trim().toLowerCase() || undefined;
+}
+
 /**
  * Authenticate via Bearer JWT token or NextAuth session (dual-auth).
  *
@@ -690,7 +696,7 @@ export async function getAuthFromBearerOrSession(
       // Bot users may never sign in to the web UI, where login writes this baseline.
       if (identity.sub && isBearerBaselineEligible(identity)) {
         const { ensureBearerUserBaselineAccess } = await import('@/lib/rbac/login-openfga-bootstrap');
-        await ensureBearerUserBaselineAccess(identity.sub, identity.email);
+        await ensureBearerUserBaselineAccess(identity.sub, verifiedBearerEmail(identity.claims));
       }
     }
     return {

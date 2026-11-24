@@ -102,16 +102,23 @@ async function teamOverridesForLogin(email: string | undefined): Promise<TeamBas
 /**
  * Like teamOverridesForLogin, but a lookup failure throws instead of reading as
  * "no overrides". Matches membership rows by verified subject and/or email.
+ * With a subject, email only matches rows not bound to any subject.
  */
 async function resolveTeamOverrides(identity: {
   subject?: string;
   email?: string;
 }): Promise<TeamBaselineProfileOverride[]> {
-  const identityFilters: Record<string, string>[] = [];
+  const identityFilters: Record<string, unknown>[] = [];
   const subject = identity.subject?.trim();
   if (subject) identityFilters.push({ user_subject: subject });
   const normalizedEmail = identity.email?.trim().toLowerCase();
-  if (normalizedEmail) identityFilters.push({ user_email: normalizedEmail });
+  if (normalizedEmail) {
+    identityFilters.push(
+      subject
+        ? { user_email: normalizedEmail, user_subject: { $in: [null, ""] } }
+        : { user_email: normalizedEmail }
+    );
+  }
   if (identityFilters.length === 0) return [];
 
   const sources = await getRbacCollection<TeamMembershipSource>("teamMembershipSources");
@@ -394,7 +401,7 @@ async function writeBearerUserBaseline(
   email: string | undefined
 ): Promise<LoginOpenFgaBootstrapResult> {
   try {
-    const bundle = await readBaselineFgaProfileBundle();
+    const bundle = await readBaselineFgaProfileBundle({ strictGlobalMemberProfile: true });
     const teamOverrides = await resolveTeamOverrides({ subject, email });
     const overrideIds = teamOverrides.flatMap((o) => o.member_profile_id?.trim() || []);
     for (const profileId of overrideIds.length > 0 ? overrideIds : [bundle.global_member_profile_id]) {
@@ -417,6 +424,7 @@ async function writeBearerUserBaseline(
  * Grant the member baseline to a bearer-token user, such as a Slack or Webex
  * user acting through an OBO token who never signed in to the web UI. Team
  * member-profile overrides apply as they do at login; admin grants never do.
+ * `email` must be a verified address from the token, never a username fallback.
  * Deduplicated per subject; a failed attempt is retried on the next request.
  */
 export function ensureBearerUserBaselineAccess(

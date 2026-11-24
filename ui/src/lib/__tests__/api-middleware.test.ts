@@ -1810,3 +1810,19 @@ describe('isBearerBaselineEligible', () => {
     expect(excluded(user)).toBe(false);
   });
 });
+
+describe('verifiedBearerEmail', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { verifiedBearerEmail } = require('../api-middleware') as typeof import('../api-middleware');
+
+  it('returns the normalized email when the issuer verified it', () => {
+    expect(verifiedBearerEmail({ email: ' User@Example.com ', email_verified: true })).toBe('user@example.com');
+  });
+
+  it('ignores unverified emails and username fallbacks', () => {
+    expect(verifiedBearerEmail({ email: 'user@example.com' })).toBeUndefined();
+    expect(verifiedBearerEmail({ email: 'user@example.com', email_verified: false })).toBeUndefined();
+    expect(verifiedBearerEmail({ preferred_username: 'user@example.com', email_verified: true })).toBeUndefined();
+    expect(verifiedBearerEmail(undefined)).toBeUndefined();
+  });
+});
