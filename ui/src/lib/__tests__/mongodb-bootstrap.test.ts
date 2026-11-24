@@ -77,19 +77,23 @@ it('batches every definition by collection and bounds concurrent DDL', async () 
   expect(overlappingBuilds).toBe(0);
   expect(peakCollections).toBeGreaterThan(1);
   expect(peakCollections).toBeLessThanOrEqual(8);
-  expect(mockCreateIndexes).toHaveBeenCalledTimes(30);
-  expect(mockCreateIndexes.mock.calls.reduce((count, [, indexes]) => count + indexes.length, 0)).toBe(107);
+  expect(mockCreateIndexes).toHaveBeenCalledTimes(35);
+  expect(mockCreateIndexes.mock.calls.reduce((count, [, indexes]) => count + indexes.length, 0)).toBe(117);
   expect(mockCreateIndex).not.toHaveBeenCalled();
   expect(console.error).not.toHaveBeenCalled();
   await api.connectToDatabase();
   expect(mockConnect).toHaveBeenCalledTimes(1);
-  expect(mockCreateIndexes).toHaveBeenCalledTimes(30);
+  expect(mockCreateIndexes).toHaveBeenCalledTimes(35);
 });
 
 it('preserves unique, TTL and compound-key options in batches', async () => {
   await warmup();
   expect(mockCreateIndexes).toHaveBeenCalledWith('users', expect.arrayContaining([
     { key: { email: 1 }, unique: true },
+  ]));
+  expect(mockCreateIndexes).toHaveBeenCalledWith('notification_deliveries', expect.arrayContaining([
+    { key: { status: 1, availableAt: 1 } },
+    { key: { expiresAt: 1 }, expireAfterSeconds: 0 },
   ]));
   expect(mockCreateIndexes).toHaveBeenCalledWith('auth_sessions', [
     { key: { expiresAt: 1 }, expireAfterSeconds: 0 },
