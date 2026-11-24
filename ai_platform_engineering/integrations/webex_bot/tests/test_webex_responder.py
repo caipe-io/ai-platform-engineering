@@ -1354,6 +1354,39 @@ def test_stream_preview_updates_are_coalesced(monkeypatch: pytest.MonkeyPatch) -
     assert api.updated[1]["markdown"].startswith("a" * 720 + "\n")
 
 
+def test_dispatcher_formats_complete_tables_but_persists_original_markdown() -> None:
+    source = (
+        "VPCs found:\n\n"
+        "| VPC ID | Region | Primary CIDR | Default | State |\n"
+        "|---|---|---|---|---|\n"
+        "| vpc-example-01 | region-a | [192.0.2.0/24](https://example.com/network) | Yes | available |\n"
+        "| vpc-example-02 | region-a | 198.51.100.0/24 | No | available |\n\n"
+        "That is the full list."
+    )
+    api = FakeWebexApi()
+    sse = FakeSseClient(events=[
+        SSEEvent(SSEEventType.TEXT_MESSAGE_CONTENT, delta="VPCs found:\n\n"),
+        SSEEvent(SSEEventType.TEXT_MESSAGE_CONTENT, delta=source.removeprefix("VPCs found:\n\n")),
+        SSEEvent(SSEEventType.RUN_FINISHED),
+    ])
+    dispatcher = WebexThreadedStreamDispatcher(
+        webex_api=api, sse_client=sse, update_every_chars=1, update_interval_seconds=0,
+        thread_owner_cache=ThreadOwnerCache(),
+    )
+
+    dispatcher._dispatch_sync({
+        "space_id": "example-space", "webex_room_id": "example-room", "message_id": "example-message",
+        "text": "list vpcs", "agent_id": "example-agent", "obo_token": "example-token",
+    })
+
+    delivered = [record["markdown"] for record in [*api.created, *api.updated]]
+    assert any("```text" in body and "VPC ID" in body for body in delivered)
+    assert all("|---|---|---|---|---|" not in body for body in delivered)
+    assert "https://example.com/network" not in api.updated[-1]["markdown"]
+    assert "vpc-example-02" in api.updated[-1]["markdown"]
+    assert sse.messages[-1]["content"] == source
+
+
 @pytest.mark.parametrize("base", ["", "https://user:secret@example.com", "https://example.com?token=secret", "https://example.com:bad", "https://example.com/a b"])
 def test_full_response_url_rejects_invalid_public_origins(monkeypatch: pytest.MonkeyPatch, base: str) -> None:
     monkeypatch.setenv("CAIPE_UI_BASE_URL", base)
