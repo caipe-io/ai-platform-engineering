@@ -15,6 +15,7 @@ import {
 import { GuardedNavigationLink } from "@/components/layout/GuardedNavigationLink";
 import {
   CollapsedNavigationFlyout,
+  WorkspaceNavigationList,
   WorkspaceRailToggle,
 } from "@/components/layout/WorkspaceNavigation";
 import { useWorkspaceRail } from "@/components/layout/WorkspaceRailContext";
@@ -47,7 +48,7 @@ import { KNOWLEDGE_NAV_ITEMS } from "@/components/rag/KnowledgeSidebar";
 import { PERSONAL_SETTINGS_ROUTES } from "@/components/settings/settings-routes";
 import { BrandLogo } from "@/components/brand/BrandLogo";
 import { config } from "@/lib/config";
-import type { PublicAgenticApp } from "@/types/agentic-app";
+import type { AgenticAppNavigationSection,PublicAgenticApp } from "@/types/agentic-app";
 import { cn } from "@/lib/utils";
 import { resolveChatNavigationPath,useChatStore } from "@/store/chat-store";
 import { motion,useReducedMotion } from "framer-motion";
@@ -73,7 +74,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useSession } from "next-auth/react";
-import { usePathname } from "next/navigation";
+import { usePathname,useSearchParams } from "next/navigation";
 import React from "react";
 
 interface ApplicationNavigationItem {
@@ -84,6 +85,7 @@ interface ApplicationNavigationItem {
   key: string;
   label: string;
   utility?: boolean;
+  sections?: AgenticAppNavigationSection[];
 }
 
 const APP_NAVIGATION_ICONS: Record<string, LucideIcon> = {
@@ -158,6 +160,29 @@ function ChatActivityBadge({
   );
 }
 
+function AppSectionNavigation({ label,sections,icon }: {
+  label: string;
+  sections: AgenticAppNavigationSection[];
+  icon: LucideIcon;
+}): React.ReactElement {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const currentPathSections = sections.filter(({ href }) => href.split("?", 1)[0] === pathname);
+  const activeSection = currentPathSections.find(({ href }) => {
+    const queryStart = href.indexOf("?");
+    return queryStart !== -1 && Array.from(new URLSearchParams(href.slice(queryStart + 1)))
+      .every(([key, value]) => searchParams?.get(key) === value);
+  }) ?? currentPathSections.find(({ href }) => !href.includes("?"));
+
+  return (
+    <WorkspaceNavigationList
+      activeItemId={activeSection?.href ?? ""}
+      ariaLabel={`${label} sections`}
+      groups={[{ id: "sections", items: sections.map(section => ({ ...section, id: section.href, icon })) }]}
+    />
+  );
+}
+
 function ApplicationNavigationContents({
   collapsed,
   layoutScope,
@@ -172,6 +197,7 @@ function ApplicationNavigationContents({
   layoutScope: "rail" | "drawer";
 }): React.ReactElement {
   const contextualNavigationId = React.useId();
+  const [closedAppSections,setClosedAppSections] = React.useState<Set<string>>(() => new Set());
   const pathname = usePathname();
   const hydrated = useHydrated();
   const shouldReduceMotion = useReducedMotion();
@@ -235,6 +261,7 @@ function ApplicationNavigationContents({
     href: app.navigation!.href,
     label: app.navigation!.label,
     icon: APP_NAVIGATION_ICONS[app.navigation!.icon ?? "layout-grid"] ?? LayoutGrid,
+    sections: app.navigation!.sections,
   }));
   const projectsClaimedByExtension = sessionStatus === "authenticated" && navigationCatalog?.identity === identity &&
     navigationCatalog.hostPaths.some(path => path === "/projects");
@@ -450,7 +477,12 @@ function ApplicationNavigationContents({
           // Admin pages cross server-component route boundaries. Keep the
           // shell-owned navigation mounted so those transitions cannot replay
           // the disclosure animation while page registration is replaced.
-          const contextualNavigation = item.key === "admin"
+          const appSections = item.sections?.length ? item.sections : undefined;
+          const contextualNavigation = appSections ? (
+            <React.Suspense fallback={null}>
+              <AppSectionNavigation icon={Icon} label={item.label} sections={appSections} />
+            </React.Suspense>
+          ) : item.key === "admin"
             ? builtInSectionNavigation
             : registeredContextualNavigation && active
               ? registeredContextualNavigation
@@ -458,7 +490,9 @@ function ApplicationNavigationContents({
           const hasSectionNavigation =
             !item.disabled && Boolean(contextualNavigation);
           const contextExpanded =
-            hasSectionNavigation && expandedArea === item.key;
+            hasSectionNavigation && (appSections
+              ? !closedAppSections.has(item.key)
+              : expandedArea === item.key);
           const chatBadge = item.key === "chat" ? (
             <ChatActivityBadge
               inputRequired={inputRequiredConversations.size}
@@ -547,6 +581,15 @@ function ApplicationNavigationContents({
           }
 
           const toggleContext = () => {
+            if (appSections) {
+              setClosedAppSections(current => {
+                const next = new Set(current);
+                if (next.has(item.key)) next.delete(item.key);
+                else next.add(item.key);
+                return next;
+              });
+              return;
+            }
             setExpansionPreference({
               activeArea,
               expandedArea: contextExpanded ? null : item.key,
@@ -592,7 +635,7 @@ function ApplicationNavigationContents({
           ) : hasSectionNavigation && !collapsed ? (
             <button
               aria-controls={`${contextualNavigationId}-${item.key}`}
-              aria-current={active ? "page" : undefined}
+              aria-current={active && !appSections ? "page" : undefined}
               aria-expanded={contextExpanded}
               className={className}
               onClick={toggleContext}
@@ -647,7 +690,7 @@ function ApplicationNavigationContents({
                   aria-hidden={!contextExpanded}
                   className={cn(
                     "grid",
-                    hasUserExpansionPreference
+                    (appSections || hasUserExpansionPreference)
                       && "transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none",
                     contextExpanded
                       ? "grid-rows-[1fr] opacity-100"

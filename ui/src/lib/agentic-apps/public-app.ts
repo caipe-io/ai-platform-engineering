@@ -12,6 +12,12 @@ export function buildPublicAgenticApp(
   canLaunch: boolean,
 ): PublicAgenticApp {
   const icon = resolveAgenticAppIcon(app.manifest.id, app.manifest.catalog?.icon);
+  const href = agenticAppEntryHref(app);
+  const hostPaths = agenticAppHostPaths(app);
+  const navigationRoots = hostPaths.length ? hostPaths : [href];
+  const sections = canLaunch ? app.installation.navigationOverrides?.sections?.filter(
+    ({ href }) => navigationRoots.some(root => ownsAppPath(root, href.split("?", 1)[0])),
+  ) : undefined;
   return {
     appId: app.installation.appId,
     feedbackEnabled: Boolean(app.installation.feedbackPath || app.installation.feedbackGitHub),
@@ -26,15 +32,16 @@ export function buildPublicAgenticApp(
     ...(app.manifest.ui.navigation && app.installation.navigationOverrides?.visible !== false ? {
       navigation: {
         label: app.installation.navigationOverrides?.label ?? app.manifest.ui.navigation.label,
-        href: agenticAppEntryHref(app),
+        href,
         icon: app.manifest.ui.navigation.icon,
         order: app.installation.navigationOverrides?.order ?? app.manifest.surfaces.navOrder,
+        ...(sections?.length ? { sections } : {}),
       },
     } : {}),
     displayName: app.manifest.displayName,
     ...(icon ? { icon } : {}),
     description: app.manifest.description,
-    href: agenticAppEntryHref(app),
+    href,
     canLaunch,
     blockedReasons: canLaunch ? [] : ["unauthorized"],
     categories: app.manifest.catalog?.categories ?? [],
@@ -42,7 +49,7 @@ export function buildPublicAgenticApp(
     uiMode: app.manifest.ui.profiles.find(
       (profile) => profile.id === app.installation.selectedUiProfile,
     )?.mode,
-    hostPaths: agenticAppHostPaths(app),
+    hostPaths,
   };
 }
 

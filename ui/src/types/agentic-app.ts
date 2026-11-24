@@ -69,7 +69,12 @@ export interface AgenticAppInstallation {
   feedbackFeatures?: string[];
   /** Server-owned GitHub handler; never accepts repository or token selection from a request. */
   feedbackGitHub?: { repository: string; tokenEnv: string; screenshotsRepository?: string; label?: string; style?: import("@/lib/feedback-issue-style").FeedbackIssueStyle };
-  navigationOverrides?: { visible?: boolean; label?: string; order?: number };
+  navigationOverrides?: {
+    visible?: boolean;
+    label?: string;
+    order?: number;
+    sections?: AgenticAppNavigationSection[];
+  };
   accessOverrides?: {
     requiredRoles?: string[];
   };
@@ -78,6 +83,11 @@ export interface AgenticAppInstallation {
 export interface ConfiguredAgenticApp {
   manifest: AgenticAppManifest;
   installation: AgenticAppInstallation;
+}
+
+export interface AgenticAppNavigationSection {
+  label: string;
+  href: string;
 }
 
 export interface PublicAgenticApp {
@@ -92,7 +102,13 @@ export interface PublicAgenticApp {
   capabilities: string[];
   uiMode?: "native-package" | "iframe";
   hostPaths?: string[];
-  navigation?: { label: string; href: string; icon?: "book-open" | "folder-kanban" | "layout-grid"; order?: number };
+  navigation?: {
+    label: string;
+    href: string;
+    icon?: "book-open" | "folder-kanban" | "layout-grid";
+    order?: number;
+    sections?: AgenticAppNavigationSection[];
+  };
   assistantOptions?: import("../../app-sdk/assistant-options.mjs").AssistantOptions;
   assistantOverlay?: "host" | "app";
   feedbackEnabled?: boolean;
