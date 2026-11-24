@@ -1,7 +1,7 @@
 /** @jest-environment node */
 
 type IndexKeys = Record<string, 1 | -1>;
-type IndexOptions = { unique?: boolean; expireAfterSeconds?: number };
+type IndexOptions = { unique?: boolean; expireAfterSeconds?: number; sparse?: boolean };
 type IndexSpec = IndexOptions & { key: IndexKeys };
 const mockCreateIndexes = jest.fn<Promise<string[]>, [string, IndexSpec[]]>();
 const mockCreateIndex = jest.fn<Promise<string>, [string, IndexKeys, IndexOptions]>();
@@ -78,7 +78,7 @@ it('batches every definition by collection and bounds concurrent DDL', async () 
   expect(peakCollections).toBeGreaterThan(1);
   expect(peakCollections).toBeLessThanOrEqual(8);
   expect(mockCreateIndexes).toHaveBeenCalledTimes(35);
-  expect(mockCreateIndexes.mock.calls.reduce((count, [, indexes]) => count + indexes.length, 0)).toBe(117);
+  expect(mockCreateIndexes.mock.calls.reduce((count, [, indexes]) => count + indexes.length, 0)).toBe(118);
   expect(mockCreateIndex).not.toHaveBeenCalled();
   expect(console.error).not.toHaveBeenCalled();
   await api.connectToDatabase();
@@ -94,6 +94,9 @@ it('preserves unique, TTL and compound-key options in batches', async () => {
   expect(mockCreateIndexes).toHaveBeenCalledWith('notification_deliveries', expect.arrayContaining([
     { key: { status: 1, availableAt: 1 } },
     { key: { expiresAt: 1 }, expireAfterSeconds: 0 },
+  ]));
+  expect(mockCreateIndexes).toHaveBeenCalledWith('in_app_notifications', expect.arrayContaining([
+    { key: { callback_marker: 1 }, sparse: true },
   ]));
   expect(mockCreateIndexes).toHaveBeenCalledWith('auth_sessions', [
     { key: { expiresAt: 1 }, expireAfterSeconds: 0 },

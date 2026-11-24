@@ -55,7 +55,7 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
   } else if (eventType !== "*")
     throw new ApiError("Select a source before an event", 400);
   const patch = parseSubscriptionPatch(rawPatch);
-  if (sourceId === "*" && patch.channels) {
+  if (patch.channels) {
     await validateNotificationChannelChoices(subject, patch.channels);
   }
 
@@ -68,16 +68,20 @@ export const PATCH = withErrorHandler(async (request: NextRequest) => {
     await updateNotificationPreferences(user.email, {
       events: { [eventType]: enabled },
     });
-    if (Object.keys(subscriptionPatch).length > 0) {
-      try {
-        await writeSubscription(subject, sourceId, eventType, subscriptionPatch);
-      } catch (error) {
-        throw Object.assign(new ApiError(
-          "The event preference was saved. Other notification settings could not be confirmed. Reload and try again.",
-          503,
-          "NOTIFICATION_SUBSCRIPTION_PARTIAL_SAVE",
-        ), { cause: error });
+    try {
+      // An explicit opt-in must clear an older event-level opt-out as well.
+      const restoreEvent =
+        enabled && (await readSubscription(subject, sourceId, eventType))?.enabled === false;
+      const update = restoreEvent ? { ...subscriptionPatch, enabled: true } : subscriptionPatch;
+      if (Object.keys(update).length > 0) {
+        await writeSubscription(subject, sourceId, eventType, update);
       }
+    } catch (error) {
+      throw Object.assign(new ApiError(
+        "The event preference was saved. Other notification settings could not be confirmed. Reload and try again.",
+        503,
+        "NOTIFICATION_SUBSCRIPTION_PARTIAL_SAVE",
+      ), { cause: error });
     }
     return successResponse({ saved: true });
   }

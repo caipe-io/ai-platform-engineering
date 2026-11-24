@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 
 import { ApiError, getAuthFromBearerOrSession, successResponse, withErrorHandler } from "@/lib/api-middleware";
+import { readNotificationJson } from "@/lib/notifications/http.server";
 import { publishNotificationEvent } from "@/lib/notifications/consumer.server";
 import { isNotificationEventType, NOTIFICATION_EVENT_CATALOG } from "@/lib/notifications/taxonomy";
 import { NextRequest } from "next/server";
@@ -36,19 +37,13 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
     throw new ApiError("Your session has expired. Please sign in again.", 401);
   }
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    throw new ApiError("Request body must be JSON", 400, "INVALID_JSON");
-  }
-  const type = (body as { type?: unknown } | null)?.type;
-  if (!isNotificationEventType(type)) {
-    throw new ApiError("type must be a known notification event type", 400, "INVALID_EVENT_TYPE");
-  }
-
   if (!withinRateLimit(subject, Date.now())) {
     throw new ApiError("Too many test notifications. Try again in a minute.", 429, "RATE_LIMITED");
+  }
+
+  const { type } = await readNotificationJson(request);
+  if (!isNotificationEventType(type)) {
+    throw new ApiError("type must be a known notification event type", 400, "INVALID_EVENT_TYPE");
   }
 
   const definition = NOTIFICATION_EVENT_CATALOG[type];

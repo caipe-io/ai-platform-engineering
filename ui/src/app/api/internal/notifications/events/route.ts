@@ -12,6 +12,8 @@
 
 import { timingSafeEqual } from "crypto";
 
+import { ApiError } from "@/lib/api-error";
+import { readNotificationJson } from "@/lib/notifications/http.server";
 import { publishNotificationRequest } from "@/lib/notifications/fanout.server";
 import { parseNotificationEventRequest } from "@/lib/notifications/request";
 import { NextRequest } from "next/server";
@@ -43,8 +45,11 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   let body: unknown;
   try {
-    body = await request.json();
-  } catch {
+    body = await readNotificationJson(request);
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return Response.json({ error: error.message }, { status: error.statusCode });
+    }
     return Response.json({ error: "Request body must be JSON" }, { status: 400 });
   }
 

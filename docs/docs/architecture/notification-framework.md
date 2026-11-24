@@ -49,3 +49,22 @@ CAIPE 1.4.0 adds event and preference contracts for the existing inbox.
 - Direct publishing persists delivery jobs and reports failures explicitly. Publication failure must not fail the originating task.
 - `NOTIFICATIONS_INTERNAL_TOKEN` enables the internal endpoint; producers are added separately.
 - Selecting `NOTIFICATIONS_TRANSPORT=jetstream` before its optional implementation is installed fails publication explicitly; it never falls back to direct delivery.
+
+## Registered app publishing
+
+- `POST /api/notifications` accepts registered event types from the installed, bound app service account.
+- Canonical recipients, bounded request bodies and per-app/per-recipient quotas protect the queue.
+- Successful queue acceptance returns 202; legacy unregistered app publishing retains its existing inbox response.
+- Publishers remain responsible for resource-specific recipients until host resource-level CAS checks are integrated.
+
+## Recipient-bound callback navigation
+
+- Inbox links use an opaque recipient-bound marker. Sign-in returns to the exact destination, including query and anchor.
+- Resolution checks owner, expiry and current app launch access. Markers grant no resource access.
+- Resource-level CAS rechecks remain required before production for resource-backed events. Legacy direct links remain supported.
+
+## Area preference shortcuts
+
+- A reusable area toggle reads and updates the authenticated event preference API.
+- Category choices and event defaults remain consistent with the shared catalog.
+- Producer pages add their own area control independently. Full app/event delivery settings are a separate review unit.

@@ -16,7 +16,7 @@ export interface ResolvedAudience {
   recipients: ResolvedRecipient[];
   /** Recipients dropped because no user record matched them. */
   skipped: number;
-  /** Recipients rejected because the supplied subject and email name different users. */
+  /** Recipients rejected because their identifiers disagree or are ambiguous. */
   rejected: number;
 }
 
@@ -58,35 +58,20 @@ export async function resolveRecipients(
   }
 
   const users = await getCollection<UserLookup>("users");
-  const subjects = wanted
-    .map((ref) => ref.subject)
-    .filter((v): v is string => Boolean(v));
-  const emails = wanted
-    .map((ref) => ref.email)
-    .filter((v): v is string => Boolean(v));
+  const subjects = new Set(
+    wanted.map((ref) => ref.subject).filter((v): v is string => Boolean(v)),
+  );
+  const emails = new Set(
+    wanted.map((ref) => ref.email).filter((v): v is string => Boolean(v)),
+  );
+  const emailMatches = emails.size
+    ? await users.find({ email: { $in: [...emails].map(exactEmailPattern) } }).toArray()
+    : [];
 
-  const matches =
-    subjects.length > 0 || emails.length > 0
-      ? await users
-          .find({
-            $or: [
-              ...(subjects.length > 0
-                ? [
-                    { keycloak_sub: { $in: subjects } },
-                    { "metadata.keycloak_sub": { $in: subjects } },
-                  ]
-                : []),
-              ...(emails.length > 0 ? [{ email: { $in: emails.map(exactEmailPattern) } }] : []),
-            ],
-          } as never)
-          .toArray()
-      : [];
-
-  const bySubject = new Map<string, UserLookup>();
   const byEmail = new Map<string, UserLookup | null>();
-  for (const user of matches) {
+  for (const user of emailMatches) {
     const subject = subjectOf(user);
-    if (subject) bySubject.set(subject, user);
+    if (subject) subjects.add(subject);
     if (user.email) {
       const email = user.email.toLowerCase();
       const previous = byEmail.get(email);
@@ -98,43 +83,49 @@ export async function resolveRecipients(
     }
   }
 
+  // An email lookup can miss another record with the same subject. Verify
+  // every candidate subject in a single query before accepting any match.
+  const subjectIds = [...subjects];
+  const subjectMatches = subjectIds.length
+    ? await users.find({
+        $or: [
+          { keycloak_sub: { $in: subjectIds } },
+          { "metadata.keycloak_sub": { $in: subjectIds } },
+        ],
+      }).toArray()
+    : [];
+  const bySubject = new Map<string, UserLookup | null>();
+  for (const user of subjectMatches) {
+    const subject = subjectOf(user);
+    if (subject) bySubject.set(subject, bySubject.has(subject) ? null : user);
+  }
+
   const resolved = new Map<string, ResolvedRecipient>();
   let skipped = 0;
   let rejected = 0;
   for (const ref of wanted) {
-    const bySubjectMatch = ref.subject ? bySubject.get(ref.subject) : undefined;
     const byEmailMatch = ref.email
       ? byEmail.get(ref.email.toLowerCase())
       : undefined;
+    const subject = ref.subject || (byEmailMatch ? subjectOf(byEmailMatch) : undefined);
+    const bySubjectMatch = subject ? bySubject.get(subject) : undefined;
 
-    if (byEmailMatch === null) {
+    if (bySubjectMatch === null || byEmailMatch === null) {
       rejected += 1;
       continue;
     }
-    if (ref.subject && ref.email) {
-      // A complete pair is only trusted when both halves find the same user.
-      if (
-        bySubjectMatch &&
-        byEmailMatch &&
-        !sameUser(bySubjectMatch, byEmailMatch)
-      ) {
-        console.warn(
-          "[notifications] rejected recipient: subject and email belong to different users",
-        );
-        rejected += 1;
-        continue;
-      }
-      if (!bySubjectMatch || !byEmailMatch) {
-        // One half matches a user and the other does not (or neither does).
-        if (bySubjectMatch || byEmailMatch) rejected += 1;
-        else skipped += 1;
-        continue;
-      }
+    if (bySubjectMatch && byEmailMatch && !sameUser(bySubjectMatch, byEmailMatch)) {
+      console.warn("[notifications] rejected recipient: subject and email no longer match");
+      rejected += 1;
+      continue;
+    }
+    if (ref.subject && ref.email && (!bySubjectMatch || !byEmailMatch)) {
+      if (bySubjectMatch || byEmailMatch) rejected += 1;
+      else skipped += 1;
+      continue;
     }
 
-    const user = bySubjectMatch ?? byEmailMatch;
-    const subject = user ? subjectOf(user) : undefined;
-    const email = user?.email;
+    const email = bySubjectMatch?.email;
     if (!subject || !email) {
       skipped += 1;
       continue;

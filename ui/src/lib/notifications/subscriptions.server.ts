@@ -248,6 +248,12 @@ export async function writeSubscription(
   );
 }
 
+async function notificationRealmRoles(subject: string): Promise<string[]> {
+  // Platform administrator access still requires a session.
+  const mappings = await listRealmRoleMappingsForUser(subject, true);
+  return mappings.map((mapping) => mapping.name).filter((name) => name !== "admin");
+}
+
 export async function allowedNotificationAppSourceIds(
   subject: string,
   session: Record<string, unknown>,
@@ -255,10 +261,8 @@ export async function allowedNotificationAppSourceIds(
 ): Promise<string[]> {
   const context = agenticAppUserContextFromSession(session, role);
   if (session.authMethod === "bearer" && session.principalType === "oidc_user") {
-    // Bearer sessions do not carry realm roles. App-specific roles are read
-    // from Keycloak; the platform administrator role still requires a session.
-    const mappings = await listRealmRoleMappingsForUser(subject, true);
-    context.roles = mappings.map((mapping) => mapping.name).filter((name) => name !== "admin");
+    // Bearer sessions do not carry realm roles.
+    context.roles = await notificationRealmRoles(subject);
   }
   return loadConfiguredAgenticApps()
     .filter((app) => canLaunchAgenticApp(app, context))
@@ -300,20 +304,23 @@ export async function listNotificationSources(
     subscription: byKey.get(notificationKey(subject, source._id, "*")) ?? {
       enabled: source._id === "platform",
     },
-    events: source.events.map((event) => ({
-      ...event,
-      subscription: {
-        ...byKey.get(notificationKey(subject, source._id, event.id)),
-        ...(source._id === "platform" && isNotificationEventType(event.id)
-          ? {
-              enabled: isNotificationEnabled(
-                event.id,
-                settings?.notification_preferences,
-              ),
-            }
-          : {}),
-      },
-    })),
+    events: source.events.map((event) => {
+      const subscription = byKey.get(notificationKey(subject, source._id, event.id));
+      return {
+        ...event,
+        subscription: {
+          ...subscription,
+          ...(source._id === "platform" && isNotificationEventType(event.id)
+            ? {
+                enabled: subscription?.enabled !== false && isNotificationEnabled(
+                  event.id,
+                  settings?.notification_preferences,
+                ),
+              }
+            : {}),
+        },
+      };
+    }),
   }));
 }
 
@@ -380,11 +387,14 @@ export async function deliveryAllowed(
     if (!app || !user) return false;
     const [identity, roles] = await Promise.all([
       getRealmUserById(subject),
-      listRealmRoleMappingsForUser(subject, true),
+      notificationRealmRoles(subject),
     ]);
     if (
       identity.enabled === false ||
-      !canLaunchAgenticApp(app, { roles: roles.map((role) => role.name) })
+      // Sign-in assigns every authenticated person the baseline user role;
+      // it need not exist as an explicit realm-role mapping. Never infer an
+      // admin/custom role from the cached user document at delivery time.
+      !canLaunchAgenticApp(app, { role: "user", roles })
     )
       return false;
     const registration = await getNotificationSource(sourceId);

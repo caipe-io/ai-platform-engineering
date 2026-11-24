@@ -39,9 +39,30 @@ const baseEvent = {
 const alice = { email: "alice@example.com", keycloak_sub: "sub-alice" };
 const bob = { email: "bob@example.com", metadata: { keycloak_sub: "sub-bob" } };
 
+type UserRow = {
+  email: string;
+  keycloak_sub?: string;
+  metadata?: { keycloak_sub?: string };
+};
+type UserFieldFilter = {
+  email?: { $in: RegExp[] };
+  keycloak_sub?: { $in: string[] };
+  "metadata.keycloak_sub"?: { $in: string[] };
+};
+
+function useUserRecords(...records: UserRow[]) {
+  mockFind.mockImplementation(async (query: UserFieldFilter & { $or?: UserFieldFilter[] }) =>
+    records.filter((user) => (query.$or ?? [query]).some((clause) =>
+      clause.email?.$in.some((pattern) => pattern.test(user.email)) ||
+      (user.keycloak_sub && clause.keycloak_sub?.$in.includes(user.keycloak_sub)) ||
+      (user.metadata?.keycloak_sub && clause["metadata.keycloak_sub"]?.$in.includes(user.metadata.keycloak_sub)),
+    )),
+  );
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
-  mockFind.mockResolvedValue([alice, bob]);
+  useUserRecords(alice, bob);
   mockReadTuples.mockResolvedValue({ tuples: [] });
   mockPublishEvent.mockResolvedValue("delivered");
 });
@@ -161,20 +182,42 @@ describe("recipient resolution", () => {
   it("looks up an email-only recipient case-insensitively and matches literal punctuation", async () => {
     const matched = { email: "alice+ops@example.com", keycloak_sub: "sub-alice" };
     const similar = { email: "aliceops@example.com", keycloak_sub: "sub-similar" };
-    mockFind.mockImplementationOnce((query) => [matched, similar].filter((user) =>
-      query.$or.some((clause: { email?: { $in: RegExp[] } }) =>
-        clause.email?.$in.some((pattern) => pattern.test(user.email)),
-      ),
-    ));
+    useUserRecords(matched, similar);
     const audience = await resolveRecipients([{ email: "ALICE+OPS@EXAMPLE.COM" }], { includeOrgAdmins: false });
     expect(audience.recipients).toEqual([{ subject: "sub-alice", email: matched.email }]);
   });
 
   it("rejects ambiguous case-insensitive emails instead of selecting an account", async () => {
-    mockFind.mockResolvedValue([alice, { email: "ALICE@example.com", keycloak_sub: "sub-other" }]);
+    useUserRecords(alice, { email: "ALICE@example.com", keycloak_sub: "sub-other" });
     const audience = await resolveRecipients([{ email: "alice@example.com" }], { includeOrgAdmins: false });
     expect(audience.recipients).toEqual([]);
     expect(audience.rejected).toBe(1);
+  });
+
+  it("rejects a subject shared by records with different email addresses", async () => {
+    useUserRecords(alice, { ...alice, email: "previous@example.com" });
+    const audience = await resolveRecipients(
+      [{ subject: "sub-alice" }, { subject: "sub-alice", email: alice.email }],
+      { includeOrgAdmins: false },
+    );
+    expect(audience).toEqual({ recipients: [], skipped: 0, rejected: 2 });
+  });
+
+  it("rejects an email-only match when another record shares its subject", async () => {
+    useUserRecords(alice, bob, {
+      email: "previous@example.com",
+      metadata: { keycloak_sub: "sub-alice" },
+    });
+    const audience = await resolveRecipients(
+      [{ email: alice.email }, { email: bob.email }],
+      { includeOrgAdmins: false },
+    );
+    expect(audience).toEqual({
+      recipients: [{ subject: "sub-bob", email: bob.email }],
+      skipped: 0,
+      rejected: 1,
+    });
+    expect(mockFind).toHaveBeenCalledTimes(2);
   });
 
   it("accepts a consistent complete pair", async () => {
