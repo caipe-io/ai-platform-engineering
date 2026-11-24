@@ -1811,18 +1811,18 @@ describe('isBearerBaselineEligible', () => {
   });
 });
 
-describe('verifiedBearerEmail', () => {
+describe('bearerEmailClaim', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { verifiedBearerEmail } = require('../api-middleware') as typeof import('../api-middleware');
+  const { bearerEmailClaim } = require('../api-middleware') as typeof import('../api-middleware');
 
-  it('returns the normalized email when the issuer verified it', () => {
-    expect(verifiedBearerEmail({ email: ' User@Example.com ', email_verified: true })).toBe('user@example.com');
+  it('normalizes the email claim and reports verification', () => {
+    expect(bearerEmailClaim({ email: ' User@Example.com ', email_verified: true })).toEqual({ email: 'user@example.com', verified: true });
+    expect(bearerEmailClaim({ email: 'user@example.com' })).toEqual({ email: 'user@example.com', verified: false });
+    expect(bearerEmailClaim({ email: 'user@example.com', email_verified: 'true' })).toEqual({ email: 'user@example.com', verified: false });
   });
 
-  it('ignores unverified emails and username fallbacks', () => {
-    expect(verifiedBearerEmail({ email: 'user@example.com' })).toBeUndefined();
-    expect(verifiedBearerEmail({ email: 'user@example.com', email_verified: false })).toBeUndefined();
-    expect(verifiedBearerEmail({ preferred_username: 'user@example.com', email_verified: true })).toBeUndefined();
-    expect(verifiedBearerEmail(undefined)).toBeUndefined();
+  it('never falls back to a username', () => {
+    expect(bearerEmailClaim({ preferred_username: 'user@example.com', email_verified: true })).toBeUndefined();
+    expect(bearerEmailClaim(undefined)).toBeUndefined();
   });
 });

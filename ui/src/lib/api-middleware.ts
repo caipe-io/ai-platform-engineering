@@ -556,10 +556,13 @@ export function isBearerBaselineEligible(
   return hasRequiredGroup(extractGroups(identity.claims ?? {}));
 }
 
-/** The token's email only when the issuer marked it verified; never a username fallback. */
-export function verifiedBearerEmail(claims: Record<string, unknown> | undefined): string | undefined {
-  if (claims?.email_verified !== true || typeof claims.email !== 'string') return undefined;
-  return claims.email.trim().toLowerCase() || undefined;
+/** The token's normalized `email` claim and whether the issuer verified it; never a username fallback. */
+export function bearerEmailClaim(
+  claims: Record<string, unknown> | undefined
+): { email: string; verified: boolean } | undefined {
+  if (typeof claims?.email !== 'string') return undefined;
+  const email = claims.email.trim().toLowerCase();
+  return email ? { email, verified: claims.email_verified === true } : undefined;
 }
 
 /**
@@ -696,7 +699,7 @@ export async function getAuthFromBearerOrSession(
       // Bot users may never sign in to the web UI, where login writes this baseline.
       if (identity.sub && isBearerBaselineEligible(identity)) {
         const { ensureBearerUserBaselineAccess } = await import('@/lib/rbac/login-openfga-bootstrap');
-        await ensureBearerUserBaselineAccess(identity.sub, verifiedBearerEmail(identity.claims));
+        await ensureBearerUserBaselineAccess(identity.sub, bearerEmailClaim(identity.claims));
       }
     }
     return {

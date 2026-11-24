@@ -396,12 +396,31 @@ const bearerBaselineCache = new Map<
   { promise: Promise<LoginOpenFgaBootstrapResult>; expiresAt: number }
 >();
 
+export interface BearerEmailClaim {
+  email: string;
+  verified: boolean;
+}
+
+async function hasUnboundEmailMembership(email: string): Promise<boolean> {
+  const sources = await getRbacCollection<TeamMembershipSource>("teamMembershipSources");
+  const rows = await sources
+    .find({ status: "active", user_email: email, user_subject: { $in: [null, ""] } })
+    .toArray();
+  return rows.length > 0;
+}
+
 async function writeBearerUserBaseline(
   subject: string,
-  email: string | undefined
+  emailClaim: BearerEmailClaim | undefined
 ): Promise<LoginOpenFgaBootstrapResult> {
   try {
     const bundle = await readBaselineFgaProfileBundle({ strictGlobalMemberProfile: true });
+    // An unverified email cannot select an override, so an email-only membership
+    // for it makes the effective profile unknown; defer rather than over-grant.
+    if (emailClaim && !emailClaim.verified && (await hasUnboundEmailMembership(emailClaim.email))) {
+      throw new Error("unverified email matches an email-only team membership");
+    }
+    const email = emailClaim?.verified ? emailClaim.email : undefined;
     const teamOverrides = await resolveTeamOverrides({ subject, email });
     const overrideIds = teamOverrides.flatMap((o) => o.member_profile_id?.trim() || []);
     for (const profileId of overrideIds.length > 0 ? overrideIds : [bundle.global_member_profile_id]) {
@@ -424,18 +443,19 @@ async function writeBearerUserBaseline(
  * Grant the member baseline to a bearer-token user, such as a Slack or Webex
  * user acting through an OBO token who never signed in to the web UI. Team
  * member-profile overrides apply as they do at login; admin grants never do.
- * `email` must be a verified address from the token, never a username fallback.
- * Deduplicated per subject; a failed attempt is retried on the next request.
+ * Only a verified token email selects email-only memberships; an unverified one
+ * that matches such a membership writes nothing. Deduplicated per subject; a
+ * failed attempt is retried on the next request.
  */
 export function ensureBearerUserBaselineAccess(
   subject: string,
-  email?: string
+  emailClaim?: BearerEmailClaim
 ): Promise<LoginOpenFgaBootstrapResult> {
   const key = subject.trim();
   const cached = bearerBaselineCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.promise;
 
-  const promise = writeBearerUserBaseline(key, email).then((result) => {
+  const promise = writeBearerUserBaseline(key, emailClaim).then((result) => {
     if (result.status === "failed") bearerBaselineCache.delete(key);
     return result;
   });
