@@ -327,9 +327,13 @@ class RunCoordinator:
             if run.status not in TERMINAL_RUN_STATUSES and not task.done() and not task.cancelling() and (binding is None or not binding.dispatch_started):
                 task.cancel()
             try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
-            except TimeoutError:
-                return await self._repository.get_run(run_id)
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
+                except TimeoutError:
+                    run = await self._repository.get_run(run_id)
+                    if run is None or run.status not in TERMINAL_RUN_STATUSES:
+                        return run
+                    await asyncio.shield(task)
             except asyncio.CancelledError:
                 if not task.done():
                     raise
