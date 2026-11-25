@@ -62,6 +62,7 @@ export function TokenExpiryGuard() {
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const redirectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const keepaliveIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const signOutInProgressRef = useRef(false);
   /** Tracks user dismissal — stores the expiresAt timestamp for which the warning was dismissed.
    *  This way, if the token is refreshed (new expiresAt), the warning can show again for the new cycle. */
   const dismissedForExpiryRef = useRef<number | null>(null);
@@ -92,6 +93,8 @@ export function TokenExpiryGuard() {
   // otherwise the login page sees "authenticated" status and bounces back,
   // creating an infinite redirect loop.
   const handleRelogin = useCallback(async () => {
+    if (signOutInProgressRef.current) return;
+    signOutInProgressRef.current = true;
     clearRedirectTimers();
     setShowWarning(false);
     setShowExpired(false);
@@ -100,7 +103,13 @@ export function TokenExpiryGuard() {
     if (typeof window !== 'undefined') {
       sessionStorage.setItem('token-expiry-handling', 'true');
     }
-    if (!await signOutWithFeedback({ callbackUrl: buildSessionExpiredLoginUrl() })) setShowExpired(true);
+    const callbackUrl = buildSessionExpiredLoginUrl();
+    if (await signOutWithFeedback({ callbackUrl, redirect: false })) {
+      window.location.assign(callbackUrl);
+    } else {
+      signOutInProgressRef.current = false;
+      setShowExpired(true);
+    }
   }, [clearRedirectTimers]);
 
   const beginLoginCountdown = useCallback((reason: "expired" | "refresh_failed") => {
@@ -182,9 +191,7 @@ export function TokenExpiryGuard() {
       return; // SSO not enabled
     }
 
-    if (status !== "authenticated" || !session) {
-      return; // Not authenticated
-    }
+    if (status !== "authenticated" || !session || signOutInProgressRef.current) return;
 
     // A storage/provider outage is retryable, not evidence that the login died.
     if (session.error === "SessionUnavailable") {
