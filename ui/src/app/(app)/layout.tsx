@@ -18,18 +18,19 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }): Promise<React.ReactElement> {
-  const sessionState = await requireApplicationSession();
-  if (sessionState === "unavailable") {
+  const applicationSession = await requireApplicationSession();
+  if (applicationSession.status === "unavailable") {
     return <main role="alert" className="p-6 text-center">
       <p>Sign-in services are temporarily unavailable. Your session has not been cleared.</p>
       <a className="underline" href="">Retry</a>
     </main>;
   }
-  if (sessionState === "authenticated" && process.env.APP_USAGE_ENABLED === "true") {
+  if (applicationSession.status === "authenticated" && process.env.APP_USAGE_ENABLED === "true") {
     const occurredAt = new Date();
+    const subject = applicationSession.subject;
     after(async () => {
       try {
-        await recordAppVisit(occurredAt);
+        await recordAppVisit(occurredAt, subject);
       } catch {
         // Analytics is best effort and never blocks admission or rendering.
         console.warn("[app-usage] Aggregate counter unavailable");
@@ -60,17 +61,22 @@ export default async function AppLayout({
  * preserves the deliberately opt-in local anonymous development provider;
  * production always fails closed, even if SSO_ENABLED is accidentally false.
  */
-async function requireApplicationSession(): Promise<"authenticated" | "anonymous" | "unavailable"> {
+type ApplicationSession =
+  | { status: "authenticated"; subject?: string }
+  | { status: "anonymous" }
+  | { status: "unavailable" };
+
+async function requireApplicationSession(): Promise<ApplicationSession> {
   const authRequired = process.env.NODE_ENV === "production" || getConfig("ssoEnabled");
-  if (!authRequired) return "anonymous";
+  if (!authRequired) return { status: "anonymous" };
 
   const session = await getServerSession(authOptions);
-  if (session?.error === 'SessionUnavailable') return "unavailable";
+  if (session?.error === 'SessionUnavailable') return { status: "unavailable" };
   if (!session || session.error || !session.user?.email) {
     redirect(buildLoginUrl((await headers()).get(AUTH_RETURN_TO_HEADER)));
   }
   if (session.isAuthorized === false) {
     redirect("/unauthorized");
   }
-  return "authenticated";
+  return { status: "authenticated", subject: session.sub };
 }

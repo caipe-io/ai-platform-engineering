@@ -184,6 +184,7 @@ export function UserDetailModal({
   const [profileError, setProfileError] = useState<string | null>(null);
   const [user, setUser] = useState<ProfileUser | null>(null);
   const [teamLabelDraft, setTeamLabelDraft] = useState("");
+  const teamLabelDraftDirty = useRef(false);
   const profileRequest = useRef(0);
   // Team picker options — use prop if provided, otherwise fetch
   const [teamOptionsLoading, setTeamOptionsLoading] = useState(!readOnly && !teamOptionsProp);
@@ -230,7 +231,9 @@ export function UserDetailModal({
     }
     if (requestId === profileRequest.current) {
       setUser(json.data.user);
-      setTeamLabelDraft(json.data.user.attributes?.team_label?.[0]?.trim() ?? "");
+      if (!teamLabelDraftDirty.current) {
+        setTeamLabelDraft(json.data.user.attributes?.team_label?.[0]?.trim() ?? "");
+      }
     }
   }, [userId, withPreviewScope]);
 
@@ -316,6 +319,11 @@ export function UserDetailModal({
 
   useEffect(() => {
     setTeamsExpanded(false);
+  }, [userId]);
+
+  useEffect(() => {
+    teamLabelDraftDirty.current = false;
+    setTeamLabelDraft("");
   }, [userId]);
 
   useEffect(() => {
@@ -481,6 +489,8 @@ export function UserDetailModal({
       if (!res.ok || !json?.success) {
         throw new Error(json?.error || `Team label update failed (${res.status})`);
       }
+      teamLabelDraftDirty.current = false;
+      setTeamLabelDraft(teamLabelDraft.trim());
     });
   };
 
@@ -654,7 +664,10 @@ export function UserDetailModal({
                   maxLength={80}
                   disabled={readOnly || busy === "team-label"}
                   value={teamLabelDraft}
-                  onChange={(event) => setTeamLabelDraft(event.target.value)}
+                  onChange={(event) => {
+                    teamLabelDraftDirty.current = true;
+                    setTeamLabelDraft(event.target.value);
+                  }}
                   placeholder="For example, SRE"
                   className="h-9 min-w-48 flex-1 rounded-md border border-input bg-background px-3 text-sm disabled:opacity-60"
                 />

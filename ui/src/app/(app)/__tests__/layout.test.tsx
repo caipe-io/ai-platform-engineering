@@ -79,6 +79,7 @@ describe("AppLayout", () => {
     process.env.APP_USAGE_ENABLED = "true";
     mockGetConfig.mockReturnValue(true);
     (getServerSession as jest.Mock).mockResolvedValue({
+      sub: "keycloak-user-id",
       user: { email: "user@example.com" },
       isAuthorized: true,
     });
@@ -92,13 +93,13 @@ describe("AppLayout", () => {
     expect(mockAfter).not.toHaveBeenCalled();
   });
 
-  it("defers the aggregate write without capturing a user identity", async () => {
+  it("defers the aggregate write with the authenticated Keycloak subject", async () => {
     mockRecordAppVisit.mockReturnValue(new Promise(() => {}));
     await AppLayout({ children: <span>Content</span> });
     expect(mockRecordAppVisit).not.toHaveBeenCalled();
     expect(mockAfter).toHaveBeenCalledTimes(1);
     void mockAfter.mock.calls[0][0]();
-    expect(mockRecordAppVisit).toHaveBeenCalledWith(expect.any(Date));
+    expect(mockRecordAppVisit).toHaveBeenCalledWith(expect.any(Date), "keycloak-user-id");
   });
 
   it("does not schedule collection when disabled", async () => {

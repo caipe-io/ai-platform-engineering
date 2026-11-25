@@ -392,11 +392,11 @@ describe('GET /api/admin/stats — Overview', () => {
     const { usersCol, convCol, msgCol } = setupAdminWithCollections();
 
     // Promise.all order:
-    // conversations aggregates: totalUsers, dau, mau
+    // conversations aggregates: totalUsers, dau, wau, mau
     // conversations: totalConversations, conversationsToday, sharedConversations
     // messages: totalMessages, messagesToday — assistant rows across every
     // metadata.source (not just 'web'/'slack').
-    for (const total of [15, 3, 10]) {
+    for (const total of [15, 3, 7, 10]) {
       convCol.aggregate.mockReturnValueOnce({
         toArray: jest.fn().mockResolvedValue([{ total }]),
       });
@@ -423,6 +423,7 @@ describe('GET /api/admin/stats — Overview', () => {
         total_conversations: 50,
         total_messages: 200,
         dau: 3,
+        wau: 7,
         mau: 10,
         conversations_today: 5,
         messages_today: 20,
@@ -433,7 +434,7 @@ describe('GET /api/admin/stats — Overview', () => {
     const activeIdentityPipelines = convCol.aggregate.mock.calls.map(
       (call: unknown[]) => call[0] as Array<{ $match?: Record<string, unknown> }>,
     );
-    expect(activeIdentityPipelines).toHaveLength(3);
+    expect(activeIdentityPipelines).toHaveLength(4);
     expect(activeIdentityPipelines[0][0].$match).toEqual(
       expect.objectContaining({ updated_at: { $gte: expect.any(Date), $lte: expect.any(Date) } }),
     );

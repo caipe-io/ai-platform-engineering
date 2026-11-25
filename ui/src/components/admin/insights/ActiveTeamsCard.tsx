@@ -39,9 +39,9 @@ export function ActiveTeamsCard() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          {!data?.enabled ? (
+          {data?.enabled === false ? (
             <p className="text-sm text-muted-foreground">Active team tracking is disabled. Enable APP_USAGE_ENABLED to start collecting daily user counts.</p>
-          ) : (
+          ) : data?.enabled === true ? (
             <>
               <div>
                 <h3 className="mb-2 text-sm font-medium">Active teams per day</h3>
@@ -79,6 +79,8 @@ export function ActiveTeamsCard() {
                 A user is active on a day when they open GRID. Daily salted subject hashes are retained for 30 days; email addresses and URLs are not stored. Team labels are read from current user profiles.
               </p>
             </>
+          ) : (
+            <p className="text-sm text-muted-foreground">Active team statistics are unavailable. Try refreshing the page.</p>
           )}
         </CardContent>
       </Card>
