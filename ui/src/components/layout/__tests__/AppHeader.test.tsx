@@ -22,6 +22,7 @@ import {
   type RenderOptions,
   type RenderResult,
 } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 
 // ============================================================================
 // Mocks — must be before imports
@@ -628,7 +629,7 @@ describe('AppHeader — application chrome', () => {
 
   })
 
-  it('opens configured app sections by default and respects a manual collapse', async () => {
+  it('links to the app separately from its section disclosure and preserves a manual collapse', async () => {
     mockPathname = '/'
     const previousFetch = global.fetch
     global.fetch = jest.fn((input, init) =>
@@ -661,9 +662,18 @@ describe('AppHeader — application chrome', () => {
         : previousFetch(input, init),
     )
     try {
+      const user = userEvent.setup()
       const view = render(<AppHeader />)
       const sections = await screen.findByRole('navigation', { name: 'Example sections' })
-      expect(applicationButton('Example')).toHaveAttribute('aria-expanded', 'true')
+      const launch = within(applicationNavigation()).getByRole('link', { name: 'Example', exact: true })
+      const collapse = applicationButton('Collapse Example sections')
+      expect(launch).toHaveAttribute('href', '/example')
+      expect(launch).not.toHaveAttribute('aria-expanded')
+      expect(collapse).toHaveAttribute('aria-expanded', 'true')
+      expect(document.getElementById(collapse.getAttribute('aria-controls')!)).toContainElement(sections)
+      launch.focus()
+      await user.tab()
+      expect(collapse).toHaveFocus()
       expect(within(sections).getByRole('link', { name: 'Browse' })).toHaveAttribute('href', '/example')
 
       mockPathname = '/example'
@@ -671,22 +681,24 @@ describe('AppHeader — application chrome', () => {
       view.rerender(<AppHeader />)
       expect(within(sections).getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
       expect(within(sections).getByRole('link', { name: 'Browse' })).not.toHaveAttribute('aria-current')
-      fireEvent.click(applicationButton('Example'))
-      expect(applicationButton('Example')).toHaveAttribute('aria-expanded', 'false')
+      fireEvent.click(collapse)
+      expect(applicationButton('Expand Example sections')).toHaveAttribute('aria-expanded', 'false')
+      expect(within(applicationNavigation()).getByRole('link', { name: 'Example', exact: true })).toHaveAttribute('href', '/example')
 
       mockPathname = '/chat'
       view.rerender(<AppHeader />)
-      expect(applicationButton('Example')).toHaveAttribute('aria-expanded', 'false')
+      expect(applicationButton('Expand Example sections')).toHaveAttribute('aria-expanded', 'false')
 
       // Embedded app links load a new document, which remounts the whole shell.
       view.unmount()
       mockPathname = '/apps/secondary'
       const reloaded = render(<AppHeader />)
       await screen.findByRole('link', { name: 'Browse secondary' })
-      expect(applicationButton('Example')).toHaveAttribute('aria-expanded', 'false')
-      expect(applicationButton('Secondary')).toHaveAttribute('aria-expanded', 'true')
+      expect(applicationButton('Expand Example sections')).toHaveAttribute('aria-expanded', 'false')
+      expect(applicationButton('Collapse Secondary sections')).toHaveAttribute('aria-expanded', 'true')
 
-      fireEvent.click(applicationButton('Example'))
+      applicationButton('Expand Example sections').focus()
+      await user.keyboard('{Enter}')
       expect(screen.getByRole('navigation', { name: 'Example sections' })).toBeVisible()
       reloaded.unmount()
       render(<AppHeader />)
