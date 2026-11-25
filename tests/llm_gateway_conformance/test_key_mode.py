@@ -30,6 +30,10 @@ def _key_mode_only(request: pytest.FixtureRequest, profile: GatewayProfile) -> N
 def _assert_rejected_as_limit(response: httpx.Response, profile: GatewayProfile) -> None:
     """Only the gateway's limit statuses count; 401, 403 or 404 would mean a broken fixture, not enforcement."""
     assert response.status_code in profile.limit_statuses, f"expected a limit rejection {sorted(profile.limit_statuses)}, got {response.status_code}: {response.text[:300]}"
+    if profile.limit_error_type:
+        error = response.json().get("error")
+        assert isinstance(error, dict), "expected a gateway error object for the limit rejection"
+        assert error.get("type") == profile.limit_error_type, f"unexpected limit error type: {error.get('type')!r}"
 
 
 def _hit_limit(client: httpx.Client, key: str, model: str) -> httpx.Response:

@@ -38,6 +38,7 @@ All variables start with `LLM_GW_CONFORMANCE_`.
 | `LIMIT_STORE_DOWN` | `1` only for the fail-closed run, after stopping the limit store |
 | `LIMIT_STORE_DOWN_AT` | Epoch seconds when the store was stopped; the grace window is measured from it |
 | `LIMIT_STATUSES` | Statuses that count as a limit rejection (default `402,422,429`) |
+| `LIMIT_ERROR_TYPE` | When set, the rejection must also contain this exact `error.type` |
 | `LIMIT_STORE_GRACE_SECONDS` | How long the gateway may keep admitting cached keys after the store goes down (default `0`, at most `60` per the contract) |
 | `GATEWAY`, `GATEWAY_VERSION`, `REPORT` | Recorded in the JSON report written to `REPORT` |
 
@@ -49,6 +50,7 @@ timeout 180 sh -c 'until curl -sf localhost:4000/health/readiness >/dev/null; do
 eval "$(uv run python tests/llm_gateway_conformance/harness/provision_litellm.py http://localhost:4000 sk-conformance-master)"
 export LLM_GW_CONFORMANCE_BASE_URL=http://localhost:4000 LLM_GW_CONFORMANCE_GATEWAY=litellm-oss \
   LLM_GW_CONFORMANCE_GATEWAY_VERSION=1.111.0 LLM_GW_CONFORMANCE_LIMIT_STORE_GRACE_SECONDS=15 \
+  LLM_GW_CONFORMANCE_LIMIT_STATUSES=422 LLM_GW_CONFORMANCE_LIMIT_ERROR_TYPE=budget_exceeded \
   LLM_GW_CONFORMANCE_ERROR_MODELS=429=mock-429,500=mock-500,402=mock-402-quota
 
 LLM_GW_CONFORMANCE_REPORT=report-up.json uv run pytest tests/llm_gateway_conformance
