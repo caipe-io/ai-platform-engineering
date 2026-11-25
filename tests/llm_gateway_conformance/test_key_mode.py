@@ -121,6 +121,8 @@ def test_limit_store_down_fails_closed(client: httpx.Client, profile: GatewayPro
     down_at = require(profile.limit_store_down_at, "LIMIT_STORE_DOWN_AT (epoch seconds when the store was stopped)")
     assert profile.limit_store_grace_seconds <= MAX_LIMIT_STORE_GRACE_SECONDS, "the contract caps the grace window at 60 s"
     deadline = down_at + profile.limit_store_grace_seconds
+    if time.time() >= deadline:
+        pytest.skip("NOT_RUN: started after the grace window ended, so it cannot show when admission stopped; rerun right after stopping the store")
     first_rejection = None
     while time.time() < deadline:  # Early errors do not prove fail-closed; keep observing until the window ends.
         if first_rejection is None and chat(client, key, profile.model).status_code >= 400:
