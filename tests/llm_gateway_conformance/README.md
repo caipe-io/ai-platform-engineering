@@ -45,7 +45,7 @@ All variables start with `LLM_GW_CONFORMANCE_`.
 docker compose -f tests/llm_gateway_conformance/harness/compose.yaml up -d
 eval "$(uv run python tests/llm_gateway_conformance/harness/provision_litellm.py http://localhost:4000 sk-conformance-master)"
 export LLM_GW_CONFORMANCE_BASE_URL=http://localhost:4000 LLM_GW_CONFORMANCE_GATEWAY=litellm-oss \
-  LLM_GW_CONFORMANCE_GATEWAY_VERSION=1.108.3 LLM_GW_CONFORMANCE_LIMIT_STORE_GRACE_SECONDS=15 \
+  LLM_GW_CONFORMANCE_GATEWAY_VERSION=1.111.0 LLM_GW_CONFORMANCE_LIMIT_STORE_GRACE_SECONDS=15 \
   LLM_GW_CONFORMANCE_ERROR_MODELS=429=mock-429,500=mock-500,402=mock-402-quota
 
 LLM_GW_CONFORMANCE_REPORT=report-up.json uv run pytest tests/llm_gateway_conformance
@@ -56,7 +56,7 @@ LLM_GW_CONFORMANCE_LIMIT_STORE_DOWN=1 LLM_GW_CONFORMANCE_REPORT=report-down.json
 - The harness is for testing only. CAIPE does not ship or operate a gateway.
 - The provision script plays the operator: it creates teams and per-agent keys through the LiteLLM admin API (adapter `none`).
 
-## LiteLLM OSS notes (1.108.3)
+## LiteLLM OSS notes (1.111.0; same results on LTS 1.108.17)
 
 - Budget rejection returns `422` with type `budget_exceeded`. A team `max_budget` of `0` is not enforced, so the harness uses a tiny budget.
 - With the database down, keys in LiteLLM's auth cache are still admitted, unmetered, until `user_api_key_cache_ttl` expires (default 60 s; the harness sets 10 s). After that, requests are rejected with `503`, or `404` for team lookups.

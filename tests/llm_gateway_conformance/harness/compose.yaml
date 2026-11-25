@@ -18,7 +18,7 @@ services:
       - ./mock_upstream.py:/harness/mock_upstream.py:ro
 
   litellm:
-    image: ghcr.io/berriai/litellm:v1.108.3
+    image: ghcr.io/berriai/litellm:v1.111.0
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     environment:
       LITELLM_MASTER_KEY: sk-conformance-master
