@@ -109,6 +109,7 @@ export interface AdminStats {
     total_messages: number;
     shared_conversations: number;
     dau: number;
+    wau: number;
     mau: number;
     conversations_today: number;
     messages_today: number;

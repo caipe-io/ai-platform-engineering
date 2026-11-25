@@ -392,11 +392,11 @@ describe('GET /api/admin/stats — Overview', () => {
     const { usersCol, convCol, msgCol } = setupAdminWithCollections();
 
     // Promise.all order:
-    // conversations aggregates: totalUsers, dau, mau
+    // conversations aggregates: totalUsers, dau, wau, mau
     // conversations: totalConversations, conversationsToday, sharedConversations
     // messages: totalMessages, messagesToday — assistant rows across every
     // metadata.source (not just 'web'/'slack').
-    for (const total of [15, 3, 10]) {
+    for (const total of [15, 3, 7, 10]) {
       convCol.aggregate.mockReturnValueOnce({
         toArray: jest.fn().mockResolvedValue([{ total }]),
       });
@@ -423,6 +423,7 @@ describe('GET /api/admin/stats — Overview', () => {
         total_conversations: 50,
         total_messages: 200,
         dau: 3,
+        wau: 7,
         mau: 10,
         conversations_today: 5,
         messages_today: 20,
@@ -433,7 +434,7 @@ describe('GET /api/admin/stats — Overview', () => {
     const activeIdentityPipelines = convCol.aggregate.mock.calls.map(
       (call: unknown[]) => call[0] as Array<{ $match?: Record<string, unknown> }>,
     );
-    expect(activeIdentityPipelines).toHaveLength(3);
+    expect(activeIdentityPipelines).toHaveLength(4);
     expect(activeIdentityPipelines[0][0].$match).toEqual(
       expect.objectContaining({ updated_at: { $gte: expect.any(Date), $lte: expect.any(Date) } }),
     );
@@ -521,10 +522,10 @@ describe('GET /api/admin/stats — Overview', () => {
 });
 
 // ============================================================================
-// Tests: Rolling DAU/MAU windows (not calendar-aligned)
+// Tests: Rolling DAU/WAU/MAU windows (not calendar-aligned)
 // ============================================================================
 
-describe('GET /api/admin/stats — Rolling DAU/MAU windows', () => {
+describe('GET /api/admin/stats — Rolling DAU/WAU/MAU windows', () => {
   beforeEach(resetMocks);
 
   afterEach(() => {
@@ -547,14 +548,16 @@ describe('GET /api/admin/stats — Rolling DAU/MAU windows', () => {
     const req = makeRequest('/api/admin/stats?section=overview');
     await GET(req);
 
-    const activeIdentityMatches = convCol.aggregate.mock.calls.map(
-      (call: unknown[]) => (call[0] as Array<{ $match?: { updated_at?: { $gte?: Date } } }>)[0].$match,
-    );
-    const dauStart = activeIdentityMatches[1]?.updated_at?.$gte;
-    const mauStart = activeIdentityMatches[2]?.updated_at?.$gte;
+    const activeIdentityStarts = convCol.aggregate.mock.calls.map((call: unknown[]) => {
+      const pipeline = call[0] as Array<{ $match?: { updated_at?: { $gte?: Date } } }>;
+      return pipeline[0]?.$match?.updated_at?.$gte?.getTime();
+    });
 
-    expect(dauStart?.getTime()).toBe(frozenNow.getTime() - DAY_MS);
-    expect(mauStart?.getTime()).toBe(frozenNow.getTime() - 30 * DAY_MS);
+    // DAU, WAU, and MAU aggregations run concurrently, so their mock call
+    // order is not guaranteed. Assert the window boundaries independent of
+    // which active-user aggregation reaches the mock first.
+    expect(activeIdentityStarts).toContain(frozenNow.getTime() - DAY_MS);
+    expect(activeIdentityStarts).toContain(frozenNow.getTime() - 30 * DAY_MS);
   });
 });
 
