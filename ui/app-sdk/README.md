@@ -269,8 +269,10 @@ authorization and app-defined stream routing remain available.
 
 `ui.navigation` contributes one authorized entry after Chat in expanded and
 collapsed navigation. Disabled, hidden, uninstalled and unauthorized apps are
-omitted. Installation `navigation_overrides` supports `visible`, `label` and
-numeric `order`; overrides cannot move a link outside the app's entry route.
+omitted. Installation `navigation_overrides` supports `visible`, `label`,
+numeric `order` and an optional `sections` list of `label` and `href` pairs.
+Sections open by default and can be collapsed. Section links can include query
+parameters and must stay within the app's host routes or mounted entry.
 Native and iframe profiles share the catalog, preventing duplicate entries.
 Canonical `/apps/<id>` entries use document navigation through the existing
 unsaved-change guard; compiled native host paths keep client navigation.

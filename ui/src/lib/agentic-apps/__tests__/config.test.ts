@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { getAgenticAppRoutingSnapshot, loadConfiguredAgenticApps } from "../config";
+import { buildPublicAgenticApp } from "../public-app";
 import example from "../../../../examples/agentic-apps/shared/manifest.json";
 
 describe("External Apps deployment config", () => {
@@ -29,6 +30,39 @@ describe("External Apps deployment config", () => {
       expect(getAgenticAppRoutingSnapshot()).toEqual(apps);
     }); } finally { if (previous === undefined) delete process.env.AGENTIC_APPS_CONFIG_PATH; else process.env.AGENTIC_APPS_CONFIG_PATH = previous; }
   });
+
+  it("publishes configured sidebar sections within the app's claimed routes", () => {
+    const sections = [
+      { label: "Overview", href: "/example?tab=overview" },
+      { label: "Updates", href: "/example/updates" },
+      { label: "Other app", href: "/example-other" },
+    ];
+    withConfig(JSON.stringify({ agentic_apps: {
+      packages: [{ package_id: example.id, manifest: example }],
+      installations: [{
+        app_id: example.id,
+        package_id: example.id,
+        selected_ui_profile: "hosted",
+        host_route_claims: ["/example"],
+        runtime_origin_override: "https://app.example.test",
+        navigation_overrides: { sections },
+      }],
+    } }), (path) => {
+      const [app] = loadConfiguredAgenticApps(path);
+      expect(buildPublicAgenticApp(app, true).navigation?.sections).toEqual(sections.slice(0, 2));
+      expect(buildPublicAgenticApp(app, false).navigation?.sections).toBeUndefined();
+    });
+  });
+
+  it.each(["//example.test/path", "/example/../other", "/example/%2Fother"])(
+    "rejects an unsafe sidebar section href %s",
+    (href) => {
+      const overrides = JSON.stringify({ sections: [{ label: "Overview", href }] });
+      withConfig(validConfig().replace("      installed: true", `      navigation_overrides: ${overrides}\n      installed: true`), (path) => {
+        expect(() => loadConfiguredAgenticApps(path)).toThrow(/navigation_overrides\.sections/);
+      });
+    },
+  );
 
   it("requires an origin for a feedback-only app without runtime or API mounts", () => {
     withConfig(validConfig(), path => {

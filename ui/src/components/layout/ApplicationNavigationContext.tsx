@@ -11,18 +11,22 @@ interface ApplicationNavigationRegistration {
 
 interface ApplicationNavigationContextValue {
   closeMobileNavigation: () => void;
+  closedAppSections: ReadonlySet<string>;
   mobileNavigationOpen: boolean;
   openMobileNavigation: () => void;
   registration: ApplicationNavigationRegistration | null;
   registerNavigation: (
     registration: ApplicationNavigationRegistration,
   ) => () => void;
+  setAppSectionCollapsed: (appKey: string, collapsed: boolean) => void;
   setMobileNavigationOpen: (open: boolean) => void;
   updateNavigation: (registration: ApplicationNavigationRegistration) => void;
 }
 
 const ApplicationNavigationContext =
   React.createContext<ApplicationNavigationContextValue | null>(null);
+
+const CLOSED_APP_SECTIONS_KEY = "caipe:closed-app-sections";
 
 export function ApplicationNavigationProvider({
   children,
@@ -34,7 +38,31 @@ export function ApplicationNavigationProvider({
   const [registration,setRegistration] =
     React.useState<ApplicationNavigationRegistration | null>(null);
   const [mobileNavigationOpen,setMobileNavigationOpen] = React.useState(false);
+  const [closedAppSections,setClosedAppSections] = React.useState<ReadonlySet<string>>(() => new Set());
   const registrationGenerationRef = React.useRef(0);
+
+  React.useEffect(() => {
+    try {
+      const stored: unknown = JSON.parse(window.sessionStorage.getItem(CLOSED_APP_SECTIONS_KEY) ?? "[]");
+      if (Array.isArray(stored)) {
+        setClosedAppSections(new Set(stored.filter((key): key is string => typeof key === "string")));
+      }
+    } catch {
+      // Default to open when browser storage is unavailable or unreadable.
+    }
+  }, []);
+
+  const setAppSectionCollapsed = React.useCallback((appKey: string, collapsed: boolean) => {
+    const next = new Set(closedAppSections);
+    if (collapsed) next.add(appKey);
+    else next.delete(appKey);
+    setClosedAppSections(next);
+    try {
+      window.sessionStorage.setItem(CLOSED_APP_SECTIONS_KEY, JSON.stringify([...next]));
+    } catch {
+      // Keep the in-memory preference usable when browser storage is unavailable.
+    }
+  }, [closedAppSections]);
 
   const registerNavigation = React.useCallback(
     (nextRegistration: ApplicationNavigationRegistration) => {
@@ -73,19 +101,23 @@ export function ApplicationNavigationProvider({
   const value = React.useMemo<ApplicationNavigationContextValue>(
     () => ({
       closeMobileNavigation,
+      closedAppSections,
       mobileNavigationOpen,
       openMobileNavigation,
       registration,
       registerNavigation,
+      setAppSectionCollapsed,
       setMobileNavigationOpen,
       updateNavigation,
     }),
     [
       closeMobileNavigation,
+      closedAppSections,
       mobileNavigationOpen,
       openMobileNavigation,
       registration,
       registerNavigation,
+      setAppSectionCollapsed,
       updateNavigation,
     ],
   );

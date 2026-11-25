@@ -734,13 +734,30 @@ function parseAccessOverrides(
 
 function parseNavigationOverrides(value: unknown, path: string): AgenticAppInstallation["navigationOverrides"] {
   const raw = asRecord(value, path);
-  assertKnownKeys(raw, ["visible", "label", "order"], path);
+  assertKnownKeys(raw, ["visible", "label", "order", "sections"], path);
+  const sections = raw.sections;
+  if (sections !== undefined && !Array.isArray(sections))
+    throw new Error(`${path}.sections must be an array`);
   if (raw.order !== undefined && (typeof raw.order !== "number" || !Number.isFinite(raw.order)))
     throw new Error(`${path}.order must be finite`);
   return {
     ...(raw.visible !== undefined ? { visible: optionalBoolean(raw.visible, true, `${path}.visible`) } : {}),
     ...(raw.label !== undefined ? { label: requiredString(raw.label, `${path}.label`) } : {}),
     ...(raw.order !== undefined ? { order: raw.order as number } : {}),
+    ...(Array.isArray(sections) ? {
+      sections: sections.map((entry, index) => {
+        const field = `${path}.sections[${index}]`;
+        const section = asRecord(entry, field);
+        assertKnownKeys(section, ["label", "href"], field);
+        const href = requiredAbsolutePath(section.href, `${field}.href`);
+        const [pathname] = href.split("?", 1);
+        if (/[\\#\u0000-\u0020\u007f]/.test(href) ||
+          /\/{2}|%(?:2f|5c|2e)|(?:^|\/)\.{1,2}(?:\/|$)/i.test(pathname)) {
+          throw new Error(`${field}.href must be a safe app path`);
+        }
+        return { label: requiredString(section.label, `${field}.label`), href };
+      }),
+    } : {}),
   };
 }
 

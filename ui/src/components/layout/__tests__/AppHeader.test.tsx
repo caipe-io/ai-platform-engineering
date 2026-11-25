@@ -41,12 +41,13 @@ jest.mock('@/components/agentic-apps/AssistantConnectionGuidance', () => ({
 }))
 
 let mockPathname = '/chat'
+let mockSearch = ''
 // Shared spy so admin-alert popover tests can assert programmatic
 // navigation. Reset in beforeEach.
 const mockRouterPush = jest.fn()
 jest.mock('next/navigation', () => ({
   usePathname: () => mockPathname,
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(mockSearch),
   useRouter: () => ({
     push: mockRouterPush,
     replace: jest.fn(),
@@ -431,6 +432,7 @@ describe('AppHeader — application chrome', () => {
     jest.clearAllMocks()
     mockStorageMode = 'mongodb'
     mockPathname = '/chat'
+    mockSearch = ''
     mockIsAdmin = false
     mockCanAccessDynamicAgents = false
     mockAdminTabGates = {
@@ -624,6 +626,75 @@ describe('AppHeader — application chrome', () => {
       expect(footer).not.toHaveClass('justify-center', 'border-t', 'pt-2')
     })
 
+  })
+
+  it('opens configured app sections by default and respects a manual collapse', async () => {
+    mockPathname = '/'
+    const previousFetch = global.fetch
+    global.fetch = jest.fn((input, init) =>
+      input === '/api/agentic-apps?surface=navigation'
+        ? Promise.resolve({
+          ok: true,
+          json: async () => ({ items: [{
+            appId: 'example',
+            canLaunch: true,
+            hostPaths: ['/example'],
+            navigation: {
+              href: '/example',
+              label: 'Example',
+              sections: [
+                { label: 'Browse', href: '/example' },
+                { label: 'Overview', href: '/example?tab=overview' },
+              ],
+            },
+          }, {
+            appId: 'secondary',
+            canLaunch: true,
+            hostPaths: ['/apps/secondary'],
+            navigation: {
+              href: '/apps/secondary',
+              label: 'Secondary',
+              sections: [{ label: 'Browse secondary', href: '/apps/secondary' }],
+            },
+          }] }),
+        } as Response)
+        : previousFetch(input, init),
+    )
+    try {
+      const view = render(<AppHeader />)
+      const sections = await screen.findByRole('navigation', { name: 'Example sections' })
+      expect(applicationButton('Example')).toHaveAttribute('aria-expanded', 'true')
+      expect(within(sections).getByRole('link', { name: 'Browse' })).toHaveAttribute('href', '/example')
+
+      mockPathname = '/example'
+      mockSearch = 'tab=overview'
+      view.rerender(<AppHeader />)
+      expect(within(sections).getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
+      expect(within(sections).getByRole('link', { name: 'Browse' })).not.toHaveAttribute('aria-current')
+      fireEvent.click(applicationButton('Example'))
+      expect(applicationButton('Example')).toHaveAttribute('aria-expanded', 'false')
+
+      mockPathname = '/chat'
+      view.rerender(<AppHeader />)
+      expect(applicationButton('Example')).toHaveAttribute('aria-expanded', 'false')
+
+      // Embedded app links load a new document, which remounts the whole shell.
+      view.unmount()
+      mockPathname = '/apps/secondary'
+      const reloaded = render(<AppHeader />)
+      await screen.findByRole('link', { name: 'Browse secondary' })
+      expect(applicationButton('Example')).toHaveAttribute('aria-expanded', 'false')
+      expect(applicationButton('Secondary')).toHaveAttribute('aria-expanded', 'true')
+
+      fireEvent.click(applicationButton('Example'))
+      expect(screen.getByRole('navigation', { name: 'Example sections' })).toBeVisible()
+      reloaded.unmount()
+      render(<AppHeader />)
+      expect(await screen.findByRole('navigation', { name: 'Example sections' })).toBeVisible()
+    } finally {
+      global.fetch = previousFetch
+      window.sessionStorage.removeItem('caipe:closed-app-sections')
+    }
   })
 
   describe('header breadcrumbs', () => {
