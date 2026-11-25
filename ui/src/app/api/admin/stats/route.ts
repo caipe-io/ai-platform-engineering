@@ -651,6 +651,7 @@ async function getAdminStats(request: NextRequest) {
             total_messages: 0,
             shared_conversations: 0,
             dau: 0,
+            wau: 0,
             mau: 0,
             conversations_today: 0,
             messages_today: 0,
