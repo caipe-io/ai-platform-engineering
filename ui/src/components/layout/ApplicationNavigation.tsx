@@ -197,7 +197,6 @@ function ApplicationNavigationContents({
   layoutScope: "rail" | "drawer";
 }): React.ReactElement {
   const contextualNavigationId = React.useId();
-  const [closedAppSections,setClosedAppSections] = React.useState<Set<string>>(() => new Set());
   const pathname = usePathname();
   const hydrated = useHydrated();
   const shouldReduceMotion = useReducedMotion();
@@ -491,7 +490,7 @@ function ApplicationNavigationContents({
             !item.disabled && Boolean(contextualNavigation);
           const contextExpanded =
             hasSectionNavigation && (appSections
-              ? !closedAppSections.has(item.key)
+              ? !applicationNavigation?.closedAppSections.has(item.key)
               : expandedArea === item.key);
           const chatBadge = item.key === "chat" ? (
             <ChatActivityBadge
@@ -582,12 +581,7 @@ function ApplicationNavigationContents({
 
           const toggleContext = () => {
             if (appSections) {
-              setClosedAppSections(current => {
-                const next = new Set(current);
-                if (next.has(item.key)) next.delete(item.key);
-                else next.add(item.key);
-                return next;
-              });
+              applicationNavigation?.setAppSectionCollapsed(item.key, contextExpanded);
               return;
             }
             setExpansionPreference({

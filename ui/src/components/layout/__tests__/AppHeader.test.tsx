@@ -647,6 +647,15 @@ describe('AppHeader — application chrome', () => {
                 { label: 'Overview', href: '/example?tab=overview' },
               ],
             },
+          }, {
+            appId: 'secondary',
+            canLaunch: true,
+            hostPaths: ['/apps/secondary'],
+            navigation: {
+              href: '/apps/secondary',
+              label: 'Secondary',
+              sections: [{ label: 'Browse secondary', href: '/apps/secondary' }],
+            },
           }] }),
         } as Response)
         : previousFetch(input, init),
@@ -668,10 +677,23 @@ describe('AppHeader — application chrome', () => {
       mockPathname = '/chat'
       view.rerender(<AppHeader />)
       expect(applicationButton('Example')).toHaveAttribute('aria-expanded', 'false')
+
+      // Embedded app links load a new document, which remounts the whole shell.
+      view.unmount()
+      mockPathname = '/apps/secondary'
+      const reloaded = render(<AppHeader />)
+      await screen.findByRole('link', { name: 'Browse secondary' })
+      expect(applicationButton('Example')).toHaveAttribute('aria-expanded', 'false')
+      expect(applicationButton('Secondary')).toHaveAttribute('aria-expanded', 'true')
+
       fireEvent.click(applicationButton('Example'))
       expect(screen.getByRole('navigation', { name: 'Example sections' })).toBeVisible()
+      reloaded.unmount()
+      render(<AppHeader />)
+      expect(await screen.findByRole('navigation', { name: 'Example sections' })).toBeVisible()
     } finally {
       global.fetch = previousFetch
+      window.sessionStorage.removeItem('caipe:closed-app-sections')
     }
   })
 
