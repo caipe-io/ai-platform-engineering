@@ -16,6 +16,10 @@ services:
     command: sh -c "pip install -q fastapi==0.141.1 uvicorn==0.38.0 && uvicorn --app-dir /harness mock_upstream:app --host 0.0.0.0 --port 8090"
     volumes:
       - ./mock_upstream.py:/harness/mock_upstream.py:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/v1/models')"]
+      interval: 3s
+      retries: 40
 
   litellm:
     image: ghcr.io/berriai/litellm:v1.111.0
@@ -32,4 +36,4 @@ services:
       litellm-db:
         condition: service_healthy
       mock-upstream:
-        condition: service_started
+        condition: service_healthy

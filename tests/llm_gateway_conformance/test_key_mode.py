@@ -15,6 +15,7 @@ pytestmark = pytest.mark.integration
 
 LIMIT_ATTEMPTS = 5
 MAX_LIMIT_STORE_GRACE_SECONDS = 60
+FAIL_CLOSED_PROBES = 3
 
 
 @pytest.fixture(autouse=True)
@@ -26,9 +27,9 @@ def _key_mode_only(request: pytest.FixtureRequest, profile: GatewayProfile) -> N
         pytest.skip("NOT_RUN: runs only when LIMIT_STORE_DOWN matches this check")
 
 
-def _assert_rejected_as_limit(response: httpx.Response) -> None:
-    assert 400 <= response.status_code < 500, f"limit rejection should be a 4xx, got {response.status_code}: {response.text[:300]}"
-    assert response.status_code != 401, f"limit key was rejected as unauthenticated: {response.text[:300]}"
+def _assert_rejected_as_limit(response: httpx.Response, profile: GatewayProfile) -> None:
+    """Only the gateway's limit statuses count; 401, 403 or 404 would mean a broken fixture, not enforcement."""
+    assert response.status_code in profile.limit_statuses, f"expected a limit rejection {sorted(profile.limit_statuses)}, got {response.status_code}: {response.text[:300]}"
 
 
 def _hit_limit(client: httpx.Client, key: str, model: str) -> httpx.Response:
@@ -93,12 +94,12 @@ def test_tool_call(client: httpx.Client, profile: GatewayProfile) -> None:
 
 def test_agent_limit_rejects(client: httpx.Client, profile: GatewayProfile) -> None:
     key = require(profile.agent_limit_key, "AGENT_LIMIT_KEY")
-    _assert_rejected_as_limit(_hit_limit(client, key, profile.model))
+    _assert_rejected_as_limit(_hit_limit(client, key, profile.model), profile)
 
 
 def test_team_limit_rejects(client: httpx.Client, profile: GatewayProfile) -> None:
     key = require(profile.team_limit_key, "TEAM_LIMIT_KEY")
-    _assert_rejected_as_limit(_hit_limit(client, key, profile.model))
+    _assert_rejected_as_limit(_hit_limit(client, key, profile.model), profile)
 
 
 @pytest.mark.parametrize("status", [429, 500, 402])
@@ -106,21 +107,26 @@ def test_upstream_error_keeps_class(client: httpx.Client, profile: GatewayProfil
     key = require(profile.key, "KEY")
     model = require(profile.error_models.get(status), f"ERROR_MODELS entry for {status}")
     response = chat(client, key, model)
-    assert response.status_code // 100 == status // 100, f"upstream {status} became {response.status_code}: {response.text[:300]}"
+    if status >= 500:
+        assert response.status_code // 100 == 5, f"upstream {status} became {response.status_code}: {response.text[:300]}"
+    else:
+        assert response.status_code == status, f"upstream {status} became {response.status_code}: {response.text[:300]}"
     if status == 402:
-        assert response.status_code == 402, f"quota error changed class: {response.status_code}"
         assert "quota" in response.text.lower(), "provider quota wording was dropped"
 
 
 def test_limit_store_down_fails_closed(client: httpx.Client, profile: GatewayProfile, record_property) -> None:
-    """Some gateways keep admitting cached credentials for a bounded window; the profile declares it."""
+    """After the declared grace window, measured from the outage, every request must be rejected."""
     key = require(profile.key, "KEY")
+    down_at = require(profile.limit_store_down_at, "LIMIT_STORE_DOWN_AT (epoch seconds when the store was stopped)")
     assert profile.limit_store_grace_seconds <= MAX_LIMIT_STORE_GRACE_SECONDS, "the contract caps the grace window at 60 s"
-    started = time.monotonic()
-    response = chat(client, key, profile.model)
-    while response.status_code < 400 and time.monotonic() - started < profile.limit_store_grace_seconds:
+    deadline = down_at + profile.limit_store_grace_seconds
+    first_rejection = None
+    while time.time() < deadline:  # Early errors do not prove fail-closed; keep observing until the window ends.
+        if first_rejection is None and chat(client, key, profile.model).status_code >= 400:
+            first_rejection = time.time() - down_at
         time.sleep(1)
-        response = chat(client, key, profile.model)
-    elapsed = time.monotonic() - started
-    record_property("detail", f"first rejection {response.status_code} after {elapsed:.0f}s (grace {profile.limit_store_grace_seconds:.0f}s)")
-    assert response.status_code >= 400, f"requests still admitted {elapsed:.0f}s after the limit store went down"
+    after = [chat(client, key, profile.model).status_code for _ in range(FAIL_CLOSED_PROBES)]
+    seen = "none" if first_rejection is None else f"{first_rejection:.0f}s"
+    record_property("detail", f"first rejection after {seen}; after grace {profile.limit_store_grace_seconds:.0f}s: {after}")
+    assert all(code >= 400 for code in after), f"requests admitted after the grace window: {after}"

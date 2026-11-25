@@ -36,13 +36,16 @@ All variables start with `LLM_GW_CONFORMANCE_`.
 | `AGENT_LIMIT_KEY` / `TEAM_LIMIT_KEY` | Keys whose agent / team limit is nearly spent |
 | `ERROR_MODELS` | `429=<model>,500=<model>,402=<model>`: models whose upstream returns that error |
 | `LIMIT_STORE_DOWN` | `1` only for the fail-closed run, after stopping the limit store |
+| `LIMIT_STORE_DOWN_AT` | Epoch seconds when the store was stopped; the grace window is measured from it |
+| `LIMIT_STATUSES` | Statuses that count as a limit rejection (default `402,422,429`) |
 | `LIMIT_STORE_GRACE_SECONDS` | How long the gateway may keep admitting cached keys after the store goes down (default `0`, at most `60` per the contract) |
 | `GATEWAY`, `GATEWAY_VERSION`, `REPORT` | Recorded in the JSON report written to `REPORT` |
 
 ## Run against the local LiteLLM OSS harness
 
 ```bash
-docker compose -f tests/llm_gateway_conformance/harness/compose.yaml up -d
+docker compose -f tests/llm_gateway_conformance/harness/compose.yaml up -d --wait
+timeout 180 sh -c 'until curl -sf localhost:4000/health/readiness >/dev/null; do sleep 2; done'
 eval "$(uv run python tests/llm_gateway_conformance/harness/provision_litellm.py http://localhost:4000 sk-conformance-master)"
 export LLM_GW_CONFORMANCE_BASE_URL=http://localhost:4000 LLM_GW_CONFORMANCE_GATEWAY=litellm-oss \
   LLM_GW_CONFORMANCE_GATEWAY_VERSION=1.111.0 LLM_GW_CONFORMANCE_LIMIT_STORE_GRACE_SECONDS=15 \
@@ -50,6 +53,7 @@ export LLM_GW_CONFORMANCE_BASE_URL=http://localhost:4000 LLM_GW_CONFORMANCE_GATE
 
 LLM_GW_CONFORMANCE_REPORT=report-up.json uv run pytest tests/llm_gateway_conformance
 docker compose -f tests/llm_gateway_conformance/harness/compose.yaml stop litellm-db
+export LLM_GW_CONFORMANCE_LIMIT_STORE_DOWN_AT=$(date +%s)
 LLM_GW_CONFORMANCE_LIMIT_STORE_DOWN=1 LLM_GW_CONFORMANCE_REPORT=report-down.json uv run pytest tests/llm_gateway_conformance
 ```
 

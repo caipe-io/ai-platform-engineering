@@ -26,6 +26,8 @@ class GatewayProfile:
     error_models: dict[int, str] = field(default_factory=dict)
     limit_store_down: bool = False
     limit_store_grace_seconds: float = 0.0
+    limit_store_down_at: float = 0.0
+    limit_statuses: frozenset[int] = frozenset({402, 422, 429})
 
     @classmethod
     def from_env(cls) -> "GatewayProfile":
@@ -44,6 +46,8 @@ class GatewayProfile:
             error_models=errors,
             limit_store_down=env("LIMIT_STORE_DOWN") == "1",
             limit_store_grace_seconds=float(env("LIMIT_STORE_GRACE_SECONDS", "0")),
+            limit_store_down_at=float(env("LIMIT_STORE_DOWN_AT", "0")),
+            limit_statuses=frozenset(int(s) for s in env("LIMIT_STATUSES", "402,422,429").split(",")),
         )
 
 

@@ -30,10 +30,10 @@ def client(profile: GatewayProfile):
 
 def pytest_runtest_logreport(report: pytest.TestReport) -> None:
     check = report.nodeid.rsplit("::", 1)[-1]
-    if report.when == "call":
-        status = "PASS" if report.passed else "FAIL"
-    elif report.skipped:
+    if report.skipped:
         status = "NOT_RUN"
+    elif report.when == "call":
+        status = "PASS" if report.passed else "FAIL"
     elif report.failed:
         status = "FAIL"
     else:
