@@ -1,13 +1,24 @@
 import { getCollection, isMongoDBConfigured } from "@/lib/mongodb";
+import { hashSubject } from "@/lib/rbac/audit";
+import type { Document } from "mongodb";
 
 const COLLECTION = "app_usage_daily";
+const ACTIVE_USERS_COLLECTION = "app_usage_active_users_daily";
 const DAY_MS = 86_400_000;
 export const APP_USAGE_RETENTION_DAYS = 30;
 let ttlIndexReady: Promise<string> | undefined;
+let activeUsersTtlIndexReady: Promise<string> | undefined;
 
 interface DailyUsage {
   _id: string;
   loads: number;
+  expires_at: Date;
+}
+
+interface DailyActiveUser extends Document {
+  _id: string;
+  date: string;
+  subject_hash: string;
   expires_at: Date;
 }
 
@@ -22,8 +33,8 @@ function enabled(): boolean {
   return process.env.APP_USAGE_ENABLED === "true";
 }
 
-/** One daily counter, not user/session/URL tracking or a unique-visitor count. */
-export async function recordAppVisit(occurredAt = new Date()): Promise<void> {
+/** Aggregate shell loads plus one salted daily subject digest for active-team counts. */
+export async function recordAppVisit(occurredAt = new Date(), subject?: string): Promise<void> {
   if (!enabled() || !isMongoDBConfigured || !Number.isFinite(occurredAt.getTime())) return;
   const day = occurredAt.toISOString().slice(0, 10);
   const collection = await getCollection<DailyUsage>(COLLECTION);
@@ -48,6 +59,36 @@ export async function recordAppVisit(occurredAt = new Date()): Promise<void> {
     if ((error as { code?: number })?.code !== 11000) throw error;
     const result = await collection.updateOne({ _id: day }, increment);
     if (result.matchedCount !== 1) throw error;
+  }
+
+  const normalizedSubject = subject?.trim();
+  if (!normalizedSubject) return;
+
+  const activeUsers = await getCollection<DailyActiveUser>(ACTIVE_USERS_COLLECTION);
+  activeUsersTtlIndexReady ??= Promise.all([
+    activeUsers.createIndex({ expires_at: 1 }, {
+      name: "app_usage_active_users_expiry", expireAfterSeconds: 0,
+    }),
+    activeUsers.createIndex({ date: 1 }, { name: "app_usage_active_users_date" }),
+  ]).then(([ttlIndex]) => ttlIndex).catch((error: unknown) => {
+    activeUsersTtlIndexReady = undefined;
+    throw error;
+  });
+  await activeUsersTtlIndexReady;
+
+  const subjectHash = hashSubject(normalizedSubject);
+  const activeUserId = `${day}:${subjectHash}`;
+  try {
+    await activeUsers.updateOne({ _id: activeUserId }, {
+      $setOnInsert: {
+        date: day,
+        subject_hash: subjectHash,
+        expires_at: new Date(Date.parse(day) + APP_USAGE_RETENTION_DAYS * DAY_MS),
+      },
+    }, { upsert: true });
+  } catch (error) {
+    // Concurrent first visits can race on the unique daily subject key.
+    if ((error as { code?: number })?.code !== 11000) throw error;
   }
 }
 

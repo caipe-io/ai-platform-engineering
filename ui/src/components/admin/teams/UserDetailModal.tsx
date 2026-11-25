@@ -183,6 +183,7 @@ export function UserDetailModal({
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [user, setUser] = useState<ProfileUser | null>(null);
+  const [teamLabelDraft, setTeamLabelDraft] = useState("");
   const profileRequest = useRef(0);
   // Team picker options — use prop if provided, otherwise fetch
   const [teamOptionsLoading, setTeamOptionsLoading] = useState(!readOnly && !teamOptionsProp);
@@ -227,7 +228,10 @@ export function UserDetailModal({
           : null) || `Failed to load user (${res.status})`
       );
     }
-    if (requestId === profileRequest.current) setUser(json.data.user);
+    if (requestId === profileRequest.current) {
+      setUser(json.data.user);
+      setTeamLabelDraft(json.data.user.attributes?.team_label?.[0]?.trim() ?? "");
+    }
   }, [userId, withPreviewScope]);
 
   const loadTeams = useCallback(async () => {
@@ -466,6 +470,20 @@ export function UserDetailModal({
     }, { refreshSession: true });
   };
 
+  const saveTeamLabel = () => {
+    void runAction("team-label", async () => {
+      const res = await fetch(withPreviewScope(`/api/admin/users/${encodeURIComponent(userId)}/team-label`), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ team_label: teamLabelDraft }),
+      });
+      const json = (await readJson(res)) as { success?: boolean; error?: string };
+      if (!res.ok || !json?.success) {
+        throw new Error(json?.error || `Team label update failed (${res.status})`);
+      }
+    });
+  };
+
   const removeTeam = (teamId: string) => {
     void runAction(`team-del-${teamId}`, async () => {
       const res = await fetch(
@@ -626,6 +644,32 @@ export function UserDetailModal({
               error={identityError}
               onRetry={() => void loadIdentity()}
             />
+
+            <div className="space-y-3 rounded-lg border border-border p-3">
+              <h4 className="text-sm font-semibold text-foreground">Team label</h4>
+              <p className="text-xs text-muted-foreground">Used to group labeled users in the Active Teams statistics.</p>
+              <div className="flex flex-wrap gap-2">
+                <input
+                  aria-label="Team label"
+                  maxLength={80}
+                  disabled={readOnly || busy === "team-label"}
+                  value={teamLabelDraft}
+                  onChange={(event) => setTeamLabelDraft(event.target.value)}
+                  placeholder="For example, SRE"
+                  className="h-9 min-w-48 flex-1 rounded-md border border-input bg-background px-3 text-sm disabled:opacity-60"
+                />
+                {!readOnly && (
+                  <button
+                    type="button"
+                    disabled={busy === "team-label" || teamLabelDraft.trim() === (user.attributes?.team_label?.[0]?.trim() ?? "")}
+                    onClick={saveTeamLabel}
+                    className="h-9 rounded-md border border-border px-3 text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {busy === "team-label" ? "Saving…" : "Save label"}
+                  </button>
+                )}
+              </div>
+            </div>
 
             <div className="space-y-3">
               <h4 className="text-sm font-semibold text-foreground mb-3">

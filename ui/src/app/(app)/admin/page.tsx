@@ -12,6 +12,7 @@ VisibilityBreakdown,
 } from "@/components/admin/insights/SkillMetricsCards";
 import { AsyncStatsCard } from "@/components/admin/insights/AsyncStatsCard";
 import { AppUsageCard } from "@/components/admin/insights/AppUsageCard";
+import { ActiveTeamsCard } from "@/components/admin/insights/ActiveTeamsCard";
 import { AutonomousTeamAccessPanel } from "@/components/admin/autonomous/AutonomousTeamAccessPanel";
 import { ReviewConfigsTab } from "@/components/admin/settings/ReviewConfigsTab";
 import { CaipeTourSettings } from "@/components/admin/settings/CaipeTourSettings";
@@ -383,7 +384,7 @@ function OverviewStatsCards({
           <CardContent>
             <div className="text-2xl font-bold">{overview.total_users}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              DAU: {overview.dau} | MAU: {overview.mau}
+              DAU: {overview.dau} | WAU: {overview.wau} | MAU: {overview.mau}
             </p>
           </CardContent>
         </Card> : undefined}
@@ -2412,7 +2413,8 @@ function AdminPage() {
                       overview={stats.overview}
                     />
 
-                    {/* DAU and MAU Trend Charts */}
+                    {/* DAU and active-team trend charts */}
+                    {!isSimulationActive && effectiveOrganizationAdmin && <ActiveTeamsCard />}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                       <AsyncStatsCard
                         error={statsSectionStatuses.activity.error ?? statsSectionStatuses.overview.error}
@@ -2434,14 +2436,18 @@ function AdminPage() {
                             height={250}
                             color="rgb(59, 130, 246)"
                           />
-                          <div className="mt-4 grid grid-cols-3 gap-4 text-center">
+                          <div className="mt-4 grid grid-cols-2 gap-4 text-center sm:grid-cols-4">
                             <div>
                               <p className="text-2xl font-bold text-blue-500">{stats.overview.dau}</p>
-                              <p className="text-xs text-muted-foreground">Today</p>
+                              <p className="text-xs text-muted-foreground">DAU</p>
+                            </div>
+                            <div>
+                              <p className="text-2xl font-bold text-indigo-500">{stats.overview.wau}</p>
+                              <p className="text-xs text-muted-foreground">WAU</p>
                             </div>
                             <div>
                               <p className="text-2xl font-bold">{stats.overview.mau}</p>
-                              <p className="text-xs text-muted-foreground">This Month</p>
+                              <p className="text-xs text-muted-foreground">MAU</p>
                             </div>
                             <div>
                               <p className="text-2xl font-bold text-green-500">

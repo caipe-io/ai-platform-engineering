@@ -849,10 +849,12 @@ async function getAdminStats(request: NextRequest) {
     // (e.g. MAU showing all of a prior calendar month on the 1st of a new
     // one, next to a "This Month" card that's rolling).
     const rollingToday = new Date(now.getTime() - DAY_MS);
+    const rollingWeek = new Date(now.getTime() - 7 * DAY_MS);
     const rollingMonth = new Date(now.getTime() - 30 * DAY_MS);
     // A shorter selected window must still narrow them. For example, the 1h
     // preset must not quietly show all activity from the last 24h.
     const todayRangeStart = new Date(Math.max(rollingToday.getTime(), rangeStart.getTime()));
+    const weekRangeStart = new Date(Math.max(rollingWeek.getTime(), rangeStart.getTime()));
     const monthRangeStart = new Date(Math.max(rollingMonth.getTime(), rangeStart.getTime()));
     const activeIdentityFilter: Document = { ...convSourceFilter };
     andInto(activeIdentityFilter, HUMAN_CONVERSATION_OWNER_MATCH);
@@ -864,6 +866,7 @@ async function getAdminStats(request: NextRequest) {
     let totalConversations = 0;
     let totalMessages = 0;
     let dau = 0;
+    let wau = 0;
     let mau = 0;
     let conversationsToday = 0;
     let messagesToday = 0;
@@ -875,6 +878,7 @@ async function getAdminStats(request: NextRequest) {
         totalConversations,
         totalMessages,
         dau,
+        wau,
         mau,
         conversationsToday,
         messagesToday,
@@ -899,6 +903,11 @@ async function getAdminStats(request: NextRequest) {
         messages.countDocuments({ created_at: rangeDateMatch, ...AI_MESSAGE_MATCH, ...msgOwnerFilter }),
         conversations.aggregate([
           { $match: { updated_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...activeIdentityFilter } },
+          { $group: { _id: canonicalConversationOwner() } },
+          { $count: 'total' },
+        ]).toArray().then((r) => r[0]?.total || 0),
+        conversations.aggregate([
+          { $match: { updated_at: { $gte: weekRangeStart, $lte: rangeEnd }, ...activeIdentityFilter } },
           { $group: { _id: canonicalConversationOwner() } },
           { $count: 'total' },
         ]).toArray().then((r) => r[0]?.total || 0),
@@ -1977,6 +1986,7 @@ async function getAdminStats(request: NextRequest) {
           total_messages: totalMessages,
           shared_conversations: sharedConversations,
           dau,
+          wau,
           mau,
           conversations_today: conversationsToday,
           messages_today: messagesToday,

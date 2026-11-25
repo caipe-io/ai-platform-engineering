@@ -63,7 +63,7 @@ export function AppUsageCard() {
                 <tbody>{data.daily.map((row) => <tr key={row.date}><td>{row.date}</td><td className="text-right">{row.loads.toLocaleString()}</td></tr>)}</tbody>
               </table>
             </details>
-            <p className="text-xs text-muted-foreground">No user identities or URLs are stored. Daily counters expire after 30 days.</p>
+            <p className="text-xs text-muted-foreground">Load counters are aggregate. Active Teams uses daily salted subject digests; email addresses and URLs are not stored. Records expire after 30 days.</p>
           </> : data ? <p className="text-sm text-muted-foreground">Aggregate usage collection is disabled.</p> : null}
           <Button variant="outline" size="sm" disabled={loading} onClick={() => {
             setError(null);

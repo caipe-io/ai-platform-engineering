@@ -19,7 +19,7 @@ const SUBJECT_SALT = process.env.AUDIT_SUBJECT_SALT || "caipe-098-audit";
 
 const WEBUI_BACKEND_SOURCE: AuditEventSource = "webui_backend";
 
-function hashSubject(sub: string): string {
+export function hashSubject(sub: string): string {
   return `sha256:${createHash("sha256").update(`${SUBJECT_SALT}:${sub}`).digest("hex")}`;
 }
 

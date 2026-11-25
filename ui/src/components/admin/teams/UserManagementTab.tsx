@@ -393,6 +393,7 @@ export function UserManagementTab({
               <tr className="border-b bg-muted/40 text-left text-xs font-medium text-muted-foreground">
                 <th className="px-4 py-3">Name</th>
                 <th className="px-4 py-3">Email</th>
+                <th className="px-4 py-3">Team label</th>
                 <th className="px-4 py-3">Slack</th>
                 <th className="px-4 py-3">Webex</th>
                 <th className="px-4 py-3 w-20">Enabled</th>
@@ -401,7 +402,7 @@ export function UserManagementTab({
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-16 text-center">
+                  <td colSpan={6} className="px-4 py-16 text-center">
                     <div className="flex flex-col items-center gap-2 text-muted-foreground">
                       <Loader2 className="h-8 w-8 animate-spin" />
                       <span>Loading…</span>
@@ -411,7 +412,7 @@ export function UserManagementTab({
               ) : users.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={6}
                     className="px-4 py-12 text-center text-muted-foreground"
                   >
                     No users match the current filters.
@@ -436,6 +437,9 @@ export function UserManagementTab({
                       <td className="px-4 py-2.5 font-medium">{name}</td>
                       <td className="px-4 py-2.5 text-muted-foreground">
                         {u.email || "—"}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {u.attributes?.team_label?.[0]?.trim() || <span className="text-muted-foreground">Unlabeled</span>}
                       </td>
                       <td className="px-4 py-2.5">
                         {linked ? (
