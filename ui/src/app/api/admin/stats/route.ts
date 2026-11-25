@@ -868,6 +868,7 @@ async function getAdminStats(request: NextRequest) {
     let dau = 0;
     let wau = 0;
     let mau = 0;
+    let activeUserCounts = { wau: 0, mau: 0 };
     let conversationsToday = 0;
     let messagesToday = 0;
     let sharedConversations = 0;
@@ -878,8 +879,7 @@ async function getAdminStats(request: NextRequest) {
         totalConversations,
         totalMessages,
         dau,
-        wau,
-        mau,
+        activeUserCounts,
         conversationsToday,
         messagesToday,
         sharedConversations,
@@ -907,15 +907,30 @@ async function getAdminStats(request: NextRequest) {
           { $count: 'total' },
         ]).toArray().then((r) => r[0]?.total || 0),
         conversations.aggregate([
-          { $match: { updated_at: { $gte: weekRangeStart, $lte: rangeEnd }, ...activeIdentityFilter } },
-          { $group: { _id: canonicalConversationOwner() } },
-          { $count: 'total' },
-        ]).toArray().then((r) => r[0]?.total || 0),
-        conversations.aggregate([
           { $match: { updated_at: { $gte: monthRangeStart, $lte: rangeEnd }, ...activeIdentityFilter } },
-          { $group: { _id: canonicalConversationOwner() } },
-          { $count: 'total' },
-        ]).toArray().then((r) => r[0]?.total || 0),
+          {
+            $facet: {
+              wau: [
+                { $match: { updated_at: { $gte: weekRangeStart } } },
+                { $group: { _id: canonicalConversationOwner() } },
+                { $count: 'total' },
+              ],
+              mau: [
+                { $group: { _id: canonicalConversationOwner() } },
+                { $count: 'total' },
+              ],
+            },
+          },
+        ]).toArray().then((r) => {
+          // One bounded 30-day scan supplies both rolling active-user windows.
+          // The fallback keeps lightweight mocks and older aggregate adapters
+          // that return a plain { total } row compatible with the MAU count.
+          const counts = r[0];
+          return {
+            wau: counts?.wau?.[0]?.total ?? 0,
+            mau: counts?.mau?.[0]?.total ?? counts?.total ?? 0,
+          };
+        }),
         conversations.countDocuments({ created_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...convSourceFilter }),
         messages.countDocuments({ created_at: { $gte: todayRangeStart, $lte: rangeEnd }, ...AI_MESSAGE_MATCH, ...msgOwnerFilter }),
         // `andInto` rather than spreading a literal `$or` — the non-admin scope
@@ -938,6 +953,8 @@ async function getAdminStats(request: NextRequest) {
           })()
         ),
       ]);
+      wau = activeUserCounts.wau;
+      mau = activeUserCounts.mau;
     }
 
     // ═══════════════════════════════════════════════════════════════
