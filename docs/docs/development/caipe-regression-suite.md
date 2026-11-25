@@ -179,7 +179,7 @@ agent's text about its runtime.
 |---|---|---|
 | RUN-01 | each runtime | Real model reply; follow-up recalls a unique marker; one approved tool call has successful execution evidence; result persists after reload |
 | RUN-02 | each runtime | Reload/reconnect during a running tool; attach another authorized viewer; recover the same run with ordered replay and exactly one producer |
-| RUN-03 | each runtime | Stop, reload while stopping, then send another turn; cancellation is persisted and workers drain; uncertain admission does not duplicate a run |
+| RUN-03 | each runtime | Stop, reload while stopping, then send another turn; cancellation waits for the local producer to release its session even if terminal status is already persisted; workers drain and uncertain admission does not duplicate a run |
 | RUN-04 | each runtime | Exercise supported form/approval interrupt and typed resume/rejection; invalid resume and read-only send/stop are denied |
 | RUN-05 | each runtime | Execute an attached safe skill and verify its output marker; baseline skill instructions and tool scope survive restart/reload |
 | RUN-06 | each runtime | Exercise supported attachments/subagents or the declared rejection; delegation uses the saved child runtime and caller's allowed tools, without flattening or scope expansion |

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import suppress
+from typing import Any
 
 import mongomock
 import pytest
@@ -152,6 +153,84 @@ async def test_cancel_before_preparation_starts_releases_the_reservation(durable
     assert adapter.calls == []
     binding = await second._session_manager.current("test-user", "agent-example", "conversation-example")
     assert binding and binding.active_run is None
+
+
+@pytest.mark.parametrize("terminal_status", [RunStatus.CANCELLED, RunStatus.COMPLETED])
+@pytest.mark.parametrize("cleanup_timeout", [False, True])
+async def test_local_cancel_waits_for_terminal_producer_to_release_the_reservation(
+    durable_repository: RunRepository, monkeypatch: pytest.MonkeyPatch, terminal_status: RunStatus,
+    cleanup_timeout: bool,
+) -> None:
+    first, second, compiler, _ = await coordinators(durable_repository)
+    releasing, release, observed_cancellation = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    timed_out, checked_after_timeout = asyncio.Event(), asyncio.Event()
+    original_release = durable_repository.release_run
+    original_cancel = durable_repository.request_cancellation
+    original_get_run = durable_repository.get_run
+    original_wait_for = asyncio.wait_for
+
+    async def wait_for(awaitable: Awaitable[Any], timeout: float | None) -> Any:
+        if cleanup_timeout and timeout == 0.5:
+            try:
+                return await original_wait_for(awaitable, 0)
+            finally:
+                timed_out.set()
+        return await original_wait_for(awaitable, timeout)
+
+    async def get_run(run_id: str) -> RunRecord | None:
+        result = await original_get_run(run_id)
+        if timed_out.is_set():
+            checked_after_timeout.set()
+        return result
+
+    async def delayed_release(binding_id: str, run_id: str) -> None:
+        releasing.set()
+        await release.wait()
+        await original_release(binding_id, run_id)
+
+    async def observe_cancellation(run_id: str) -> RunRecord | None:
+        result = await original_cancel(run_id)
+        observed_cancellation.set()
+        return result
+
+    monkeypatch.setattr(durable_repository, "release_run", delayed_release)
+    monkeypatch.setattr(durable_repository, "get_run", get_run)
+    monkeypatch.setattr("harness_engine.coordinator.asyncio.wait_for", wait_for)
+    run = await first.start_run(request(), "test-user")
+    producer = first._tasks[run.run_id]
+    cancellation: asyncio.Task[RunRecord | None] | None = None
+    try:
+        await asyncio.wait_for(compiler.entered.wait(), 1)
+        if terminal_status == RunStatus.CANCELLED:
+            await original_cancel(run.run_id)
+        else:
+            compiler.resume.set()
+        await asyncio.wait_for(releasing.wait(), 1)
+        stored = await durable_repository.get_run(run.run_id)
+        assert stored and stored.status == terminal_status
+        monkeypatch.setattr(durable_repository, "request_cancellation", observe_cancellation)
+        cancellation = asyncio.create_task(first.cancel(run.run_id))
+        await asyncio.wait_for(observed_cancellation.wait(), 1)
+        if cleanup_timeout:
+            await asyncio.wait_for(checked_after_timeout.wait(), 1)
+        assert not cancellation.done()
+        assert not producer.done()
+        release.set()
+        result = await asyncio.wait_for(cancellation, 1)
+        assert result and result.status == terminal_status
+        binding = await second._session_manager.current("test-user", "agent-example", "conversation-example")
+        assert binding and binding.active_run is None
+        continued = await second.start_run(request("request-2"), "test-user")
+        compiler.resume.set()
+        await asyncio.wait_for(second._tasks[continued.run_id], 1)
+    finally:
+        release.set()
+        compiler.resume.set()
+        if cancellation is not None:
+            with suppress(asyncio.CancelledError):
+                await cancellation
+        await first.shutdown()
+        await second.shutdown()
 
 
 class PausingAdapter(FakeHarnessAdapter):

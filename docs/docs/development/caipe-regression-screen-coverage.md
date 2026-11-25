@@ -193,7 +193,7 @@ negative cases because the positive flow succeeded.
 | DIM-03 | Visibility lifecycle | Private → Team → Global → Private, downgrade/revoke/delete where supported; exact persisted grants, stale-grant absence and effective decisions |
 | DIM-04 | Input boundaries | Valid minimum/maximum/Unicode/multiline; required/oversize/duplicate/malformed values, unsafe markup/path/URL and unsupported files |
 | DIM-05 | Concurrency | Double-submit, stale version, update/delete and share/revoke races, idempotent retry, duplicate callback/event/run admission |
-| DIM-06 | Async recovery | Loading/progress/completion, timeout, partial result, cancellation, 409/422/429/5xx and unavailable dependency |
+| DIM-06 | Async recovery | Loading/progress/completion, timeout, partial result, cancellation (terminal status may precede session release), 409/422/429/5xx and unavailable dependency |
 | DIM-07 | Navigation | Menu/direct link, query/filters, refresh/back/forward, unknown/disabled destination and unsaved-change escape |
 | DIM-08 | Data safety | Scoped lists/redaction, private metadata, attachment/download ownership, safe links and secret-free evidence |
 | DIM-09 | Accessibility | Keyboard-only, visible/returned focus, labels/announcements, reduced motion, dialog escape and usable validation |

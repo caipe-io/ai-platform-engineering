@@ -316,17 +316,24 @@ class RunCoordinator:
 
     async def cancel(self, run_id: str) -> RunRecord | None:
         run = await self._repository.request_cancellation(run_id)
-        if run is None or run.status in TERMINAL_RUN_STATUSES:
+        if run is None:
             return run
         task = self._tasks.get(run_id)
+        # Terminal status is persisted before the producer releases its session.
+        if run.status in TERMINAL_RUN_STATUSES and task is None:
+            return run
         if task:
             binding = await self._repository.get_session(run.binding_id)
-            if not task.done() and not task.cancelling() and (binding is None or not binding.dispatch_started):
+            if run.status not in TERMINAL_RUN_STATUSES and not task.done() and not task.cancelling() and (binding is None or not binding.dispatch_started):
                 task.cancel()
             try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
-            except TimeoutError:
-                return await self._repository.get_run(run_id)
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), timeout=0.5)
+                except TimeoutError:
+                    run = await self._repository.get_run(run_id)
+                    if run is None or run.status not in TERMINAL_RUN_STATUSES:
+                        return run
+                    await asyncio.shield(task)
             except asyncio.CancelledError:
                 if not task.done():
                     raise
