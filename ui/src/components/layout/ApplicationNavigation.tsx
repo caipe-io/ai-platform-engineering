@@ -492,6 +492,7 @@ function ApplicationNavigationContents({
             hasSectionNavigation && (appSections
               ? !applicationNavigation?.closedAppSections.has(item.key)
               : expandedArea === item.key);
+          const sectionNavigationId = `${contextualNavigationId}-${item.key}`;
           const chatBadge = item.key === "chat" ? (
             <ChatActivityBadge
               inputRequired={inputRequiredConversations.size}
@@ -537,15 +538,17 @@ function ApplicationNavigationContents({
               {!collapsed ? chatBadge : null}
             </>
           );
+          const focusRing = "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+          const interactiveColors = active
+            ? "bg-muted/60 font-medium text-foreground"
+            : "text-muted-foreground hover:bg-muted/60 hover:text-foreground";
           const className = cn(
             "group flex min-h-11 w-full items-center gap-3 rounded-xl px-2 py-2 text-left outline-none transition-colors",
-            "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+            focusRing,
             collapsed && "justify-center",
             item.disabled
               ? "cursor-help text-muted-foreground opacity-55"
-              : active
-                ? "bg-muted/60 font-medium text-foreground"
-                : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+              : interactiveColors,
           );
 
           if (collapsed && hasSectionNavigation) {
@@ -590,6 +593,27 @@ function ApplicationNavigationContents({
               userInitiated: true,
             });
           };
+          const sectionChevron = (
+            <ChevronDown
+              aria-hidden="true"
+              className={cn(
+                "h-4 w-4 shrink-0 transition-transform motion-reduce:transition-none",
+                contextExpanded && "rotate-180",
+              )}
+            />
+          );
+          const applicationLink = (
+            <GuardedNavigationLink
+              aria-current={active && !appSections ? "page" : undefined}
+              aria-label={collapsed ? item.label : undefined}
+              className={cn(className, appSections && "min-w-0 w-auto flex-1 rounded-r-none")}
+              href={item.href}
+              onClick={closeMobileNavigation}
+              prefetch
+            >
+              {contents}
+            </GuardedNavigationLink>
+          );
           const control = item.disabled ? (
             <Popover className={cn("w-full", collapsed && "justify-center")}>
               <PopoverTrigger asChild>
@@ -626,36 +650,37 @@ function ApplicationNavigationContents({
                 </Button>
               </PopoverContent>
             </Popover>
+          ) : appSections ? (
+            <div className="flex">
+              {applicationLink}
+              <button
+                aria-controls={sectionNavigationId}
+                aria-expanded={contextExpanded}
+                aria-label={`${contextExpanded ? "Collapse" : "Expand"} ${item.label} sections`}
+                className={cn(
+                  "flex w-11 shrink-0 items-center justify-center rounded-r-xl outline-none transition-colors focus-visible:z-10",
+                  focusRing,
+                  interactiveColors,
+                )}
+                onClick={toggleContext}
+                type="button"
+              >
+                {sectionChevron}
+              </button>
+            </div>
           ) : hasSectionNavigation && !collapsed ? (
             <button
-              aria-controls={`${contextualNavigationId}-${item.key}`}
-              aria-current={active && !appSections ? "page" : undefined}
+              aria-controls={sectionNavigationId}
+              aria-current={active ? "page" : undefined}
               aria-expanded={contextExpanded}
               className={className}
               onClick={toggleContext}
               type="button"
             >
               {contents}
-              <ChevronDown
-                aria-hidden="true"
-                className={cn(
-                  "ml-auto h-4 w-4 shrink-0 transition-transform",
-                  contextExpanded && "rotate-180",
-                )}
-              />
+              <span className="ml-auto">{sectionChevron}</span>
             </button>
-          ) : (
-            <GuardedNavigationLink
-              aria-current={active ? "page" : undefined}
-              aria-label={collapsed ? item.label : undefined}
-              className={className}
-              href={item.href}
-              onClick={closeMobileNavigation}
-              prefetch
-            >
-              {contents}
-            </GuardedNavigationLink>
-          );
+          ) : applicationLink;
 
           return (
             <div
@@ -690,7 +715,7 @@ function ApplicationNavigationContents({
                       ? "grid-rows-[1fr] opacity-100"
                       : "pointer-events-none grid-rows-[0fr] opacity-0",
                   )}
-                  id={`${contextualNavigationId}-${item.key}`}
+                  id={sectionNavigationId}
                   inert={!contextExpanded}
                 >
                   <div className="min-h-0 overflow-hidden">
