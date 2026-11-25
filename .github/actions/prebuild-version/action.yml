@@ -1,6 +1,6 @@
 name: 'Prebuild Version'
 description: >
-  Computes the shared prebuild tag: <latest-stable-tag>-<branch>-<commit-count>.
+  Computes a shared prebuild tag using either a release-based or PR/SHA format.
   Requires a checkout with fetch-depth: 0.
 
 inputs:
@@ -14,10 +14,22 @@ inputs:
     description: 'PR base commit SHA to diff against, if known'
     required: false
     default: ''
+  tag_style:
+    description: 'Tag format: semver (default) or pr-sha'
+    required: false
+    default: semver
+  pr_number:
+    description: 'Pull request number, required when tag_style is pr-sha'
+    required: false
+    default: ''
+  commit_sha:
+    description: 'Source commit SHA, required when tag_style is pr-sha'
+    required: false
+    default: ''
 
 outputs:
   prebuild_tag:
-    description: 'Full prebuild tag, e.g. 1.1.0-fix-foo-4'
+    description: 'Full prebuild tag, e.g. 1.1.0-fix-foo-4 or pr-123-0123456789ab'
     value: ${{ steps.compute.outputs.prebuild_tag }}
   branch:
     description: 'Sanitized branch component, e.g. fix-foo'
@@ -39,16 +51,11 @@ runs:
         HEAD_REF: ${{ inputs.head_ref }}
         BASE_REF: ${{ inputs.base_ref }}
         BASE_SHA: ${{ inputs.base_sha }}
+        TAG_STYLE: ${{ inputs.tag_style }}
+        PR_NUMBER: ${{ inputs.pr_number }}
+        COMMIT_SHA: ${{ inputs.commit_sha }}
       run: |
         set -euo pipefail
-
-        git fetch --tags --force --quiet || true
-
-        BASE_VERSION=$(git tag -l | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
-        if [[ -z "$BASE_VERSION" ]]; then
-          echo "❌ No stable x.y.z tag found to base the prebuild version on"
-          exit 1
-        fi
 
         BRANCH_NO_PREFIX="${HEAD_REF#prebuild/}"
         BRANCH=$(echo "$BRANCH_NO_PREFIX" | tr '/' '-' | tr '_' '-' | tr '[:upper:]' '[:lower:]')
@@ -62,9 +69,37 @@ runs:
         fi
 
         COMMIT_COUNT=$(git rev-list --count "${BASE_COMMIT}..HEAD")
-        PREBUILD_TAG="${BASE_VERSION}-${BRANCH}-${COMMIT_COUNT}"
 
-        echo "📦 base_version=${BASE_VERSION} branch=${BRANCH} commit_count=${COMMIT_COUNT}"
+        case "$TAG_STYLE" in
+          semver)
+            git fetch --tags --force --quiet || true
+            BASE_VERSION=$(git tag -l | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+            if [[ -z "$BASE_VERSION" ]]; then
+              echo "❌ No stable x.y.z tag found to base the prebuild version on"
+              exit 1
+            fi
+            PREBUILD_TAG="${BASE_VERSION}-${BRANCH}-${COMMIT_COUNT}"
+            ;;
+          pr-sha)
+            if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+              echo "❌ A numeric PR number is required for pr-sha tags"
+              exit 1
+            fi
+            if [[ ! "$COMMIT_SHA" =~ ^[0-9a-fA-F]{12,40}$ ]]; then
+              echo "❌ A source commit SHA of at least 12 hexadecimal characters is required for pr-sha tags"
+              exit 1
+            fi
+            COMMIT_SHA="${COMMIT_SHA,,}"
+            BASE_VERSION=""
+            PREBUILD_TAG="pr-${PR_NUMBER}-${COMMIT_SHA:0:12}"
+            ;;
+          *)
+            echo "❌ Unsupported tag style: $TAG_STYLE"
+            exit 1
+            ;;
+        esac
+
+        echo "📦 tag_style=${TAG_STYLE} base_version=${BASE_VERSION} branch=${BRANCH} commit_count=${COMMIT_COUNT}"
         echo "🏷️ prebuild_tag=${PREBUILD_TAG}"
 
         echo "base_version=${BASE_VERSION}" >> "$GITHUB_OUTPUT"

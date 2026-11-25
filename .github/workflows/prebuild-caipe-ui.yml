@@ -6,6 +6,7 @@ on:
     types: [opened, synchronize, reopened]
     paths:
       - '.github/workflows/prebuild-caipe-ui.yml'
+      - '.github/actions/prebuild-version/**'
       - '.github/actions/prebuild-status/**'
       - '.github/actions/publish-prebuild-manifest/**'
       - 'ui/**'
@@ -160,6 +161,9 @@ jobs:
           head_ref: ${{ inputs.head_ref || github.head_ref }}
           base_ref: ${{ inputs.base_ref || github.event.pull_request.base.ref }}
           base_sha: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
+          tag_style: pr-sha
+          pr_number: ${{ inputs.pr_number || github.event.pull_request.number }}
+          commit_sha: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
 
       - name: Export prebuild tag to env
         shell: bash
@@ -267,6 +271,9 @@ jobs:
           head_ref: ${{ inputs.head_ref || github.head_ref }}
           base_ref: ${{ inputs.base_ref || github.event.pull_request.base.ref }}
           base_sha: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
+          tag_style: pr-sha
+          pr_number: ${{ inputs.pr_number || github.event.pull_request.number }}
+          commit_sha: ${{ inputs.head_sha || github.event.pull_request.head.sha }}
 
       - name: Publish multi-architecture image
         id: publish
