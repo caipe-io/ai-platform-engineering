@@ -1840,3 +1840,11 @@ STEP 4: MCP Tool Execution  (ArgoCD MCP Server)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Response path: MCP → Gateway → Dynamic Agents → Slack → User
 ```
+
+### Read-repair ownership audit after upgrading from 1.4.0
+
+- The agent-list and admin-tab GET repairs now write member baselines only. Privileged baselines remain owned by login reconciliation; an effective or cached administrator role is not an independent assignment.
+- Affected versions could mark a login-only admin tuple as independently granted when those pages loaded. Upgrading prevents new misattribution; it does not erase existing ownership records.
+- Inventory tracked direct admin tuples and their ownership rows. A row with both reasons set is a review candidate, not proof of a bad grant. Correlate explicit CAS grant/revoke audit history, login events and operator records.
+- For a confirmed false independent reason, use the supported CAS revoke operation under an authorized administrator. A current login reason must keep access until the actual SSO demotion; a genuine independent assignment must remain intact. Do not delete tuples or ledger rows directly.
+- Reauthenticate after the authoritative group removal and verify protected HTTP operations on every replica, then inspect the tuple and ownership reasons. Preserve before/after audit evidence and report any unconfirmed provenance as unresolved.

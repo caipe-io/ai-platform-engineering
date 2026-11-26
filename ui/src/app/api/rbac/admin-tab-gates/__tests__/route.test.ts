@@ -260,6 +260,20 @@ describe("GET /api/rbac/admin-tab-gates", () => {
     expect(body.gates.dynamic_agent_conversations).toBe(true);
   });
 
+  it("does not turn effective administrator access into independent baseline grants on reads", async () => {
+    mockGetServerSession.mockResolvedValue({ role: "admin", sub: "test-admin", user: { email: "test-admin@example.test" } });
+    mockCheckOpenFgaTuple.mockResolvedValue({ allowed: true });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect((await GET()).status).toBe(200);
+    }
+    expect(mockWriteOpenFgaTuples).toHaveBeenCalled();
+    for (const [diff] of mockWriteOpenFgaTuples.mock.calls) {
+      expect(diff.writes).toContainEqual({ user: "user:test-admin", relation: "member", object: "organization:caipe" });
+      expect(diff.writes.some((tuple: { relation: string }) => ["admin", "manager"].includes(tuple.relation))).toBe(false);
+      expect(diff.deletes).toEqual([]);
+    }
+  });
+
   it("repairs baseline member tuples before evaluating non-admin tab gates", async () => {
     mockGetServerSession.mockResolvedValue({
       role: "user",
