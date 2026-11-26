@@ -7,6 +7,7 @@ AWS MCP Server that exposes `aws_cli_execute` and `eks_kubectl_execute` as
 
 | Tool | Description |
 |------|-------------|
+| `list_aws_accounts` | Discover configured account names and IDs before calling account-scoped tools. |
 | `aws_cli_execute` | Execute read-only AWS CLI commands (`describe-*`, `list-*`, `get-*`). Write/destructive operations are blocked by default. Supports cross-account profiles via `AWS_ACCOUNT_LIST`. |
 | `eks_kubectl_execute` | Execute kubectl commands against an EKS cluster. Handles `aws eks update-kubeconfig` automatically. Secret data is redacted from output before returning to the LLM. |
 
@@ -21,8 +22,10 @@ AWS MCP Server that exposes `aws_cli_execute` and `eks_kubectl_execute` as
 | `CROSS_ACCOUNT_ROLE_NAME` | `caipe-read-only` | IAM role to assume in each account |
 | `AWS_CREDENTIAL_SOURCE` | auto | Optional AWS CLI credential source override: `Environment`, `EcsContainer`, or `Ec2InstanceMetadata` |
 | `AWS_CLI_MAX_EXECUTION_TIME` | `30` | Timeout (seconds) for AWS CLI commands |
+| `MAX_CONCURRENT_AWS_CALLS` | `10` | Maximum concurrent AWS CLI subprocesses; lower for memory/disk-constrained deployments |
 | `KUBECTL_MAX_EXECUTION_TIME` | `45` | Timeout (seconds) for kubectl commands |
-| `AWS_CLI_MAX_OUTPUT_SIZE` | `20000` | Maximum output size (bytes) before truncation |
+| `AWS_CLI_MAX_OUTPUT_SIZE` | `20000` | Maximum captured output bytes returned before a truncation notice; negative values become zero |
+| `AWS_CLI_MAX_CAPTURE_SIZE` | `16777216` | Per-stream disk capture budget in bytes for AWS CLI and jq (16 MiB); minimum 1 byte |
 | `RESTRICT_KUBECTL_SECRETS` | `true` | Block `kubectl get/describe secret(s)` |
 | `RESTRICT_KUBECTL_PROXY` | `true` | Block `kubectl proxy` |
 | `RESTRICT_KUBECTL_EXEC` | `false` | Block `kubectl exec` |
@@ -49,6 +52,42 @@ When IRSA is selected, its token-file path must not start or end with whitespace
 and account names cannot use the reserved source profile name
 `mcp-workload-identity`. IRSA settings are ignored when an explicit credential
 source or container provider is selected.
+
+### Account selection
+
+When `AWS_ACCOUNT_LIST` is configured, `aws_cli_execute` and
+`eks_kubectl_execute` require a configured profile name. Missing or unknown
+selectors return the available names rather than silently using the server's
+bootstrap credentials. `account` is accepted as a legacy alias; conflicting
+`account` and `profile` values are rejected. Without `AWS_ACCOUNT_LIST`, tools
+continue to use the default credential chain without a profile argument.
+
+Account selection is routing, not authorization. Restrict the server's IAM
+permissions and role trust policies independently.
+
+AWS CLI and optional `jq` filtering run as argument arrays, not shell commands.
+Quoted JMESPath expressions can contain pipes without being interpreted as shell
+pipelines. Pass the account using `profile`/`account`, not an embedded
+`--profile` flag. Existing destructive-operation checks are retained; they are
+not a substitute for read-only IAM permissions.
+
+For `aws_cli_execute`, AWS CLI and `jq` stdout/stderr are drained concurrently
+into temporary files, each limited by `AWS_CLI_MAX_CAPTURE_SIZE`. Exceeding that separate capture
+budget kills and reaps the child and returns an explicit error naming the limit.
+Within the capture budget, `jq` sees the full CLI output before response
+truncation; exceeding `AWS_CLI_MAX_OUTPUT_SIZE` alone does not kill the child.
+Timeout or request cancellation also terminates the process group on POSIX;
+pipe cleanup has a separate two-second deadline. Capture files
+close on exit. jq failures retain bounded stderr or the process error alongside
+the bounded raw-output fallback.
+
+The AWS phase can hold two capture files; jq can hold the AWS captures plus its
+own two files (at most four capture budgets per call). Size ephemeral storage
+and concurrency accordingly. These limits do not bound the child process's own
+memory or files it creates independently.
+
+`eks_kubectl_execute` runs `aws eks update-kubeconfig` and `kubectl` through
+in-memory pipes. Those calls do not use `AWS_CLI_MAX_CAPTURE_SIZE`.
 
 ## Running locally
 
