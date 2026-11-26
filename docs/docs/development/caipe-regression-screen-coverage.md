@@ -251,6 +251,9 @@ Do not renumber existing children when inserting a new assertion.
 | WEBEX-01.01 | Approved test identity/destination: send labelled 1:1, then contextual follow-up | Delivered replies and host history preserve marker/context without duplicate runs |
 | WEBEX-01.02 | Approved fixture space mapping: mention bot, then follow up in its thread | Correct scoped route/identity and actual delivery agree with stored host conversation |
 
+| APP-02.01 | Open an app with `assistant_chat=new` twice while an older app conversation exists | Each action creates one fresh conversation with the configured assistant and app metadata, replaces the URL with its real ID, and preserves old chats. A delayed Next.js query update cannot restart a completed request or cause a render loop. Ordinary opens and explicit saved-chat links retain their existing restore behavior. Adapter: `AgenticAppAssistantOverlay.test.tsx` |
+| AGT-04.01 | Seed a config-driven agent with changed native tools while Harness Engine is enabled | The same publication adapter used by agent saves prepares a version before replacing the agent pointer. Unchanged restarts retain the version; failed publication leaves the previous configuration intact; adopted agents remain unchanged. Adapter: `seed-config-execution.test.ts` |
+
 Record adapter gaps explicitly. This register and inventory do not restore the old
 Playwright runners, synthetic-cookie helpers or monolithic app endpoints. Port
 only compatible assertions to current owning suites; track every remaining gap

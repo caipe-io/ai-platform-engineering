@@ -454,6 +454,8 @@ export interface DynamicAgentConfig {
   /** Runtime selected by Harness Gateway. Missing legacy values mean Dynamic Agents. */
   execution_harness_id?: string;
   execution_blueprint_version?: number;
+  /** Internal digest used to reuse config-seeded execution versions. */
+  seed_execution_fingerprint?: string;
   name: string;
   description?: string;
   system_prompt: string;
