@@ -166,7 +166,7 @@ jobs:
         run: |
           cd ai_platform_engineering/dynamic_agents
           /home/runner/.local/bin/uv venv
-          /home/runner/.local/bin/uv sync --extra dev
+          /home/runner/.local/bin/uv sync --extra dev --extra directory
           /home/runner/.local/bin/uv run pytest -v
 
   run-autonomous-agents-tests:
