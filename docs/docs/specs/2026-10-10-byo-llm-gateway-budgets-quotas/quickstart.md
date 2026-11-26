@@ -7,7 +7,7 @@ How an admin will connect a gateway once the phases in [plan.md](./plan.md) ship
 - [ ] Serves the OpenAI API at `https://llm-gateway.example.com/v1`.
 - [ ] Trusts the CAIPE token issuer's JWKS and expects `aud` = `LLM_GATEWAY_AUDIENCE` (or, for key auth, accepts per-agent keys).
 - [ ] Defines limits for the verified agent/team binding; JWT mode also uses verified `sub`. User attribution and per-user limits are best-effort in key mode. Configure limits externally or through a supported adapter.
-- [ ] Fails closed when its limit store is unreachable.
+- [ ] Fails closed when its limit store is unreachable, after at most a 60 s grace window for cached credentials.
 - [ ] Exposes model aliases equal to the `llm_models.model_id` values in use.
 
 ## 2. Point CAIPE at it

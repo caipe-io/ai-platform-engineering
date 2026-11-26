@@ -14,7 +14,7 @@ Any gateway CAIPE supports must satisfy this contract. It is what keeps gateways
    - JWT auth: enforces limits per `sub`, `agent_id` and `team_id`, namespaced by `org`.
    - Key auth: enforces agent and team limits using the gateway's key bindings. User attribution comes from the request's `user` field and is unverified, so per-user limits are best-effort (FR-005).
 5. **Limit rejection**: reject requests when an enforced limit is reached. CAIPE preserves the error status and existing classification; a gateway-specific origin marker, budget scope or reset time is not required.
-6. **Fail closed**: if the limit store or rate-limit service is unreachable, requests are rejected, not admitted unmetered.
+6. **Fail closed**: if the limit store or rate-limit service is unreachable, requests are rejected, not admitted unmetered. A gateway may keep admitting credentials it has already cached for a documented grace window `G`, capped at 60 seconds (for example LiteLLM's `user_api_key_cache_ttl`); after `G`, every request is rejected.
 7. **Error passthrough**: upstream errors keep their class. No silent retry that changes it.
 8. **Telemetry**: per-request usage (tokens, cost) is exportable (OTel or Prometheus).
 9. **Config as code**: gateway config is declared and applied, never hand-patched.
@@ -31,6 +31,8 @@ Any gateway CAIPE supports must satisfy this contract. It is what keeps gateways
 
 ## Conformance check
 
+Automated by the [conformance suite](https://github.com/caipe-io/ai-platform-engineering/tree/main/tests/llm_gateway_conformance) (key-mode checks first).
+
 A gateway passes for its configured authentication mode when:
 
 - [ ] Every agent path in scope returns a correct completion, streaming and tool calls included.
@@ -43,6 +45,6 @@ A gateway passes for its configured authentication mode when:
 - [ ] An induced upstream 429 or 5xx reaches the agent with its class unchanged, including provider quota errors containing "budget" or "quota".
 - [ ] Ambiguous 402/429 responses retain their original classification without inferred scope or budget-increase advice.
 - [ ] With adapter `none`, rejections propagate without error-recognition configuration or direct-provider fallback.
-- [ ] With the limit store down, requests are rejected (AgentRouter: `quotaRateLimitFailureModeDeny=true`).
+- [ ] With the limit store down, requests are rejected within the documented grace window `G` ≤ 60 seconds (AgentRouter: `quotaRateLimitFailureModeDeny=true`).
 - [ ] JWT auth: usage is attributable to verified `sub`, `agent_id` and `team_id`.
 - [ ] Key auth: usage is attributable to the key's agent and team; any user attribution is explicitly treated as unverified.
