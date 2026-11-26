@@ -57,7 +57,9 @@ def client() -> TestClient:
 @pytest.fixture(autouse=True)
 def _wire(monkeypatch: pytest.MonkeyPatch):
     restapi.app.dependency_overrides[require_authenticated_user] = _user
-    monkeypatch.setattr(restapi, "vector_db", MagicMock(), raising=False)
+    vector_db = MagicMock()
+    vector_db.client.query_iterator.return_value.next.return_value = []
+    monkeypatch.setattr(restapi, "vector_db", vector_db, raising=False)
     query_service = AsyncMock()
 
     async def _build_filter_expression(filters: dict) -> str:
@@ -93,9 +95,10 @@ def test_list_documents_allowed_queries_milvus(monkeypatch: pytest.MonkeyPatch):
     response = client.get("/v1/datasource/primary-ds/documents")
 
     assert response.status_code == 200
-    restapi.vector_db.client.query.assert_called_once()
-    _, kwargs = restapi.vector_db.client.query.call_args
-    assert "primary-ds" in kwargs["filter"]
+    assert restapi.vector_db.client.query.call_count == 2
+    for call in restapi.vector_db.client.query.call_args_list:
+        assert "primary-ds" in call.kwargs["filter"]
+    assert "primary-ds" in restapi.vector_db.client.query_iterator.call_args.kwargs["filter"]
 
 
 def test_list_documents_passes_datasource_id_and_scope_to_check(monkeypatch: pytest.MonkeyPatch):
