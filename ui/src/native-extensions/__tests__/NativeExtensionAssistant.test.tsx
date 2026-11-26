@@ -1,13 +1,14 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useLayoutEffect } from "react";
-import { requestHostAssistant } from "@/lib/agentic-apps/assistant-events";
+import { configureHostAssistant, requestHostAssistant } from "@/lib/agentic-apps/assistant-events";
+import { enabledMessageActions } from "@/lib/agentic-apps/assistant-presentation";
 
 import { NativeExtensionAssistant } from "../NativeExtensionAssistant";
 
 const mockResolve = jest.fn();
 let mockSession = { sub: "test-user", org: "example-org", role: "user", user: { email: "test-user@example.test" } };
 const mockOverlay = jest.fn((props: { assistantAgentId: string; open: boolean; onOpenChange: (open: boolean) => void;
-  activeContext?: { title?: string } | null }) =>
+  activeContext?: { title?: string } | null; configuration?: { messageActions?: Record<string, { visible: boolean }> } }) =>
   <button onClick={() => props.onOpenChange(true)} data-open={String(props.open)}>Ask Example</button>);
 jest.mock("next-auth/react", () => ({ useSession: () => ({ status: "authenticated", data: mockSession }) }));
 jest.mock("@/lib/chat-agent-selection", () => ({ resolveUsableChatAgent: (options: unknown) => mockResolve(options) }));
@@ -59,6 +60,52 @@ describe("NativeExtensionAssistant", () => {
     view.rerender(<><NativeExtensionAssistant {...props} /><MountRequest /></>);
     await waitFor(() => expect(screen.getByRole("button", { name: "Ask Example" })).toHaveAttribute("data-open", "false"));
     expect(mockOverlay.mock.calls.at(-1)?.[0].activeContext).toBeNull();
+  });
+
+  describe("message action visibility", () => {
+    const actions = { ...props, assistant: { ...props.assistant, hostOptions: { version: "1.0" as const,
+      messageActions: [{ id: "flag-answer", label: "Flag answer", icon: "flag" as const, path: "/api/example/actions/flag" }] } } };
+    const enable = { version: "1.0" as const, visible: true, messageActions: { "flag-answer": { visible: true } } };
+    const lastConfiguration = () => mockOverlay.mock.calls.at(-1)?.[0].configuration;
+
+    it("passes enablement to the overlay only after the app configures it", async () => {
+      render(<NativeExtensionAssistant {...actions} />);
+      await waitFor(() => expect(mockOverlay).toHaveBeenCalled());
+      expect(lastConfiguration()?.messageActions).toBeUndefined();
+      act(() => configureHostAssistant("example-app", enable));
+      await waitFor(() => expect(lastConfiguration()?.messageActions).toEqual({ "flag-answer": { visible: true } }));
+    });
+
+    it("drops enablement when the account changes", async () => {
+      const view = render(<NativeExtensionAssistant {...actions} />);
+      await waitFor(() => expect(mockOverlay).toHaveBeenCalled());
+      act(() => configureHostAssistant("example-app", enable));
+      await waitFor(() => expect(lastConfiguration()?.messageActions).toBeDefined());
+      mockSession.user.email = "secondary-user@example.test";
+      view.rerender(<NativeExtensionAssistant {...actions} />);
+      await waitFor(() => expect(lastConfiguration()?.messageActions).toBeUndefined());
+    });
+
+    it("drops enablement on unmount, and a new mount starts hidden", async () => {
+      const view = render(<NativeExtensionAssistant {...actions} />);
+      await waitFor(() => expect(mockOverlay).toHaveBeenCalled());
+      act(() => configureHostAssistant("example-app", enable));
+      await waitFor(() => expect(lastConfiguration()?.messageActions).toBeDefined());
+      view.unmount();
+      mockOverlay.mockClear();
+      render(<NativeExtensionAssistant {...actions} />);
+      await waitFor(() => expect(mockOverlay).toHaveBeenCalled());
+      expect(lastConfiguration()?.messageActions).toBeUndefined();
+    });
+
+    it("ignores enablement for an action the manifest never declared", async () => {
+      render(<NativeExtensionAssistant {...actions} />);
+      await waitFor(() => expect(mockOverlay).toHaveBeenCalled());
+      act(() => configureHostAssistant("example-app", { version: "1.0", visible: true, messageActions: { other: { visible: true } } }));
+      await waitFor(() => expect(lastConfiguration()?.messageActions).toEqual({ other: { visible: true } }));
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(enabledMessageActions(actions.assistant.hostOptions, lastConfiguration())).toEqual([]);
+    });
   });
 
   it("does not replay the previous binding's request after unmount and remount", async () => {

@@ -18,6 +18,7 @@ The native component interface of the CAIPE App Contract is **2.0**;
 **2.0.0-rc.1** aligns the new
 publisher and component contracts. Native interface **1.1** remains an explicit
 compatibility path. This release does not change component props or privileges.
+`2.0.0-rc.2` adds optional [message actions](../ui/message-actions.md) for the host assistant.
 
 | Phase | Included here? |
 | --- | --- |

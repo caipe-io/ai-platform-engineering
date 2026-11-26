@@ -476,3 +476,55 @@ class APIClient {
 
 // Export singleton instance
 export const apiClient = new APIClient();
+
+/** Slightly above the server's app timeout, so a hung server still ends in an error state. */
+export const ASSISTANT_ACTION_CLIENT_TIMEOUT_MS = 35_000;
+
+export interface AssistantActionRequest {
+  conversationId: string;
+  agentId: string;
+  messageId: string;
+  actionId: string;
+  text?: string;
+}
+
+export interface AssistantActionResult {
+  ok: boolean;
+  /** Success text from the app, when it sent one. */
+  message?: string;
+  /** User-safe failure text. */
+  error?: string;
+  code?: string;
+}
+
+/** Run an app-declared action on a finished assistant answer; never throws. */
+export async function postAssistantAction(request: AssistantActionRequest): Promise<AssistantActionResult> {
+  try {
+    const response = await fetch("/api/v1/chat/assistant-actions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Client-Source": "caipe-ui" },
+      body: JSON.stringify({
+        conversation_id: request.conversationId,
+        agent_id: request.agentId,
+        message_id: request.messageId,
+        action_id: request.actionId,
+        ...(request.text !== undefined ? { input: { text: request.text } } : {}),
+      }),
+      signal: AbortSignal.timeout(ASSISTANT_ACTION_CLIENT_TIMEOUT_MS),
+    });
+    type Body = { error?: unknown; code?: unknown; data?: { message?: unknown } } | null;
+    if (response.ok) {
+      // A success whose body cannot be read is an error; the outer catch reports it.
+      const body = await response.json() as Body;
+      return { ok: true, ...(typeof body?.data?.message === "string" ? { message: body.data.message } : {}) };
+    }
+    const body = await response.json().catch(() => null) as Body;
+    return {
+      ok: false,
+      error: typeof body?.error === "string" && body.error ? body.error : "The action could not be completed",
+      ...(typeof body?.code === "string" ? { code: body.code } : {}),
+    };
+  } catch {
+    return { ok: false, error: "The action could not be completed. Try again." };
+  }
+}

@@ -1,6 +1,6 @@
 {
   "name": "@caipe-io/app-sdk",
-  "version": "2.0.0-rc.1",
+  "version": "2.0.0-rc.2",
   "description": "CAIPE application manifests, host interfaces, and conformance checks for native and hosted apps",
   "type": "module",
   "license": "Apache-2.0",

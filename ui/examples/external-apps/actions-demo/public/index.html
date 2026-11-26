@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en" data-base-path="__BASE_PATH__">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Actions Demo</title>
+    <link rel="stylesheet" href="__BASE_PATH__/assets/app.css" />
+    <script type="module" src="__BASE_PATH__/assets/app.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Actions Demo</h1>
+      <p class="lede">
+        Test app for message actions. Open the assistant, ask a question, then use the
+        action buttons on the finished answer.
+      </p>
+
+      <section aria-labelledby="bridge-heading">
+        <h2 id="bridge-heading">Host bridge</h2>
+        <p id="status" role="status">Connecting to the host…</p>
+      </section>
+
+      <section aria-labelledby="visibility-heading">
+        <h2 id="visibility-heading">Who sees which action</h2>
+        <p class="hint">Visibility is per user and never stored. Reload this page and both start hidden until the bridge is ready.</p>
+        <label><input id="show-flag" type="checkbox" checked /> Flag answer (dialog)</label>
+        <label><input id="show-mark" type="checkbox" checked /> Mark answer (no dialog)</label>
+      </section>
+
+      <section aria-labelledby="received-heading">
+        <h2 id="received-heading">Calls this app received</h2>
+        <p class="hint">
+          Submit text containing <code>fail</code>, <code>expired</code>, <code>html</code>,
+          <code>redirect</code> or <code>slow</code> to try each error path.
+        </p>
+        <button id="refresh" type="button">Refresh</button>
+        <pre id="received" aria-live="polite">No calls yet.</pre>
+      </section>
+    </main>
+  </body>
+</html>

@@ -69,6 +69,8 @@ export function createAgenticAppBridge({ appId, onNavigate, onStatus, onAssistan
     },
     configureAssistant(configuration) {
       if (!capabilities?.composerExtensions?.includes("configuration.v1")) throw new Error("Host assistant configuration is unsupported");
+      if (configuration?.messageActions !== undefined && !capabilities.composerExtensions.includes("messageActions.v1"))
+        throw new Error("Host message actions are unsupported");
       validateAssistantConfiguration(configuration, capabilities.assistantOptions);
       send("caipe.agenticApp.assistant.configure.v1", { configuration });
     },
