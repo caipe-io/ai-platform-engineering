@@ -242,16 +242,27 @@ function HeroSection({ onOpenTour }: { onOpenTour: () => void }) {
               Open Source AI Platform for{' '}
               <span className={styles.heroAccent}>All</span>
             </Heading>
-            <a
-              href="https://landscape.cncf.io/?group=projects-and-products&view-mode=card&item=provisioning--automation-configuration--caipe#artificial-intelligence--machine-learning"
-              target="_blank"
-              rel="noopener noreferrer"
-              className={styles.heroBadge}
-            >
-              <img src={cncfIcon} alt="" width={20} height={20} />
-              <span>A CNCF Sandbox Project</span>
-              <span aria-hidden="true">↗</span>
-            </a>
+            <div className={styles.heroBadges}>
+              <a
+                href="https://landscape.cncf.io/?group=projects-and-products&view-mode=card&item=provisioning--automation-configuration--caipe#artificial-intelligence--machine-learning"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={styles.heroBadge}
+              >
+                <img src={cncfIcon} alt="" width={20} height={20} />
+                <span>A CNCF Sandbox Project</span>
+                <span aria-hidden="true">↗</span>
+              </a>
+              <Link href="https://www.bestpractices.dev/en/projects/16518/baseline-1">
+                <img
+                  src="https://www.bestpractices.dev/projects/16518/baseline"
+                  alt="OpenSSF Security Baseline status"
+                  className={styles.heroBaselineBadge}
+                  width={213}
+                  height={20}
+                />
+              </Link>
+            </div>
             <p className={styles.heroSubtitle}>
               Build, govern, and operate secure AI agents and workflows for <TypewriterAudience />
             </p>
