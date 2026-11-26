@@ -47,6 +47,15 @@ def storage(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
   return value
 
 
+@pytest.fixture
+def ingestion_claim():
+  marker = restapi.CURRENT_CLAIM.set({"_id": _datasource().datasource_id, "token": "example-token"})
+  try:
+    yield
+  finally:
+    restapi.CURRENT_CLAIM.reset(marker)
+
+
 @pytest.mark.asyncio
 async def test_human_full_upsert_requires_org_admin(
   monkeypatch: pytest.MonkeyPatch,
@@ -85,6 +94,7 @@ async def test_denied_human_cannot_replace_datasource_metadata(
 
 @pytest.mark.asyncio
 async def test_trusted_ingestor_uses_assignment_check(
+  ingestion_claim,
   monkeypatch: pytest.MonkeyPatch,
   storage: AsyncMock,
 ) -> None:
@@ -109,6 +119,7 @@ async def test_trusted_ingestor_uses_assignment_check(
 
 @pytest.mark.asyncio
 async def test_trusted_ingestor_cannot_replace_existing_authorization_policy(
+  ingestion_claim,
   monkeypatch: pytest.MonkeyPatch,
   storage: AsyncMock,
 ) -> None:
@@ -689,6 +700,7 @@ async def test_human_cannot_forge_internal_job_progress(
 
 @pytest.mark.asyncio
 async def test_job_transport_checks_claimed_ingestor_assignment(
+  ingestion_claim,
   monkeypatch: pytest.MonkeyPatch,
 ) -> None:
   request = MagicMock()
@@ -707,3 +719,12 @@ async def test_job_transport_checks_claimed_ingestor_assignment(
     "primary",
     "webloader:default",
   )
+
+
+@pytest.mark.asyncio
+async def test_trusted_ingestor_requires_current_claim(monkeypatch, storage):
+  monkeypatch.setattr(restapi, "is_trusted_ingestor_service", lambda _user: True)
+  with pytest.raises(HTTPException) as error:
+    await restapi.upsert_datasource(_datasource(), None, _user())
+  assert error.value.status_code == 409
+  storage.store_datasource_info.assert_not_awaited()

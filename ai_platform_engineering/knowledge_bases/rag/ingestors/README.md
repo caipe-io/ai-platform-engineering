@@ -6,7 +6,7 @@ This directory contains ingestors. An ingestor is a script that ingests data fro
 
 ### Web Loader
 
-This is a default web page ingestor that can crawl sitemaps and ingest web pages. This is included by default when you set up the RAG system. Since it's triggered via Web UI, it is more tightly integrated with the Server and Redis job management system.
+This is a default web page ingestor that can crawl sitemaps and ingest web pages. This is included by default when you set up the RAG system. Since it's triggered via Web UI, it is more tightly integrated with the Server and MongoDB job management system.
 
 ### Dummy Graph Ingestor
 

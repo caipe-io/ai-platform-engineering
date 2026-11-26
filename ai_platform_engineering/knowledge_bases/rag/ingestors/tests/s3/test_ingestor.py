@@ -472,6 +472,11 @@ class TestS3DocumentLoader:
 
 
 class TestSyncS3Buckets:
+  @pytest.fixture(autouse=True)
+  def _mock_storage(self, monkeypatch):
+    storage = AsyncMock()
+    monkeypatch.setattr("common.ingestor_listener.MongoStorage", MagicMock(return_value=storage))
+
   def _make_s3_client(self, objects: list[dict], bodies: dict[str, bytes]):
     paginator = MagicMock()
     paginator.paginate.return_value = [{"Contents": objects}]

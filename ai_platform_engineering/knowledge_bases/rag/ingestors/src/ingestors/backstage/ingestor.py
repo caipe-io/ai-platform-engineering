@@ -4,6 +4,7 @@ import logging
 import requests
 from typing import List, Dict, Optional
 
+from common.ingestor_listener import run_standalone_ingestion
 from common.ingestor import IngestorBuilder, Client
 from common.models.rag import StructuredEntity
 from common.models.rag import DataSourceInfo
@@ -86,6 +87,7 @@ def _get_oauth2_token() -> str:
       "client_secret": BACKSTAGE_OIDC_CLIENT_SECRET,
       "scope": BACKSTAGE_OIDC_SCOPES,
     },
+    timeout=10,
   )
   response.raise_for_status()
   token_data = response.json()
@@ -100,7 +102,9 @@ def get_auth_headers() -> Dict[str, str]:
   """Return Authorization header for the active auth mode."""
   if BACKSTAGE_AUTH_MODE == "oauth2":
     return {"Authorization": f"Bearer {_get_oauth2_token()}"}
-  return {"Authorization": f"Bearer {BACKSTAGE_API_TOKEN}"}
+  if BACKSTAGE_AUTH_MODE == "static":
+    return {"Authorization": f"Bearer {BACKSTAGE_API_TOKEN}"}
+  raise ValueError(f"Unknown BACKSTAGE_AUTH_MODE: {BACKSTAGE_AUTH_MODE!r}. Valid values: static, oauth2")
 
 
 # ── Ingestor logic (unchanged from upstream) ─────────────────────────────────
@@ -185,59 +189,62 @@ async def sync_backstage_entities(client: Client):
       "ignored_types": IGNORE_TYPES,
     },
   )
-  await client.upsert_datasource(datasource_info)
-  logging.info(f"Created/updated datasource: {datasource_id}")
+  async def sync_datasource() -> None:
+    await client.upsert_datasource(datasource_info)
+    logging.info(f"Created/updated datasource: {datasource_id}")
 
-  # 2. Create a job for this ingestion
-  job_response = await client.create_job(datasource_id=datasource_id, job_status=JobStatus.IN_PROGRESS, message="Starting Backstage entity ingestion", total=len(filtered_items))
-  job_id = job_response["job_id"]
-  logging.info(f"Created job {job_id} for datasource={datasource_id} with {len(filtered_items)} entities")
+    # 2. Create a job for this ingestion
+    job_response = await client.create_job(datasource_id=datasource_id, job_status=JobStatus.IN_PROGRESS, message="Starting Backstage entity ingestion", total=len(filtered_items))
+    job_id = job_response["job_id"]
+    logging.info(f"Created job {job_id} for datasource={datasource_id} with {len(filtered_items)} entities")
 
-  # 3. Convert Backstage items to StructuredEntity objects
-  entities = []
-  for item in filtered_items:
+    # 3. Convert Backstage items to StructuredEntity objects
+    entities = []
+    for item in filtered_items:
+      try:
+        kind = item.get("kind", "Unknown")
+        # Copy item properties
+        props = item.copy()
+
+        # Create StructuredEntity with proper primary and additional keys using dot notation
+        entity = StructuredEntity(entity_type=f"Backstage{kind}", all_properties=props, primary_key_properties=["metadata.uid"], additional_key_properties=[["metadata.name"]])
+        entities.append(entity)
+
+      except Exception as e:
+        logging.error(f"Error converting Backstage item to StructuredEntity: {e}", exc_info=True)
+        await client.add_job_error(job_id, [f"Error converting item: {str(e)}"])
+        await client.increment_job_failure(job_id, 1)
+
+    logging.info(f"Converted {len(entities)} Backstage items to StructuredEntity objects")
+
+    # 4. Ingest entities using automatic batching
     try:
-      kind = item.get("kind", "Unknown")
-      # Copy item properties
-      props = item.copy()
+      if entities:
+        logging.info(f"Ingesting {len(entities)} entities with automatic batching")
 
-      # Create StructuredEntity with proper primary and additional keys using dot notation
-      entity = StructuredEntity(entity_type=f"Backstage{kind}", all_properties=props, primary_key_properties=["metadata.uid"], additional_key_properties=[["metadata.name"]])
-      entities.append(entity)
+        # Use the client's ingest_entities method which handles batching automatically
+        await client.ingest_entities(job_id=job_id, datasource_id=datasource_id, entities=entities, fresh_until=utils.get_fresh_until(SYNC_INTERVAL))
+
+        # Update job progress to reflect all entities processed
+        await client.increment_job_progress(job_id, len(entities))
+
+        # Mark job as complete
+        await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully ingested {len(entities)} entities")
+        logging.info(f"Successfully completed ingestion of {len(entities)} entities")
+      else:
+        # No entities to ingest
+        await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message="No entities to ingest after filtering")
+        logging.info("No entities to ingest")
 
     except Exception as e:
-      logging.error(f"Error converting Backstage item to StructuredEntity: {e}", exc_info=True)
-      await client.add_job_error(job_id, [f"Error converting item: {str(e)}"])
-      await client.increment_job_failure(job_id, 1)
+      # Mark job as failed
+      error_msg = f"StructuredEntity ingestion failed: {str(e)}"
+      await client.add_job_error(job_id, [error_msg])
+      await client.update_job(job_id=job_id, job_status=JobStatus.FAILED, message=error_msg)
+      logging.error(error_msg, exc_info=True)
+      raise
 
-  logging.info(f"Converted {len(entities)} Backstage items to StructuredEntity objects")
-
-  # 4. Ingest entities using automatic batching
-  try:
-    if entities:
-      logging.info(f"Ingesting {len(entities)} entities with automatic batching")
-
-      # Use the client's ingest_entities method which handles batching automatically
-      await client.ingest_entities(job_id=job_id, datasource_id=datasource_id, entities=entities, fresh_until=utils.get_fresh_until(SYNC_INTERVAL))
-
-      # Update job progress to reflect all entities processed
-      await client.increment_job_progress(job_id, len(entities))
-
-      # Mark job as complete
-      await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message=f"Successfully ingested {len(entities)} entities")
-      logging.info(f"Successfully completed ingestion of {len(entities)} entities")
-    else:
-      # No entities to ingest
-      await client.update_job(job_id=job_id, job_status=JobStatus.COMPLETED, message="No entities to ingest after filtering")
-      logging.info("No entities to ingest")
-
-  except Exception as e:
-    # Mark job as failed
-    error_msg = f"StructuredEntity ingestion failed: {str(e)}"
-    await client.add_job_error(job_id, [error_msg])
-    await client.update_job(job_id=job_id, job_status=JobStatus.FAILED, message=error_msg)
-    logging.error(error_msg, exc_info=True)
-    raise
+  await run_standalone_ingestion(datasource_info.datasource_id, sync_datasource)
 
 
 if __name__ == "__main__":
