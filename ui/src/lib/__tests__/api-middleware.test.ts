@@ -1757,3 +1757,72 @@ describe('requireAdmin', () => {
     });
   });
 });
+
+describe('isBearerBaselineEligible', () => {
+  const originalEnv = { ...process.env };
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  function loadWithEnv(env: Record<string, string>) {
+    process.env = { ...originalEnv, ...env };
+    let fn!: typeof import('../api-middleware').isBearerBaselineEligible;
+    jest.isolateModules(() => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      fn = require('../api-middleware').isBearerBaselineEligible;
+    });
+    return fn;
+  }
+
+  const user = {
+    sub: 'sub-bot-user',
+    isServiceAccount: false,
+    issuerAndAudienceVerified: true,
+    claims: { groups: ['caipe-users'] },
+  };
+
+  it('admits a verified user token that carries the required group', () => {
+    const eligible = loadWithEnv({ OIDC_REQUIRED_GROUP: 'caipe-users' });
+    expect(eligible(user)).toBe(true);
+  });
+
+  it('rejects tokens without issuer and audience verification', () => {
+    const eligible = loadWithEnv({ OIDC_REQUIRED_GROUP: '' });
+    expect(eligible({ ...user, issuerAndAudienceVerified: false })).toBe(false);
+  });
+
+  it('rejects service accounts', () => {
+    const eligible = loadWithEnv({ OIDC_REQUIRED_GROUP: '' });
+    expect(eligible({ ...user, isServiceAccount: true })).toBe(false);
+  });
+
+  it('rejects a token without the groups claim when a group is required', () => {
+    const eligible = loadWithEnv({ OIDC_REQUIRED_GROUP: 'caipe-users' });
+    expect(eligible({ ...user, claims: {} })).toBe(false);
+  });
+
+  it('applies OIDC_GROUP_CLAIM and the group excludelist like web login', () => {
+    const fromOtherClaim = loadWithEnv({ OIDC_REQUIRED_GROUP: 'caipe-users', OIDC_GROUP_CLAIM: 'memberOf' });
+    expect(fromOtherClaim(user)).toBe(false);
+    expect(fromOtherClaim({ ...user, claims: { memberOf: ['caipe-users'] } })).toBe(true);
+
+    const excluded = loadWithEnv({ OIDC_REQUIRED_GROUP: 'caipe-users', OIDC_GROUP_EXCLUDELIST: 'caipe-users' });
+    expect(excluded(user)).toBe(false);
+  });
+});
+
+describe('bearerEmailClaim', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { bearerEmailClaim } = require('../api-middleware') as typeof import('../api-middleware');
+
+  it('normalizes the email claim and reports verification', () => {
+    expect(bearerEmailClaim({ email: ' User@Example.com ', email_verified: true })).toEqual({ email: 'user@example.com', verified: true });
+    expect(bearerEmailClaim({ email: 'user@example.com' })).toEqual({ email: 'user@example.com', verified: false });
+    expect(bearerEmailClaim({ email: 'user@example.com', email_verified: 'true' })).toEqual({ email: 'user@example.com', verified: false });
+  });
+
+  it('never falls back to a username', () => {
+    expect(bearerEmailClaim({ preferred_username: 'user@example.com', email_verified: true })).toBeUndefined();
+    expect(bearerEmailClaim(undefined)).toBeUndefined();
+  });
+});

@@ -366,14 +366,35 @@ export function bundleToLegacyProfile(bundle: BaselineFgaProfileBundle): Baselin
   };
 }
 
+/**
+ * Read the stored profile bundle; a read error throws instead of falling back to defaults.
+ * `strictGlobalMemberProfile` also throws when the stored global member profile id
+ * names no member profile, instead of normalizing it to `org-member`.
+ */
+export async function readBaselineFgaProfileBundle(
+  options: { strictGlobalMemberProfile?: boolean } = {}
+): Promise<BaselineFgaProfileBundle> {
+  const collection = await getCollection<BaselineFgaProfileDoc>(BASELINE_FGA_PROFILE_COLLECTION);
+  const doc = await collection.findOne({ _id: BASELINE_FGA_PROFILE_BUNDLE_ID });
+  if (doc) {
+    const bundle = normalizeBaselineFgaProfileBundle({ ...doc, source: "mongo" });
+    const configuredId = doc.global_member_profile_id;
+    if (options.strictGlobalMemberProfile && configuredId !== undefined && configuredId !== null) {
+      const id = typeof configuredId === "string" ? configuredId.trim() : "";
+      if (!bundle.profiles.some((profile) => profile.role === "member" && profile.id === id)) {
+        throw new Error("configured global member profile is not defined");
+      }
+    }
+    return bundle;
+  }
+  const legacy = await collection.findOne({ _id: BASELINE_FGA_PROFILE_ID });
+  if (legacy) return legacyProfileToBundle(normalizeBaselineFgaProfile({ ...legacy, source: "mongo" }));
+  return defaultBaselineFgaProfileBundle();
+}
+
 export async function getBaselineFgaProfileBundle(): Promise<BaselineFgaProfileBundle> {
   try {
-    const collection = await getCollection<BaselineFgaProfileDoc>(BASELINE_FGA_PROFILE_COLLECTION);
-    const doc = await collection.findOne({ _id: BASELINE_FGA_PROFILE_BUNDLE_ID });
-    if (doc) return normalizeBaselineFgaProfileBundle({ ...doc, source: "mongo" });
-    const legacy = await collection.findOne({ _id: BASELINE_FGA_PROFILE_ID });
-    if (legacy) return legacyProfileToBundle(normalizeBaselineFgaProfile({ ...legacy, source: "mongo" }));
-    return defaultBaselineFgaProfileBundle();
+    return await readBaselineFgaProfileBundle();
   } catch {
     return defaultBaselineFgaProfileBundle();
   }

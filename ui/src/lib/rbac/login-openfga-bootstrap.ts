@@ -6,6 +6,7 @@ import {
   effectiveBaselineBootstrapTuples,
   getBaselineFgaProfile,
   getBaselineFgaProfileBundle,
+  readBaselineFgaProfileBundle,
   type TeamBaselineProfileOverride,
 } from "@/lib/rbac/baseline-access";
 import { getRbacCollection } from "@/lib/rbac/mongo-collections";
@@ -91,50 +92,75 @@ interface TeamDoc {
  * Collapsing them is behavior-preserving.
  */
 async function teamOverridesForLogin(email: string | undefined): Promise<TeamBaselineProfileOverride[]> {
-  if (!email) return [];
   try {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail) return [];
-
-    const sources = await getRbacCollection<TeamMembershipSource>("teamMembershipSources");
-    const rows = await sources
-      .find({ status: "active", user_email: normalizedEmail })
-      .toArray();
-    if (rows.length === 0) return [];
-
-    // Dedupe by team_slug; escalate role to admin if any active row has admin.
-    const byTeam = new Map<string, "member" | "admin">();
-    for (const row of rows) {
-      if (!row.team_slug) continue;
-      const current = byTeam.get(row.team_slug);
-      if (current === "admin") continue;
-      byTeam.set(row.team_slug, row.relationship === "admin" ? "admin" : "member");
-    }
-    if (byTeam.size === 0) return [];
-
-    const teams = await getCollection<TeamDoc>("teams");
-    const teamDocs = await teams.find({ slug: { $in: Array.from(byTeam.keys()) } }).toArray();
-
-    const overrides: TeamBaselineProfileOverride[] = [];
-    for (const team of teamDocs) {
-      if (!team.slug) continue;
-      const role = byTeam.get(team.slug);
-      if (!role) continue;
-      const memberProfileId = team.baseline_profile_overrides?.member_profile_id;
-      const adminProfileId = team.baseline_profile_overrides?.admin_profile_id;
-      if (!memberProfileId && !adminProfileId) continue;
-      overrides.push({
-        team_slug: team.slug,
-        team_name: team.name,
-        role,
-        member_profile_id: memberProfileId,
-        admin_profile_id: adminProfileId,
-      });
-    }
-    return overrides;
+    return await resolveTeamOverrides({ email });
   } catch {
     return [];
   }
+}
+
+/**
+ * Like teamOverridesForLogin, but a lookup failure throws instead of reading as
+ * "no overrides". Matches membership rows by verified subject and/or email.
+ * With a subject, email only matches rows not bound to any subject.
+ */
+async function resolveTeamOverrides(identity: {
+  subject?: string;
+  email?: string;
+}): Promise<TeamBaselineProfileOverride[]> {
+  const identityFilters: Record<string, unknown>[] = [];
+  const subject = identity.subject?.trim();
+  if (subject) identityFilters.push({ user_subject: subject });
+  const normalizedEmail = identity.email?.trim().toLowerCase();
+  if (normalizedEmail) {
+    identityFilters.push(
+      subject
+        ? { user_email: normalizedEmail, user_subject: { $in: [null, ""] } }
+        : { user_email: normalizedEmail }
+    );
+  }
+  if (identityFilters.length === 0) return [];
+
+  const sources = await getRbacCollection<TeamMembershipSource>("teamMembershipSources");
+  const rows = await sources
+    .find(
+      identityFilters.length === 1
+        ? { status: "active", ...identityFilters[0] }
+        : { status: "active", $or: identityFilters }
+    )
+    .toArray();
+  if (rows.length === 0) return [];
+
+  // Dedupe by team_slug; escalate role to admin if any active row has admin.
+  const byTeam = new Map<string, "member" | "admin">();
+  for (const row of rows) {
+    if (!row.team_slug) continue;
+    const current = byTeam.get(row.team_slug);
+    if (current === "admin") continue;
+    byTeam.set(row.team_slug, row.relationship === "admin" ? "admin" : "member");
+  }
+  if (byTeam.size === 0) return [];
+
+  const teams = await getCollection<TeamDoc>("teams");
+  const teamDocs = await teams.find({ slug: { $in: Array.from(byTeam.keys()) } }).toArray();
+
+  const overrides: TeamBaselineProfileOverride[] = [];
+  for (const team of teamDocs) {
+    if (!team.slug) continue;
+    const role = byTeam.get(team.slug);
+    if (!role) continue;
+    const memberProfileId = team.baseline_profile_overrides?.member_profile_id;
+    const adminProfileId = team.baseline_profile_overrides?.admin_profile_id;
+    if (!memberProfileId && !adminProfileId) continue;
+    overrides.push({
+      team_slug: team.slug,
+      team_name: team.name,
+      role,
+      member_profile_id: memberProfileId,
+      admin_profile_id: adminProfileId,
+    });
+  }
+  return overrides;
 }
 
 function loginManagedAdminSource(source: TeamMembershipSource): boolean {
@@ -361,4 +387,83 @@ export async function reconcileSyncedUsersBaselineAccess(
       warning,
     };
   }
+}
+
+const BEARER_BASELINE_DEDUP_TTL_MS = 10 * 60_000;
+const MAX_BEARER_BASELINE_CACHE_ENTRIES = 1000;
+const bearerBaselineCache = new Map<
+  string,
+  { promise: Promise<LoginOpenFgaBootstrapResult>; expiresAt: number }
+>();
+
+export interface BearerEmailClaim {
+  email: string;
+  verified: boolean;
+}
+
+async function hasUnboundEmailMembership(email: string): Promise<boolean> {
+  const sources = await getRbacCollection<TeamMembershipSource>("teamMembershipSources");
+  const rows = await sources
+    .find({ status: "active", user_email: email, user_subject: { $in: [null, ""] } })
+    .toArray();
+  return rows.length > 0;
+}
+
+async function writeBearerUserBaseline(
+  subject: string,
+  emailClaim: BearerEmailClaim | undefined
+): Promise<LoginOpenFgaBootstrapResult> {
+  try {
+    const bundle = await readBaselineFgaProfileBundle({ strictGlobalMemberProfile: true });
+    // An unverified email cannot select an override, so an email-only membership
+    // for it makes the effective profile unknown; defer rather than over-grant.
+    if (emailClaim && !emailClaim.verified && (await hasUnboundEmailMembership(emailClaim.email))) {
+      throw new Error("unverified email matches an email-only team membership");
+    }
+    const email = emailClaim?.verified ? emailClaim.email : undefined;
+    const teamOverrides = await resolveTeamOverrides({ subject, email });
+    const overrideIds = teamOverrides.flatMap((o) => o.member_profile_id?.trim() || []);
+    for (const profileId of overrideIds.length > 0 ? overrideIds : [bundle.global_member_profile_id]) {
+      if (!bundle.profiles.some((profile) => profile.role === "member" && profile.id === profileId)) {
+        throw new Error(`member profile ${profileId} is not defined`);
+      }
+    }
+    const writes = effectiveBaselineBootstrapTuples({ subject, isAdmin: false, bundle, teamOverrides });
+    if (writes.length === 0) return { status: "skipped", tuple_write_count: 0 };
+    const result = await writeOpenFgaTuples({ writes, deletes: [] });
+    return { status: "completed", tuple_write_count: result.writes };
+  } catch (error) {
+    const warning = error instanceof Error ? error.message : String(error);
+    console.warn(`[LoginOpenFGA] Failed to bootstrap bearer-user baseline for ${subject}: ${warning}`);
+    return { status: "failed", tuple_write_count: 0, warning };
+  }
+}
+
+/**
+ * Grant the member baseline to a bearer-token user, such as a Slack or Webex
+ * user acting through an OBO token who never signed in to the web UI. Team
+ * member-profile overrides apply as they do at login; admin grants never do.
+ * Only a verified token email selects email-only memberships; an unverified one
+ * that matches such a membership writes nothing. Deduplicated per subject; a
+ * failed attempt is retried on the next request.
+ */
+export function ensureBearerUserBaselineAccess(
+  subject: string,
+  emailClaim?: BearerEmailClaim
+): Promise<LoginOpenFgaBootstrapResult> {
+  const key = subject.trim();
+  const cached = bearerBaselineCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+
+  const promise = writeBearerUserBaseline(key, emailClaim).then((result) => {
+    if (result.status === "failed") bearerBaselineCache.delete(key);
+    return result;
+  });
+  while (bearerBaselineCache.size >= MAX_BEARER_BASELINE_CACHE_ENTRIES) {
+    const oldestKey = bearerBaselineCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    bearerBaselineCache.delete(oldestKey);
+  }
+  bearerBaselineCache.set(key, { promise, expiresAt: Date.now() + BEARER_BASELINE_DEDUP_TTL_MS });
+  return promise;
 }

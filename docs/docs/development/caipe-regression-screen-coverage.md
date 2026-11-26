@@ -248,6 +248,7 @@ Do not renumber existing children when inserting a new assertion.
 | RUN-05.02 | Saved baseline skill and agent: restart/reload within approved isolated scope and run again | Saved attachment, instructions and tool scope survive upgrade/reconnect without widened access |
 | SLACK-01.01 | Approved test identity/destination: send labelled DM, then same-thread follow-up | Real replies and host history preserve marker/context with one admitted run per turn |
 | SLACK-01.02 | Approved fixture channel mapping: mention bot, then follow up in its thread | Correct scoped route/identity, delivered reply and persisted conversation binding; record provider message IDs |
+| SLACK-04.01 | Approved Slack-only fixture identity that has never signed in to the web UI (JIT-created or email-linked): mention the bot in a mapped channel whose agent uses an approved MCP tool | Agent loads its MCP tools and the tool call succeeds as that user; the user holds `caller` on `mcp_gateway:list` without a web login. Adapter: `ui/src/lib/rbac/__tests__/login-openfga-bootstrap.test.ts` covers the grant only |
 | WEBEX-01.01 | Approved test identity/destination: send labelled 1:1, then contextual follow-up | Delivered replies and host history preserve marker/context without duplicate runs |
 | WEBEX-01.02 | Approved fixture space mapping: mention bot, then follow up in its thread | Correct scoped route/identity and actual delivery agree with stored host conversation |
 
